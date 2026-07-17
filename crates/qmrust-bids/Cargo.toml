@@ -1,0 +1,26 @@
+[package]
+name = "qmrust-bids"
+description = "qMRI-BIDS layout resolver (bids2nf grammar) — wasm-clean, I/O-abstracted"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "qmrust_bids"
+
+[dependencies]
+qmrust-core = { path = "../qmrust-core" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+anyhow.workspace = true
+regex.workspace = true
+
+[features]
+# Exposes the in-memory MemFs outside of unit tests (used by integration tests).
+testfs = []
+
+[dev-dependencies]
+qmrust-bids = { path = ".", features = ["testfs"] }
