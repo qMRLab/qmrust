@@ -115,8 +115,13 @@ Requires a nightly toolchain with `build-std` and WASM atomics/bulk-memory:
 ```bash
 rustup run nightly wasm-pack build crates/qmrust-wasm --target web \
   --features threads \
-  -- -Z build-std=std,panic_abort
+  -Z build-std=std,panic_abort
 ```
+
+> Since wasm-pack 0.14 extra cargo args are plain trailing arguments — do
+> **not** put a `--` before them (a literal `--` is forwarded to `cargo
+> build` and fails with `unexpected argument '-Z' found`). On wasm-pack
+> ≤ 0.13 the old `-- -Z ...` form is required instead.
 
 with
 

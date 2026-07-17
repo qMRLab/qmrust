@@ -27,3 +27,6 @@ target
 /qmrust_test/
 .DS_Store
 *.swp
+
+# Superpowers brainstorming/spec/plan outputs (local only)
+docs/superpowers/

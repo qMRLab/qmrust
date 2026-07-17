@@ -55,12 +55,17 @@ jobs:
           components: rust-src
       - uses: Swatinem/rust-cache@v2
       - uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          # Pinned: since wasm-pack 0.14 extra cargo args are trailing var-args
+          # (no `--` separator — a literal `--` is forwarded to cargo and breaks
+          # the build). A floating "latest" is what broke this job before.
+          version: v0.15.0
       - uses: browser-actions/setup-chrome@v1
       # Performant, multithreaded build (the shipped browser artifact).
       - name: Build (threaded)
         run: >
           wasm-pack build crates/qmrust-wasm --target web --features threads
-          -- -Z build-std=std,panic_abort
+          -Z build-std=std,panic_abort
       - uses: actions/upload-artifact@v4
         with:
           name: qmrust-wasm-pkg
