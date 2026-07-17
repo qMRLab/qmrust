@@ -1,0 +1,30 @@
+[package]
+name = "qmrust-wasm"
+description = "Browser (WebAssembly) bindings for qmrust quantitative-MRI fitting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Enabled by CI on nightly for the performant, multithreaded browser build.
+threads = ["dep:wasm-bindgen-rayon"]
+
+[dependencies]
+qmrust-core = { path = "../qmrust-core" }
+serde_json.workspace = true
+ndarray.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+serde-wasm-bindgen.workspace = true
+wasm-bindgen-rayon = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test.workspace = true

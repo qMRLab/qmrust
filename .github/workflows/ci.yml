@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: cargo build -p qmrust-cli --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qmrust-cli-linux
+          path: target/release/qmrust
+
+  wasm:
+    runs-on: ubuntu-latest
+    env:
+      # Pinned to the nightly wasm-bindgen-rayon validates against; a floating
+      # nightly risks build-std/atomics drift.
+      RUSTUP_TOOLCHAIN: nightly-2025-11-15
+      # Full recipe required by wasm-bindgen-rayon (shared memory + TLS exports);
+      # rustc does NOT emit these automatically.
+      RUSTFLAGS: >-
+        -C target-feature=+atomics,+bulk-memory
+        -C link-arg=--shared-memory
+        -C link-arg=--max-memory=1073741824
+        -C link-arg=--import-memory
+        -C link-arg=--export=__wasm_init_tls
+        -C link-arg=--export=__tls_size
+        -C link-arg=--export=__tls_align
+        -C link-arg=--export=__tls_base
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-11-15
+          targets: wasm32-unknown-unknown
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - uses: browser-actions/setup-chrome@v1
+      # Performant, multithreaded build (the shipped browser artifact).
+      - name: Build (threaded)
+        run: >
+          wasm-pack build crates/qmrust-wasm --target web --features threads
+          -- -Z build-std=std,panic_abort
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qmrust-wasm-pkg
+          path: crates/qmrust-wasm/pkg
+      # Prove the module runs in a real browser (rayon-free paths; default features).
+      - name: Headless browser test
+        env:
+          RUSTFLAGS: ""
+        run: wasm-pack test --headless --chrome crates/qmrust-wasm
+
+  integration-osf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p qmrust-cli --release
+      - name: Fit qMRLab OSF datasets
+        run: ./ci/integration_osf.sh osf-data

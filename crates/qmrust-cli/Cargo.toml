@@ -1,0 +1,25 @@
+[package]
+name = "qmrust-cli"
+description = "qmrust command-line interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "qmrust"
+path = "src/main.rs"
+
+[dependencies]
+qmrust-core = { path = "../qmrust-core" }
+anyhow.workspace = true
+ndarray.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+clap.workspace = true
+nifti.workspace = true
+matfile.workspace = true
+indicatif.workspace = true
+owo-colors.workspace = true

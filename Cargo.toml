@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["crates/qmrust-core", "crates/qmrust-cli", "crates/qmrust-wasm"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/qmrlab/qmrust"
+homepage = "https://qmrlab.org"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+ndarray = "0.16"
+rayon = "1"
+anyhow = "1"
+levenberg-marquardt = "0.14"
+nalgebra = "0.33"
+rand = "0.8"
+rand_distr = "0.4"
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "point_series"] }
+matfile = "0.2"
+nifti = { version = "0.17", features = ["ndarray_volumes"] }
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+owo-colors = { version = "4", features = ["supports-colors"] }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+wasm-bindgen-rayon = "1.2"
+wasm-bindgen-test = "0.3"
