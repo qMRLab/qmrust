@@ -1,0 +1,18 @@
+version: 1
+project:
+  id: qmrust
+  title: qmrust
+  description: Native-Rust quantitative-MRI fitting that runs identically in a terminal and in a browser.
+  authors:
+    - name: qMRLab
+  github: https://github.com/qmrlab/qmrust
+  license: MIT
+  toc:
+    - file: index.md
+    - file: getting-started.md
+    - file: architecture.md
+    - file: models.md
+    - file: bids.md
+    - file: browser.md
+site:
+  template: book-theme
