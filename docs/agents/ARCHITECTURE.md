@@ -20,8 +20,9 @@ qmrust/                         Cargo workspace
 │   ├── qmrust-wasm/   ── IMPERATIVE SHELL ─  the browser cdylib: wasm-bindgen bindings
 │   └── rust-bids/     ── SHARED ── wasm-clean qMRI-BIDS layout resolver
 ├── prots/                       example protocol / sim configs (YAML)
+├── docs/                        agents/ARCHITECTURE.md (this file) + MyST human-docs site
 ├── ci/integration_osf.sh        end-to-end fit against qMRLab's OSF datasets
-└── .github/workflows/ci.yml     lint · native · wasm · integration
+└── .github/workflows/           ci.yml (lint · native · wasm · integration) + docs.yml (MyST → Pages)
 ```
 
 **Dependency direction is strict and one-way:**
@@ -145,8 +146,9 @@ slices and a scalar `Aux` bundle. That is the whole reason it is portable.
   future joint/dictionary methods (`bail!` until a model needs it).
 - **`Protocol { volumes, global }`** — a BIDS-sidecar-shaped acquisition protocol (one
   metadata map per volume + shared globals). Empty means "model, read your protocol from
-  your own config." Produced by `ProtocolSource` (YAML config today; `.mat` overrides;
-  BIDS sidecars are the next source).
+  your own config." Produced by `ProtocolSource` (a model's own YAML config, or a `.mat`
+  override); BIDS-sidecar protocols are produced separately by `rust-bids`'
+  `protocol_for`.
 - **`BidsSpec { suffix, entities }`** — the model's BIDS identity (e.g. `IRT1`, `MTS`).
 
 ---
@@ -291,9 +293,9 @@ comes from.
   locators); the shell resolves them. The compute layer only ever sees named scalars.
 - **Behaviour-preserving by contract.** Refactors are validated against byte-identical
   fit outputs (the CI OSF job runs the real pipelines end-to-end).
-- **Seams over speculation (YAGNI).** `FitStrategy::MatrixWise` and the BIDS
-  `Protocol`/`ProtocolSource` are declared seams, implemented when a real consumer needs
-  them, not before.
+- **Seams over speculation (YAGNI).** `FitStrategy::MatrixWise` remains a declared seam
+  (`bail!` until a model needs it). The BIDS sidecar→`Protocol` path began as a seam and
+  is now realized by the `rust-bids` crate.
 
 ---
 
@@ -331,4 +333,6 @@ wasm-pack build crates/qmrust-wasm --target web --features threads -- -Z build-s
 CI (`.github/workflows/ci.yml`) runs four jobs: **lint** (fmt + clippy), **native**
 (test + release binary), **wasm** (threaded `wasm-pack` build + headless-browser test),
 and **integration-osf** (downloads qMRLab's datasets from OSF and runs the real fit
-pipelines). Large test fixtures are fetched from OSF, never committed.
+pipelines). Large test fixtures are fetched from OSF, never committed. A separate
+`.github/workflows/docs.yml` builds the MyST human-docs site under `docs/` and deploys it
+to GitHub Pages on changes there.
