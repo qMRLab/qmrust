@@ -18,12 +18,18 @@ pub struct BidsRow {
     pub sidecar_path: Option<String>,
 }
 
-fn stem(path: &str) -> &str {
-    let file = path.rsplit('/').next().unwrap_or(path);
-    match file.find('.') {
-        Some(i) => &file[..i],
-        None => file,
+/// Directory-qualified stem: the full path with its known extension removed
+/// (directory segments kept intact). Used to pair an image with its sidecar
+/// *in the same directory* — two files with the same basename but living in
+/// different directories (e.g. a raw file and its mirror under
+/// `derivatives/<pipeline>/...`) must NOT collide on a bare-filename stem.
+fn path_stem(path: &str) -> &str {
+    for ext in [".nii.gz", ".nii", ".json"] {
+        if let Some(s) = path.strip_suffix(ext) {
+            return s;
+        }
     }
+    path
 }
 
 fn is_image(name: &str) -> bool {
@@ -56,6 +62,9 @@ fn datatype_of(path: &str) -> Option<String> {
 
 pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
     // .bidsignore: newline-separated substrings (minimal glob: `*` = any).
+    // Only a *trailing* `*` is stripped; leading-wildcard lines like `*.log`
+    // are left as-is (and thus effectively inert against the `contains`
+    // check below) — this matches the brief's minimal-glob scope.
     let ignore: Vec<String> = match fs.read(".bidsignore") {
         Ok(bytes) => String::from_utf8_lossy(&bytes)
             .lines()
@@ -69,11 +78,13 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
     walk(fs, "", &mut all)?;
     let ignored = |p: &str| ignore.iter().any(|frag| p.contains(frag.as_str()));
 
-    // Index sidecars by stem for pairing.
+    // Index sidecars by directory-qualified stem for pairing, so a raw file
+    // never pairs with a same-named sidecar living under a different
+    // directory (e.g. a `derivatives/<pipeline>/...` mirror of the raw tree).
     let json_by_stem: BTreeMap<&str, &String> = all
         .iter()
         .filter(|p| p.ends_with(".json") && !ignored(p))
-        .map(|p| (stem(p), p))
+        .map(|p| (path_stem(p), p))
         .collect();
 
     let mut rows = Vec::new();
@@ -88,7 +99,7 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
             suffix: parsed.suffix,
             extension: parsed.extension,
             entities: parsed.entities,
-            sidecar_path: json_by_stem.get(stem(path)).map(|p| (*p).clone()),
+            sidecar_path: json_by_stem.get(path_stem(path)).map(|p| (*p).clone()),
         });
     }
     rows.sort_by(|a, b| a.path.cmp(&b.path));
@@ -116,6 +127,30 @@ mod tests {
         assert!(rows.iter().all(|r| r.suffix == "IRT1"));
         assert!(rows.iter().all(|r| r.sidecar_path.is_some()));
         assert_eq!(rows[0].datatype.as_deref(), Some("anat"));
+    }
+
+    #[test]
+    fn does_not_cross_pair_sidecars_across_directories() {
+        // Same basename, two different directories: a raw file + co-located
+        // sidecar, and an unrelated sidecar under a derivatives mirror with
+        // the identical filename. The raw image must pair with the raw
+        // (co-located) sidecar only, never the derivatives one.
+        let fs = MemFs::new()
+            .touch("sub-01/anat/sub-01_inv-01_IRT1.nii.gz")
+            .with(
+                "sub-01/anat/sub-01_inv-01_IRT1.json",
+                b"{\"InversionTime\": 100}".to_vec(),
+            )
+            .with(
+                "derivatives/toolX/sub-01/anat/sub-01_inv-01_IRT1.json",
+                b"{\"InversionTime\": 999}".to_vec(),
+            );
+        let rows = parse_to_table(&fs).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].sidecar_path.as_deref(),
+            Some("sub-01/anat/sub-01_inv-01_IRT1.json")
+        );
     }
 
     #[test]
