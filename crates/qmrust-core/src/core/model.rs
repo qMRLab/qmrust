@@ -78,6 +78,48 @@ impl Aux {
     }
 }
 
+/// What shape of measurement a model consumes, and the identities it reads by.
+pub enum MeasurementKind {
+    /// A fixed set of role-labeled volumes (e.g. MTS: `["PDw","MTw","T1w"]`).
+    Named { roles: &'static [&'static str] },
+    /// A series indexed by one or more acquisition parameters
+    /// (e.g. IRT1: `["InversionTime"]`).
+    Series { axes: &'static [&'static str] },
+}
+
+/// One acquired volume's value with the metadata identifying it.
+pub struct Sample {
+    pub params: BTreeMap<String, f64>,
+    pub value: f64,
+}
+
+/// Per-voxel measurement handed to a model. Read by identity, never by index.
+pub enum Measurement {
+    Named(BTreeMap<&'static str, f64>),
+    Series(Vec<Sample>),
+}
+
+impl Measurement {
+    pub fn role(&self, name: &str) -> Option<f64> {
+        match self {
+            Measurement::Named(m) => m.get(name).copied(),
+            Measurement::Series(_) => None,
+        }
+    }
+    pub fn series(&self) -> &[Sample] {
+        match self {
+            Measurement::Series(s) => s,
+            Measurement::Named(_) => &[],
+        }
+    }
+}
+
+/// Identity of one volume along the acquisition axis, supplied by the shell.
+pub enum VolumeId {
+    Role(&'static str),
+    Params(BTreeMap<String, f64>),
+}
+
 /// The single surface a model contributor implements. Object-safe so the
 /// registry can hold `Box<dyn Model>`.
 pub trait Model: Send + Sync {
@@ -129,5 +171,27 @@ mod tests {
     #[test]
     fn model_is_object_safe() {
         fn _takes(_m: &dyn Model) {}
+    }
+
+    #[test]
+    fn measurement_named_reads_by_role() {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("MTw", 2.0);
+        m.insert("PDw", 1.0);
+        let meas = Measurement::Named(m);
+        assert_eq!(meas.role("MTw"), Some(2.0));
+        assert_eq!(meas.role("absent"), None);
+        assert!(meas.series().is_empty());
+    }
+
+    #[test]
+    fn measurement_series_reads_samples() {
+        let meas = Measurement::Series(vec![Sample {
+            params: [("InversionTime".to_string(), 30.0)].into(),
+            value: 5.0,
+        }]);
+        assert_eq!(meas.series().len(), 1);
+        assert_eq!(meas.series()[0].params["InversionTime"], 30.0);
+        assert_eq!(meas.role("MTw"), None);
     }
 }
