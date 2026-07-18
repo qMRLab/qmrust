@@ -81,6 +81,20 @@ A `cdylib` exposing the core to JavaScript via `wasm-bindgen`. Two layers:
 `wasm-bindgen`, `js-sys`, `serde-wasm-bindgen`, and `wasm-bindgen-rayon` are
 **wasm-target-only** dependencies — they never enter the native build.
 
+### `qmrust-bids` — the BIDS layout resolver
+
+A wasm-clean Rust port of qMRLab's `bids2nf` grammar, kept as its own crate rather than
+folded into `qmrust-core`. Two layers: `table` parses a raw dataset into flat rows
+(filename entities + sidecar fields), and `resolve` groups those rows into `Collection`s
+per a `bids2nf.yaml`-style config (`Bids2nfConfig`) — plain/named/sequential sets,
+permissive-but-loud on mismatches (`Warning`s attached to the `Collection`, not panics).
+The `fs::DatasetFs` trait is the I/O seam: it takes the place of `std::fs` so the same
+resolver runs against a native filesystem walker or a browser-side (e.g. Tauri/JS)
+directory listing without change. Downstream, `protocol::protocol_for` turns a
+`Collection` into a `qmrust_core::Protocol`, and the grouped volumes/`VolumeRef`s feed
+the fitting shell — this crate is the intended BIDS front door for both the CLI and a
+future Tauri app, independent of the `qmrust-core` purity rule (it is not part of core).
+
 ---
 
 ## The `Model` trait — the single contributor surface

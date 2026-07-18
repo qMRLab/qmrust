@@ -10,3 +10,9 @@ pub mod fs;
 pub mod protocol;
 pub mod resolve;
 pub mod table;
+
+pub use collection::{Collection, GroupedData, VolumeRef, Warning};
+pub use config::{default_config, parse_config, Bids2nfConfig, SetDef};
+pub use fs::{DatasetFs, Entry};
+pub use resolve::{collections_for, resolve_set};
+pub use table::{parse_to_table, BidsRow};
