@@ -787,18 +787,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "qmrust-bids"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "qmrust-bids",
- "qmrust-core",
- "serde",
- "serde_json",
- "serde_yaml",
-]
-
-[[package]]
 name = "qmrust-cli"
 version = "0.1.0"
 dependencies = [
@@ -951,6 +939,18 @@ name = "rle-decode-fast"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3582f63211428f83597b51b2ddb88e2a91a9d52d12831f9d08f5e624e8977422"
+
+[[package]]
+name = "rust-bids"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "qmrust-core",
+ "rust-bids",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+]
 
 [[package]]
 name = "rustc_version"

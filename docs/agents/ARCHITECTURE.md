@@ -18,7 +18,7 @@ qmrust/                         Cargo workspace
 │   ├── qmrust-core/   ── FUNCTIONAL CORE ──  pure; no I/O; compiles to wasm32
 │   ├── qmrust-cli/    ── IMPERATIVE SHELL ─  the `qmrust` binary: files, CLI, progress
 │   ├── qmrust-wasm/   ── IMPERATIVE SHELL ─  the browser cdylib: wasm-bindgen bindings
-│   └── qmrust-bids/   ── SHARED ── wasm-clean qMRI-BIDS resolver (bids2nf port)
+│   └── rust-bids/     ── SHARED ── wasm-clean qMRI-BIDS layout resolver
 ├── prots/                       example protocol / sim configs (YAML)
 ├── ci/integration_osf.sh        end-to-end fit against qMRLab's OSF datasets
 └── .github/workflows/ci.yml     lint · native · wasm · integration
@@ -29,14 +29,14 @@ qmrust/                         Cargo workspace
 ```
 qmrust-cli   ─┐
 qmrust-wasm  ─┼──►  qmrust-core   (core depends on NEITHER)
-qmrust-bids  ─┘
+rust-bids    ─┘
 ```
 
-`qmrust-core` never depends on `qmrust-cli`, `qmrust-wasm`, or `qmrust-bids` — the arrow
+`qmrust-core` never depends on `qmrust-cli`, `qmrust-wasm`, or `rust-bids` — the arrow
 only ever points inward, into core, never back out — and never touches `std::fs` on the
 wasm target, and never pulls in `clap`, `nifti`, `matfile`, `indicatif`, or `owo-colors`.
 That purity is what lets the exact same fitting/simulation code run in a terminal and in
-a browser tab with identical numerical results. `qmrust-bids` depends on `qmrust-core`
+a browser tab with identical numerical results. `rust-bids` depends on `qmrust-core`
 (for `Protocol`) the same way `qmrust-cli`/`qmrust-wasm` do — it is a consumer of core,
 not part of it.
 
@@ -85,19 +85,20 @@ A `cdylib` exposing the core to JavaScript via `wasm-bindgen`. Two layers:
 `wasm-bindgen`, `js-sys`, `serde-wasm-bindgen`, and `wasm-bindgen-rayon` are
 **wasm-target-only** dependencies — they never enter the native build.
 
-### `qmrust-bids` — the BIDS layout resolver
+### `rust-bids` — the BIDS layout resolver
 
-A wasm-clean Rust port of qMRLab's `bids2nf` grammar, kept as its own crate rather than
-folded into `qmrust-core`. Two layers: `table` parses a raw dataset into flat rows
-(filename entities + sidecar fields), and `resolve` groups those rows into `Collection`s
-per a `bids2nf.yaml`-style config (`Bids2nfConfig`) — plain/named/sequential sets,
-permissive-but-loud on mismatches (`Warning`s attached to the `Collection`, not panics).
-The `fs::DatasetFs` trait is the I/O seam: it takes the place of `std::fs` so the same
-resolver runs against a native filesystem walker or a browser-side (e.g. Tauri/JS)
-directory listing without change. Downstream, `protocol::protocol_for` turns a
-`Collection` into a `qmrust_core::Protocol`, and the grouped volumes/`VolumeRef`s feed
-the fitting shell — this crate is the intended BIDS front door for both the CLI and a
-future Tauri app, independent of the `qmrust-core` purity rule (it is not part of core).
+A wasm-clean, standalone qMRI-BIDS layout resolver, kept as its own crate rather than
+folded into `qmrust-core` because it is generalizable beyond this workspace. Two layers:
+`table` parses a raw dataset into flat rows (filename entities + sidecar fields), and
+`resolve` groups those rows into `Collection`s per a declarative grouping config
+(`BidsConfig`) — a small grammar of plain/named/sequential sets, permissive-but-loud on
+mismatches (`Warning`s attached to the `Collection`, not panics). The `fs::DatasetFs`
+trait is the I/O seam: it takes the place of `std::fs` so the same resolver runs against
+a native filesystem walker or a browser-side (e.g. Tauri/JS) directory listing without
+change. Downstream, `protocol::protocol_for` turns a `Collection` into a
+`qmrust_core::Protocol`, and the grouped volumes/`VolumeRef`s feed the fitting shell —
+this crate is the intended BIDS front door for both the CLI and a future Tauri app,
+independent of the `qmrust-core` purity rule (it is not part of core).
 
 ---
 
@@ -304,8 +305,8 @@ BIDS locators (`InputSpec.bids`); the shell uses those to locate a file collecti
 read acquisition metadata from JSON sidecars into a `Protocol`, which is handed to the
 model's `build`. The model's `forward`/`fit` still only see ordered params + `Aux`. The
 seams (`BidsSpec`, `Protocol`, `ProtocolSource`) are in place, and the sidecar reader now
-exists as the `qmrust-bids` crate — flat-table parse → `bids2nf`-style grouping →
-sidecar-to-`Protocol` bridge (see the `qmrust-bids` subsection above).
+exists as the `rust-bids` crate — flat-table parse → declarative-grammar grouping →
+sidecar-to-`Protocol` bridge (see the `rust-bids` subsection above).
 
 ---
 

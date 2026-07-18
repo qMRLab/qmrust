@@ -1,5 +1,5 @@
-//! Resolved collections + serialization to bids2nf's `*_unified.json` shape
-//! (used by the differential oracle tests).
+//! Resolved collections + serialization to a unified per-loop-key JSON shape
+//! (`{subject, session, run, task, data}`, with absent entities omitted).
 
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -32,21 +32,21 @@ pub struct Collection {
     pub warnings: Vec<Warning>,
 }
 
-fn na(opt: &Option<String>, prefix: &str) -> String {
-    match opt {
-        Some(v) => {
-            if v.starts_with(&format!("{prefix}-")) {
-                v.clone()
-            } else {
-                format!("{prefix}-{v}")
-            }
-        }
-        None => "NA".to_string(),
+/// Prefix an entity value (`"01"` → `"sub-01"`), leaving an already-prefixed
+/// value (`"sub-01"`) untouched.
+fn prefixed(v: &str, prefix: &str) -> String {
+    if v.starts_with(&format!("{prefix}-")) {
+        v.to_string()
+    } else {
+        format!("{prefix}-{v}")
     }
 }
 
 impl Collection {
-    /// Serialize to the bids2nf unified shape: `{subject, session, run, task, data}`.
+    /// Serialize to the unified shape: `{subject, session, run, task, data}`.
+    /// `subject` is always present; an absent `session`/`run`/`task` is
+    /// OMITTED from the object entirely rather than serialized as a
+    /// phantom "NA" placeholder string — real datasets have no "NA" entity.
     pub fn to_unified_json(&self) -> Value {
         let data_body = match &self.data {
             GroupedData::Sequential(vols) => {
@@ -78,13 +78,19 @@ impl Collection {
                 Value::Object(m)
             }
         };
-        json!({
-            "subject": na(&Some(self.subject.clone()), "sub"),
-            "session": na(&self.session, "ses"),
-            "run": na(&self.run, "run"),
-            "task": na(&self.task, "task"),
-            "data": { self.suffix.clone(): data_body },
-        })
+        let mut m = serde_json::Map::new();
+        m.insert("subject".into(), json!(prefixed(&self.subject, "sub")));
+        for (key, prefix, val) in [
+            ("session", "ses", &self.session),
+            ("run", "run", &self.run),
+            ("task", "task", &self.task),
+        ] {
+            if let Some(v) = val {
+                m.insert(key.into(), json!(prefixed(v, prefix)));
+            }
+        }
+        m.insert("data".into(), json!({ self.suffix.clone(): data_body }));
+        Value::Object(m)
     }
 }
 
@@ -93,7 +99,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sequential_unified_shape_matches_bids2nf() {
+    fn sequential_unified_shape_matches_reference() {
         let c = Collection {
             subject: "sub-01".into(),
             session: None,
@@ -114,7 +120,10 @@ mod tests {
         };
         let v = c.to_unified_json();
         assert_eq!(v["subject"], "sub-01");
-        assert_eq!(v["session"], "NA");
+        assert!(
+            v.get("session").is_none(),
+            "session key must be absent (not \"NA\") when there is no session entity"
+        );
         assert_eq!(v["data"]["IRT1"]["nii"].as_array().unwrap().len(), 2);
     }
 

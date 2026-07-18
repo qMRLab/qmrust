@@ -1,6 +1,6 @@
 //! Parse a BIDS filename into entities + suffix + extension. Entity *keys* are
-//! normalized to bids2nf's full names (e.g. `inv-` → `inversion`), so grouping
-//! configs and golden outputs line up.
+//! normalized to their full names (e.g. `inv-` → `inversion`), so grouping
+//! configs can refer to them by a stable, readable name.
 
 use std::collections::BTreeMap;
 
@@ -11,7 +11,7 @@ pub struct ParsedName {
     pub extension: String,
 }
 
-/// Map BIDS short entity keys to bids2nf full names.
+/// Map BIDS short entity keys to their full names.
 fn full_key(short: &str) -> String {
     match short {
         "sub" => "subject",

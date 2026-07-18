@@ -1,5 +1,6 @@
-//! The bids2nf grouping grammar (subset qmrust consumes). We deserialize the
-//! same `bids2nf.yaml` shape so a dataset's own config works unchanged.
+//! The declarative grouping grammar: a `BidsConfig` names entities to loop
+//! over and a set of grouping rules (plain/named/sequential) that turn matched
+//! files into `Collection`s.
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -35,7 +36,7 @@ pub enum SetDef {
 }
 
 #[derive(Debug, Clone)]
-pub struct Bids2nfConfig {
+pub struct BidsConfig {
     pub loop_over: Vec<String>,
     pub sets: BTreeMap<String, SetDef>,
 }
@@ -78,7 +79,7 @@ fn strip_prefix_value(entity: &str, raw: &str) -> String {
         .to_string()
 }
 
-pub fn parse_config(yaml: &str) -> Result<Bids2nfConfig> {
+pub fn parse_config(yaml: &str) -> Result<BidsConfig> {
     let raw: RawConfig = serde_yaml::from_str(yaml)?;
     let mut sets = BTreeMap::new();
     for (name, entry) in raw.sets {
@@ -114,13 +115,13 @@ pub fn parse_config(yaml: &str) -> Result<Bids2nfConfig> {
         };
         sets.insert(name, def);
     }
-    Ok(Bids2nfConfig {
+    Ok(BidsConfig {
         loop_over: raw.loop_over,
         sets,
     })
 }
 
-pub fn default_config() -> Bids2nfConfig {
+pub fn default_config() -> BidsConfig {
     parse_config(
         r#"
 loop_over: [subject, session, run, task]

@@ -1,7 +1,8 @@
-//! Layer 2: group table rows into collections per the bids2nf grammar.
+//! Layer 2: group table rows into collections per the declarative grouping
+//! grammar (`BidsConfig`).
 
 use crate::collection::{Collection, GroupedData, VolumeRef, Warning};
-use crate::config::{Bids2nfConfig, SetDef};
+use crate::config::{BidsConfig, SetDef};
 use crate::fs::DatasetFs;
 use crate::table::{parse_to_table, BidsRow};
 use anyhow::{anyhow, Result};
@@ -44,11 +45,7 @@ fn key_fields(
     )
 }
 
-pub fn resolve_set(
-    rows: &[BidsRow],
-    cfg: &Bids2nfConfig,
-    set_name: &str,
-) -> Result<Vec<Collection>> {
+pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result<Vec<Collection>> {
     let def = cfg
         .sets
         .get(set_name)
@@ -160,7 +157,7 @@ fn resolve_named(
 
 pub fn collections_for<F: DatasetFs>(
     fs: &F,
-    cfg: &Bids2nfConfig,
+    cfg: &BidsConfig,
     suffix: &str,
 ) -> Result<Vec<Collection>> {
     let table = parse_to_table(fs)?;
@@ -255,6 +252,57 @@ mod tests {
         assert_eq!(v1.len(), 3);
         assert!(v1.iter().all(|vr| vr.nii.contains("sub-02/")));
         assert!(v1.iter().all(|vr| !vr.nii.contains("sub-01")));
+    }
+
+    #[test]
+    fn resolves_mixed_session_and_no_session_subjects_without_phantom_paths() {
+        // Guard against regressing to a "NA" phantom-entity scheme: sub-01 has
+        // a real session level, sub-02 has none at all (no `ses-*` directory
+        // or `ses-` filename entity). If resolution ever synthesized a
+        // literal "NA" session value and tried to read/derive a path from it,
+        // sub-02 (whose files were never written under any such path) would
+        // fail to resolve. `MemFs::read` errors on any path not explicitly
+        // inserted, so a passing test here proves no phantom "NA" lookup
+        // occurred for either subject.
+        let mut fs = MemFs::new();
+        for i in 1..=2 {
+            fs = fs
+                .touch(&format!(
+                    "sub-01/ses-1/anat/sub-01_ses-1_inv-0{i}_IRT1.nii.gz"
+                ))
+                .with(
+                    &format!("sub-01/ses-1/anat/sub-01_ses-1_inv-0{i}_IRT1.json"),
+                    b"{}".to_vec(),
+                );
+        }
+        for i in 1..=3 {
+            fs = fs
+                .touch(&format!("sub-02/anat/sub-02_inv-0{i}_IRT1.nii.gz"))
+                .with(
+                    &format!("sub-02/anat/sub-02_inv-0{i}_IRT1.json"),
+                    b"{}".to_vec(),
+                );
+        }
+
+        let cols = collections_for(&fs, &default_config(), "IRT1").unwrap();
+        assert_eq!(cols.len(), 2, "both subjects must resolve independently");
+
+        let sub01 = cols.iter().find(|c| c.subject == "sub-01").unwrap();
+        assert_eq!(sub01.session.as_deref(), Some("1"));
+        let GroupedData::Sequential(v01) = &sub01.data else {
+            panic!("expected sequential data")
+        };
+        assert_eq!(v01.len(), 2, "sub-01 has 2 inversion volumes");
+
+        let sub02 = cols.iter().find(|c| c.subject == "sub-02").unwrap();
+        assert!(
+            sub02.session.is_none(),
+            "sub-02 genuinely has no session — must resolve to None, not a phantom \"NA\""
+        );
+        let GroupedData::Sequential(v02) = &sub02.data else {
+            panic!("expected sequential data")
+        };
+        assert_eq!(v02.len(), 3, "sub-02 has 3 inversion volumes");
     }
 
     #[test]

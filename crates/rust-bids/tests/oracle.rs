@@ -1,9 +1,10 @@
-//! Differential oracle: qmrust-bids must reproduce bids2nf's groupings exactly.
+//! Differential oracle: rust-bids must reproduce a set of golden reference
+//! groupings exactly (see `tests/fixtures/README.md` for their provenance).
 
-use qmrust_bids::config::default_config;
-use qmrust_bids::fs::MemFs;
-use qmrust_bids::resolve::resolve_set;
-use qmrust_bids::table::parse_to_table;
+use rust_bids::config::default_config;
+use rust_bids::fs::MemFs;
+use rust_bids::resolve::resolve_set;
+use rust_bids::table::parse_to_table;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -33,7 +34,7 @@ fn assert_matches_golden(dir: &str, suffix: &str) {
         .join("tests/fixtures/expected")
         .join(dir);
     for entry in
-        fs::read_dir(&base).expect("fixtures vendored (run scripts/vendor_bids2nf_fixtures.sh)")
+        fs::read_dir(&base).expect("fixtures vendored (run scripts/vendor_reference_fixtures.sh)")
     {
         let path = entry.unwrap().path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -45,11 +46,21 @@ fn assert_matches_golden(dir: &str, suffix: &str) {
         let cols = resolve_set(&table, &default_config(), suffix).unwrap();
 
         // The golden file is one loop_over unit; find our matching collection.
+        // Match by `subject` always; match `session`/`run` only when BOTH
+        // sides actually carry a real (non-"NA") value for that entity — our
+        // output omits the key entirely for an absent entity, while the
+        // golden fixtures (not modified here) still spell it out as the
+        // literal string "NA", so the two representations are compared as
+        // "entity present and equal" rather than by naive key equality.
         let want_data = &golden["data"][suffix];
+        let entity_matches = |got: &Value, key: &str| match (got.get(key), golden.get(key)) {
+            (Some(g), Some(w)) if w != "NA" => g == w,
+            _ => true,
+        };
         let got = cols.iter().map(|c| c.to_unified_json()).find(|c| {
             c["subject"] == golden["subject"]
-                && c["session"] == golden["session"]
-                && c["run"] == golden["run"]
+                && entity_matches(c, "session")
+                && entity_matches(c, "run")
         });
         let got = got.unwrap_or_else(|| panic!("no collection for {}", path.display()));
         assert_eq!(
@@ -62,11 +73,11 @@ fn assert_matches_golden(dir: &str, suffix: &str) {
 }
 
 #[test]
-fn irt1_matches_bids2nf() {
+fn irt1_matches_reference() {
     assert_matches_golden("qmri_irt1", "IRT1");
 }
 
 #[test]
-fn mts_matches_bids2nf() {
+fn mts_matches_reference() {
     assert_matches_golden("qmri_mtsat", "MTS");
 }

@@ -1,5 +1,5 @@
 //! Bridge resolved collections to `qmrust_core::Protocol` by reading numeric
-//! fields out of the JSON sidecars. Keeps qmrust-bids the sole place that knows
+//! fields out of the JSON sidecars. Keeps rust-bids the sole place that knows
 //! how BIDS metadata maps onto the protocol axis.
 
 use crate::collection::{Collection, GroupedData};

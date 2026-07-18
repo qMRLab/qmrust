@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Vendor a minimal slice of bids2nf's test data for qmrust-bids' oracle tests.
-# Copies the input dataset trees (as zero-byte .nii placeholders) and the golden
-# *_unified.json for the qMRI collections qmrust fits. Run from repo root.
+# Vendor reference golden outputs sourced from the bids2nf project (MIT) for
+# rust-bids' oracle tests. Copies the input dataset trees (as zero-byte .nii
+# placeholders) and the golden *_unified.json for the qMRI collections qmrust
+# fits. Run from repo root.
 set -euo pipefail
-DEST="crates/qmrust-bids/tests/fixtures"
+DEST="crates/rust-bids/tests/fixtures"
 BASE="https://raw.githubusercontent.com/agahkarakuzu/bids2nf/main/tests"
 mkdir -p "$DEST"
 
