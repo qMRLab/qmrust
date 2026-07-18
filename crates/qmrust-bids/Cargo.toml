@@ -16,7 +16,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 anyhow.workspace = true
-regex.workspace = true
 
 [features]
 # Exposes the in-memory MemFs outside of unit tests (used by integration tests).

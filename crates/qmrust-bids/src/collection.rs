@@ -51,6 +51,13 @@ impl Collection {
         let data_body = match &self.data {
             GroupedData::Sequential(vols) => {
                 let nii: Vec<Value> = vols.iter().map(|v| json!(v.nii)).collect();
+                // `filter_map` drops volumes with no sidecar, so `jsn` only
+                // contains *present* sidecars — if any sequential volume in
+                // `vols` lacks one, `jsn` ends up shorter than `nii` and the
+                // positional correspondence between the two arrays breaks.
+                // This assumes every sequential volume has a co-located
+                // sidecar, which holds for the vendored qMRI collections
+                // this crate supports today.
                 let jsn: Vec<Value> = vols
                     .iter()
                     .filter_map(|v| v.json.clone())
