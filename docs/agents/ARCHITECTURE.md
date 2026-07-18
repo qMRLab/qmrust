@@ -10,14 +10,15 @@ or the simulator.
 
 ---
 
-## The workspace: three crates
+## The workspace: four crates
 
 ```
 qmrust/                         Cargo workspace
 ├── crates/
 │   ├── qmrust-core/   ── FUNCTIONAL CORE ──  pure; no I/O; compiles to wasm32
 │   ├── qmrust-cli/    ── IMPERATIVE SHELL ─  the `qmrust` binary: files, CLI, progress
-│   └── qmrust-wasm/   ── IMPERATIVE SHELL ─  the browser cdylib: wasm-bindgen bindings
+│   ├── qmrust-wasm/   ── IMPERATIVE SHELL ─  the browser cdylib: wasm-bindgen bindings
+│   └── qmrust-bids/   ── SHARED ── wasm-clean qMRI-BIDS resolver (bids2nf port)
 ├── prots/                       example protocol / sim configs (YAML)
 ├── ci/integration_osf.sh        end-to-end fit against qMRLab's OSF datasets
 └── .github/workflows/ci.yml     lint · native · wasm · integration
@@ -26,15 +27,18 @@ qmrust/                         Cargo workspace
 **Dependency direction is strict and one-way:**
 
 ```
-qmrust-cli  ─┐
-             ├──►  qmrust-core   (core depends on NEITHER)
-qmrust-wasm ─┘
+qmrust-cli   ─┐
+qmrust-wasm  ─┼──►  qmrust-core   (core depends on NEITHER)
+qmrust-bids  ─┘
 ```
 
-`qmrust-core` never depends on `qmrust-cli` or `qmrust-wasm`, never touches `std::fs`
-on the wasm target, and never pulls in `clap`, `nifti`, `matfile`, `indicatif`, or
-`owo-colors`. That purity is what lets the exact same fitting/simulation code run in a
-terminal and in a browser tab with identical numerical results.
+`qmrust-core` never depends on `qmrust-cli`, `qmrust-wasm`, or `qmrust-bids` — the arrow
+only ever points inward, into core, never back out — and never touches `std::fs` on the
+wasm target, and never pulls in `clap`, `nifti`, `matfile`, `indicatif`, or `owo-colors`.
+That purity is what lets the exact same fitting/simulation code run in a terminal and in
+a browser tab with identical numerical results. `qmrust-bids` depends on `qmrust-core`
+(for `Protocol`) the same way `qmrust-cli`/`qmrust-wasm` do — it is a consumer of core,
+not part of it.
 
 ### `qmrust-core` — the functional core
 
@@ -299,8 +303,9 @@ core. A model declares its BIDS identity (`bids()` → suffix + entities) and it
 BIDS locators (`InputSpec.bids`); the shell uses those to locate a file collection and
 read acquisition metadata from JSON sidecars into a `Protocol`, which is handed to the
 model's `build`. The model's `forward`/`fit` still only see ordered params + `Aux`. The
-seams (`BidsSpec`, `Protocol`, `ProtocolSource`) are in place; the sidecar reader is the
-next increment.
+seams (`BidsSpec`, `Protocol`, `ProtocolSource`) are in place, and the sidecar reader now
+exists as the `qmrust-bids` crate — flat-table parse → `bids2nf`-style grouping →
+sidecar-to-`Protocol` bridge (see the `qmrust-bids` subsection above).
 
 ---
 
