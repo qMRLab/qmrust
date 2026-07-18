@@ -219,4 +219,81 @@ mod tests {
         let cols = collections_for(&fs, &default_config(), "MTS").unwrap();
         assert!(cols.is_empty());
     }
+
+    #[test]
+    fn keeps_multiple_subjects_separate_and_sorted() {
+        // Two subjects, each with their own IRT1 series. loop_over includes
+        // `subject`, so each must resolve to its own collection with no
+        // cross-subject leakage, and the output must be deterministically
+        // ordered by subject.
+        let mut fs = MemFs::new();
+        for sub in ["01", "02"] {
+            for i in 1..=3 {
+                fs = fs
+                    .touch(&format!("sub-{sub}/anat/sub-{sub}_inv-0{i}_IRT1.nii.gz"))
+                    .with(
+                        &format!("sub-{sub}/anat/sub-{sub}_inv-0{i}_IRT1.json"),
+                        b"{}".to_vec(),
+                    );
+            }
+        }
+        let cols = collections_for(&fs, &default_config(), "IRT1").unwrap();
+        assert_eq!(cols.len(), 2);
+        assert_eq!(cols[0].subject, "sub-01");
+        assert_eq!(cols[1].subject, "sub-02");
+
+        let GroupedData::Sequential(v0) = &cols[0].data else {
+            panic!()
+        };
+        assert_eq!(v0.len(), 3);
+        assert!(v0.iter().all(|vr| vr.nii.contains("sub-01/")));
+        assert!(v0.iter().all(|vr| !vr.nii.contains("sub-02")));
+
+        let GroupedData::Sequential(v1) = &cols[1].data else {
+            panic!()
+        };
+        assert_eq!(v1.len(), 3);
+        assert!(v1.iter().all(|vr| vr.nii.contains("sub-02/")));
+        assert!(v1.iter().all(|vr| !vr.nii.contains("sub-01")));
+    }
+
+    #[test]
+    fn non_required_named_group_partial_match_warns_but_still_emits() {
+        // `B` is deliberately left out of `required`, so a 0-match on `B`
+        // must not drop the collection (since `A` — the only required
+        // member — is present) but must still surface a Warning naming `B`.
+        let cfg = crate::config::parse_config(
+            r#"
+loop_over: [subject, session, run, task]
+TEST:
+  named_set:
+    A:
+      flip: "1"
+    B:
+      flip: "2"
+    required: [A]
+"#,
+        )
+        .unwrap();
+        let fs = MemFs::new().touch("sub-01/anat/sub-01_flip-1_TEST.nii.gz");
+        let cols = collections_for(&fs, &cfg, "TEST").unwrap();
+        assert_eq!(
+            cols.len(),
+            1,
+            "required group A present → collection emitted"
+        );
+        let GroupedData::Named(g) = &cols[0].data else {
+            panic!()
+        };
+        assert!(g.contains_key("A"));
+        assert!(!g.contains_key("B"));
+        assert!(
+            !cols[0].warnings.is_empty(),
+            "missing non-required group B should still warn"
+        );
+        assert!(cols[0]
+            .warnings
+            .iter()
+            .any(|w| w.message.contains('B') && w.message.contains("no matching file")));
+    }
 }
