@@ -108,7 +108,7 @@ pub fn parse_config(yaml: &str) -> Result<BidsConfig> {
             }
             SetDef::Named(NamedSet { groups, required })
         } else {
-            continue; // not a set we recognize; ignore (permissive)
+            continue; // unrecognized set shape: skipped, not rejected (permissive parsing)
         };
         sets.insert(name, def);
     }

@@ -259,14 +259,11 @@ mod tests {
 
     #[test]
     fn resolves_mixed_session_and_no_session_subjects_without_phantom_paths() {
-        // Guard against regressing to a "NA" phantom-entity scheme: sub-01 has
-        // a real session level, sub-02 has none at all (no `ses-*` directory
-        // or `ses-` filename entity). If resolution ever synthesized a
-        // literal "NA" session value and tried to read/derive a path from it,
-        // sub-02 (whose files were never written under any such path) would
-        // fail to resolve. `MemFs::read` errors on any path not explicitly
-        // inserted, so a passing test here proves no phantom "NA" lookup
-        // occurred for either subject.
+        // An absent entity resolves to `None`, and no path is ever derived from
+        // entity values: sub-01 has a real session level, sub-02 has none (no
+        // `ses-*` directory, no `ses-` filename entity). `MemFs::read` errors on
+        // any path not explicitly inserted, so resolution completing for both
+        // subjects proves no synthesized path was read for the session-less one.
         let mut fs = MemFs::new();
         for i in 1..=2 {
             fs = fs

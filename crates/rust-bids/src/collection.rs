@@ -55,9 +55,8 @@ impl Collection {
                 // contains *present* sidecars — if any sequential volume in
                 // `vols` lacks one, `jsn` ends up shorter than `nii` and the
                 // positional correspondence between the two arrays breaks.
-                // This assumes every sequential volume has a co-located
-                // sidecar, which holds for the vendored qMRI collections
-                // this crate supports today.
+                // Each sequential volume is expected to carry a co-located
+                // sidecar.
                 let jsn: Vec<Value> = vols
                     .iter()
                     .filter_map(|v| v.json.clone())

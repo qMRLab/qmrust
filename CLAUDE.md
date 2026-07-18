@@ -44,6 +44,14 @@ Keep docs in lockstep with the code: `docs/agents/ARCHITECTURE.md` must always m
 current design, and the human docs under `docs/` follow **progressive disclosure** — lead with
 the essential what/why, then details. When in doubt, delete rather than keep "just in case".
 
+**Comments explain the code, not its author.** A comment or docstring states what the code
+does and the invariant or contract behind it, from the first principles of the domain — never
+the decision-making, alternatives weighed, or the narrative of how the code came to be. No
+"I chose X", no "this used to be Y", no "note: tricky because earlier…", no reviewer-directed
+asides, no task/plan references. Write for whoever reads this line a year from now: they need
+the *what* and the *why it must be so*, not the story of how it got written. If a comment would
+only make sense to someone who watched it being written, delete it.
+
 ## Adding a model (the common task)
 
 1. New dir `crates/qmrust-core/src/models/<name>/`: `config.rs` (a `serde` struct +
