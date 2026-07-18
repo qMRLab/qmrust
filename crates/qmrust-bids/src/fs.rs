@@ -1,7 +1,11 @@
 //! Filesystem abstraction. The pure layers read only through `DatasetFs`;
 //! the shell supplies `std::fs` (native) or File System Access API (wasm).
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+
+#[cfg(any(test, feature = "testfs"))]
+use anyhow::anyhow;
+#[cfg(any(test, feature = "testfs"))]
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
