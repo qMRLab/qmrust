@@ -35,7 +35,7 @@ pub struct Collection {
 fn na(opt: &Option<String>, prefix: &str) -> String {
     match opt {
         Some(v) => {
-            if v.starts_with(prefix) {
+            if v.starts_with(&format!("{prefix}-")) {
                 v.clone()
             } else {
                 format!("{prefix}-{v}")
@@ -109,5 +109,65 @@ mod tests {
         assert_eq!(v["subject"], "sub-01");
         assert_eq!(v["session"], "NA");
         assert_eq!(v["data"]["IRT1"]["nii"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn named_unified_shape_omits_missing_json_key() {
+        let mut groups = BTreeMap::new();
+        groups.insert(
+            "MTon".to_string(),
+            VolumeRef {
+                nii: "a_mt-on_MTS.nii.gz".into(),
+                json: Some("a_mt-on_MTS.json".into()),
+            },
+        );
+        groups.insert(
+            "MToff".to_string(),
+            VolumeRef {
+                nii: "a_mt-off_MTS.nii.gz".into(),
+                json: None,
+            },
+        );
+        let c = Collection {
+            subject: "sub-01".into(),
+            session: None,
+            run: None,
+            task: None,
+            suffix: "MTS".into(),
+            data: GroupedData::Named(groups),
+            warnings: vec![],
+        };
+        let v = c.to_unified_json();
+        assert_eq!(v["data"]["MTS"]["MTon"]["nii"], "a_mt-on_MTS.nii.gz");
+        assert_eq!(v["data"]["MTS"]["MTon"]["json"], "a_mt-on_MTS.json");
+        assert_eq!(v["data"]["MTS"]["MToff"]["nii"], "a_mt-off_MTS.nii.gz");
+        assert!(
+            v["data"]["MTS"]["MToff"].get("json").is_none(),
+            "json key must be absent (not null) when no sidecar exists"
+        );
+    }
+
+    #[test]
+    fn na_prefix_handling_covers_bare_prefixed_and_regression_cases() {
+        let c = Collection {
+            subject: "sub-01".into(),
+            session: Some("01".into()),
+            run: Some("running".into()),
+            task: Some("tasker".into()),
+            suffix: "T1w".into(),
+            data: GroupedData::Sequential(vec![]),
+            warnings: vec![],
+        };
+        let v = c.to_unified_json();
+        // Already-prefixed subject stays as-is.
+        assert_eq!(v["subject"], "sub-01");
+        // Bare session value gets the "ses-" prefix.
+        assert_eq!(v["session"], "ses-01");
+        // Regression: a bare value that merely starts with the prefix text
+        // (e.g. "running" starts with "run", "tasker" starts with "task")
+        // must still get prefixed, not be mistaken for an already-prefixed
+        // "run-..."/"task-..." value.
+        assert_eq!(v["run"], "run-running");
+        assert_eq!(v["task"], "task-tasker");
     }
 }
