@@ -84,11 +84,14 @@ pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result
             }
             SetDef::Named(named) => resolve_named(named, &members),
             SetDef::Plain(_) => {
-                // Out of scope for this plan; skip with a warning.
+                // plain_set is intentionally parse-only (YAGNI): it is not yet
+                // grouped into a Collection by this resolver.
                 (
                     GroupedData::Sequential(members.iter().map(|r| vol(r)).collect()),
                     vec![Warning {
-                        message: format!("plain_set {set_name} not yet supported"),
+                        message: format!(
+                            "plain_set '{set_name}' is not resolved into a grouped collection by this resolver"
+                        ),
                     }],
                 )
             }

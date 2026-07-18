@@ -11,18 +11,36 @@ pub struct ParsedName {
     pub extension: String,
 }
 
-/// Map BIDS short entity keys to their full names.
-fn full_key(short: &str) -> String {
-    match short {
-        "sub" => "subject",
-        "ses" => "session",
-        "acq" => "acquisition",
-        "inv" => "inversion",
-        "mt" => "mtransfer",
-        "dir" => "direction",
-        other => other, // run, task, flip, echo, part already full
-    }
-    .to_string()
+/// The single source of truth for BIDS entity short↔full aliases: `(short, full)`.
+/// Entities not listed here (run, task, flip, echo, part, ...) are already the
+/// same in both forms.
+pub(crate) const ENTITY_ALIASES: &[(&str, &str)] = &[
+    ("sub", "subject"),
+    ("ses", "session"),
+    ("acq", "acquisition"),
+    ("inv", "inversion"),
+    ("mt", "mtransfer"),
+    ("dir", "direction"),
+];
+
+/// Map a BIDS short entity key to its full name (identity if not aliased).
+pub(crate) fn full_key(short: &str) -> String {
+    ENTITY_ALIASES
+        .iter()
+        .find(|(s, _)| *s == short)
+        .map(|(_, full)| *full)
+        .unwrap_or(short)
+        .to_string()
+}
+
+/// Map a full entity name back to its short key (identity if not aliased).
+pub(crate) fn short_key(full: &str) -> String {
+    ENTITY_ALIASES
+        .iter()
+        .find(|(_, f)| *f == full)
+        .map(|(short, _)| *short)
+        .unwrap_or(full)
+        .to_string()
 }
 
 pub fn parse_filename(name: &str) -> Option<ParsedName> {

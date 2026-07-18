@@ -1,26 +1,24 @@
-//! Resolve an acquisition [`Protocol`] from one of several sources. In Plan A
-//! only `Yaml` (model reads its own config) and `Mat` (`.mat` TI override) are
-//! implemented; `Bids` is added in Plan B.
+//! Resolve an acquisition [`Protocol`] from a source. Today: `Yaml` (a model
+//! reads its protocol from its own config) and `Mat` (a `.mat` file supplies
+//! acquisition parameters). BIDS-sidecar protocols are produced by the
+//! separate `rust-bids` crate.
 
 use crate::core::model::Protocol;
 use std::collections::BTreeMap;
 
 /// Where the protocol comes from.
-pub enum ProtocolSource<'a> {
+pub enum ProtocolSource {
     /// Model reads its protocol from its own YAML config sub-tree. Yields an
     /// empty `Protocol`.
     Yaml,
     /// `.mat` input supplied acquisition parameters (currently IR TI values).
     Mat { inversion_times: Option<Vec<f64>> },
-    #[allow(dead_code)]
-    /// Marker so the lifetime is used before Plan B adds a borrowing variant.
-    _Phantom(std::marker::PhantomData<&'a ()>),
 }
 
 /// Build a `Protocol` from a source.
 pub fn resolve(src: ProtocolSource) -> Protocol {
     match src {
-        ProtocolSource::Yaml | ProtocolSource::_Phantom(_) => Protocol::default(),
+        ProtocolSource::Yaml => Protocol::default(),
         ProtocolSource::Mat { inversion_times } => {
             let mut p = Protocol::default();
             if let Some(tis) = inversion_times {

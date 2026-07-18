@@ -66,13 +66,10 @@ fn default_loop_over() -> Vec<String> {
 }
 
 /// Strip a leading `entity-` prefix from a constraint value: `"flip-02" → "02"`.
+/// Accepts BOTH the short (`inv-01`) and full (`inversion-01`) prefixed forms,
+/// since config authors may write either.
 fn strip_prefix_value(entity: &str, raw: &str) -> String {
-    let short = match entity {
-        "inversion" => "inv",
-        "mtransfer" => "mt",
-        "acquisition" => "acq",
-        other => other,
-    };
+    let short = crate::entities::short_key(entity);
     raw.strip_prefix(&format!("{short}-"))
         .or_else(|| raw.strip_prefix(&format!("{entity}-")))
         .unwrap_or(raw)

@@ -98,8 +98,9 @@ impl Model for QmtModel {
 }
 
 /// Registry builder: parse `QmtSpgrConfig` from the `qmt_spgr` sub-key of the
-/// raw YAML tree, validate, and box the model. `proto` is unused in Plan A
-/// (qMT protocol comes from the config); it is honored in Plan B's BIDS path.
+/// raw YAML tree, validate, and box the model. `proto` is currently unused —
+/// qMT reads its protocol from its own config; a BIDS protocol source may
+/// populate it later.
 pub fn build(v: &serde_yaml::Value, _proto: &Protocol) -> Result<Box<dyn Model>> {
     let mut cfg: QmtSpgrConfig = match v.get("qmt_spgr") {
         Some(sub) => serde_yaml::from_value(sub.clone())?,
