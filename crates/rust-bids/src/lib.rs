@@ -9,6 +9,7 @@ pub mod entities;
 pub mod fs;
 pub mod protocol;
 pub mod resolve;
+pub mod scan;
 pub mod table;
 
 pub use collection::{Collection, GroupedData, VolumeRef, Warning};
@@ -16,4 +17,5 @@ pub use config::{default_config, parse_config, BidsConfig, SetDef};
 pub use fs::{DatasetFs, Entry};
 pub use protocol::protocol_for;
 pub use resolve::{collections_for, resolve_set};
+pub use scan::scan_dataset;
 pub use table::{parse_to_table, BidsRow};

@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 qmrust-core = { path = "../qmrust-core" }
+rust-bids = { path = "../rust-bids" }
 anyhow.workspace = true
 ndarray.workspace = true
 rayon.workspace = true

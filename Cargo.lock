@@ -799,6 +799,7 @@ dependencies = [
  "owo-colors",
  "qmrust-core",
  "rayon",
+ "rust-bids",
  "serde",
  "serde_yaml",
 ]
