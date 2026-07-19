@@ -16,16 +16,33 @@ a browser (WebAssembly).
   `wasm32-unknown-unknown`.
 - `crates/qmrust-cli` — the `qmrust` binary: CLI, file I/O (`.mat`/NIfTI), progress.
 - `crates/qmrust-wasm` — browser `cdylib`: `wasm-bindgen` bindings over the core.
+- `crates/rust-bids` — **wasm-clean, standalone qMRI-BIDS layout resolver**: flat-table
+  parse → declarative grouping (`BidsConfig`) → `Collection`, with all I/O behind the
+  `DatasetFs` trait; bridges a collection's sidecars to `qmrust_core::Protocol`. A consumer
+  of core, not part of it (and generalizable beyond this workspace).
 
 ## The one rule that must never break
 
 **`qmrust-core` stays pure.** It must NOT:
-- depend on `qmrust-cli` or `qmrust-wasm` (dependency arrow points inward only);
+- depend on `qmrust-cli`, `qmrust-wasm`, or `rust-bids` (dependency arrow points inward only);
 - use `clap`, `nifti`, `indicatif`, `owo-colors`;
 - use `std::fs` or `matfile` on the wasm target (they're gated `#[cfg(not(target_arch = "wasm32"))]`).
 
 If you need file/CLI/JS behaviour, it belongs in `qmrust-cli` or `qmrust-wasm`, not core.
 Verify with: `cargo build -p qmrust-core --target wasm32-unknown-unknown`.
+
+## Clean codebase — a hard principle
+
+**Clean context, clean code. No garbage in the repo.** Every commit leaves the tree free of:
+- dead code, commented-out blocks, speculative stubs, or unused scaffolding;
+- internal development-phase codenames or process references (e.g. "Plan A/Plan B", task
+  numbers, "the next increment") — write what the code *is*, not the story of how it got here;
+- stale or confusing mentions. Rename or supersede something and you update **every**
+  reference and delete what it replaced — no orphaned names, no duplicated sources of truth.
+
+Keep docs in lockstep with the code: `docs/agents/ARCHITECTURE.md` must always match the
+current design, and the human docs under `docs/` follow **progressive disclosure** — lead with
+the essential what/why, then details. When in doubt, delete rather than keep "just in case".
 
 ## Adding a model (the common task)
 
@@ -64,6 +81,7 @@ cargo clippy --workspace --all-targets -- -D warnings   # CI lint gate (must be 
 cargo run -p qmrust-cli -- fit  --mat-dir <dir> --config prots/<cfg>.yaml --output-dir <out>
 cargo run -p qmrust-cli -- sim  single-voxel --config prots/<cfg>.yaml --output <out>.json
 cargo build -p qmrust-core --target wasm32-unknown-unknown   # core must stay wasm-clean
+cargo build -p rust-bids   --target wasm32-unknown-unknown   # rust-bids must stay wasm-clean too
 ```
 
 Before claiming work is done: `cargo test --workspace`, `cargo fmt --all --check`, and

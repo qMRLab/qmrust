@@ -1,0 +1,32 @@
+{
+  "subject": "sub-01",
+  "session": "NA",
+  "run": "NA",
+  "task": "NA",
+  "data": {
+    "TB1DAM": {
+        "nii": [
+            "qmri_mtsat/sub-01/fmap/sub-01_flip-1_TB1DAM.nii.gz",
+            "qmri_mtsat/sub-01/fmap/sub-01_flip-2_TB1DAM.nii.gz"
+        ],
+        "json": [
+            "qmri_mtsat/sub-01/fmap/sub-01_flip-1_TB1DAM.json",
+            "qmri_mtsat/sub-01/fmap/sub-01_flip-2_TB1DAM.json"
+        ]
+    },
+    "MTS": {
+        "PDw": {
+            "nii": "qmri_mtsat/sub-01/anat/sub-01_flip-1_mt-off_MTS.nii.gz",
+            "json": "qmri_mtsat/sub-01/anat/sub-01_flip-1_mt-off_MTS.json"
+        },
+        "MTw": {
+            "nii": "qmri_mtsat/sub-01/anat/sub-01_flip-1_mt-on_MTS.nii.gz",
+            "json": "qmri_mtsat/sub-01/anat/sub-01_flip-1_mt-on_MTS.json"
+        },
+        "T1w": {
+            "nii": "qmri_mtsat/sub-01/anat/sub-01_flip-2_mt-off_MTS.nii.gz",
+            "json": "qmri_mtsat/sub-01/anat/sub-01_flip-2_mt-off_MTS.json"
+        }
+    }
+}
+}

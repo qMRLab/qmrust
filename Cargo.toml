@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/qmrust-core", "crates/qmrust-cli", "crates/qmrust-wasm"]
+members = ["crates/qmrust-core", "crates/qmrust-cli", "crates/qmrust-wasm", "crates/rust-bids"]
 
 [workspace.package]
 version = "0.1.0"

@@ -30,3 +30,9 @@ target
 
 # Superpowers brainstorming/spec/plan outputs (local only)
 docs/superpowers/
+
+# subagent-driven-development scratch (local only)
+.superpowers/
+
+# MyST docs build output
+docs/_build/

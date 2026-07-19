@@ -31,7 +31,7 @@ pub struct InputSpec {
 }
 
 /// Role an entity plays in indexing a model's acquisition axis. Seam for the
-/// BIDS protocol mapping filled in by Plan B.
+/// BIDS protocol mapping that the shell / `rust-bids` crate fills in.
 pub enum EntityRole {
     Inv,
     Flip,

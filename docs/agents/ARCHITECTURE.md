@@ -10,31 +10,36 @@ or the simulator.
 
 ---
 
-## The workspace: three crates
+## The workspace: four crates
 
 ```
 qmrust/                         Cargo workspace
 ├── crates/
 │   ├── qmrust-core/   ── FUNCTIONAL CORE ──  pure; no I/O; compiles to wasm32
 │   ├── qmrust-cli/    ── IMPERATIVE SHELL ─  the `qmrust` binary: files, CLI, progress
-│   └── qmrust-wasm/   ── IMPERATIVE SHELL ─  the browser cdylib: wasm-bindgen bindings
+│   ├── qmrust-wasm/   ── IMPERATIVE SHELL ─  the browser cdylib: wasm-bindgen bindings
+│   └── rust-bids/     ── SHARED ── wasm-clean qMRI-BIDS layout resolver
 ├── prots/                       example protocol / sim configs (YAML)
+├── docs/                        agents/ARCHITECTURE.md (this file) + MyST human-docs site
 ├── ci/integration_osf.sh        end-to-end fit against qMRLab's OSF datasets
-└── .github/workflows/ci.yml     lint · native · wasm · integration
+└── .github/workflows/           ci.yml (lint · native · wasm · integration) + docs.yml (MyST → Pages)
 ```
 
 **Dependency direction is strict and one-way:**
 
 ```
-qmrust-cli  ─┐
-             ├──►  qmrust-core   (core depends on NEITHER)
-qmrust-wasm ─┘
+qmrust-cli   ─┐
+qmrust-wasm  ─┼──►  qmrust-core   (core depends on NEITHER)
+rust-bids    ─┘
 ```
 
-`qmrust-core` never depends on `qmrust-cli` or `qmrust-wasm`, never touches `std::fs`
-on the wasm target, and never pulls in `clap`, `nifti`, `matfile`, `indicatif`, or
-`owo-colors`. That purity is what lets the exact same fitting/simulation code run in a
-terminal and in a browser tab with identical numerical results.
+`qmrust-core` never depends on `qmrust-cli`, `qmrust-wasm`, or `rust-bids` — the arrow
+only ever points inward, into core, never back out — and never touches `std::fs` on the
+wasm target, and never pulls in `clap`, `nifti`, `matfile`, `indicatif`, or `owo-colors`.
+That purity is what lets the exact same fitting/simulation code run in a terminal and in
+a browser tab with identical numerical results. `rust-bids` depends on `qmrust-core`
+(for `Protocol`) the same way `qmrust-cli`/`qmrust-wasm` do — it is a consumer of core,
+not part of it.
 
 ### `qmrust-core` — the functional core
 
@@ -81,6 +86,21 @@ A `cdylib` exposing the core to JavaScript via `wasm-bindgen`. Two layers:
 `wasm-bindgen`, `js-sys`, `serde-wasm-bindgen`, and `wasm-bindgen-rayon` are
 **wasm-target-only** dependencies — they never enter the native build.
 
+### `rust-bids` — the BIDS layout resolver
+
+A wasm-clean, standalone qMRI-BIDS layout resolver, kept as its own crate rather than
+folded into `qmrust-core` because it is generalizable beyond this workspace. Two layers:
+`table` parses a raw dataset into flat rows (filename entities + sidecar fields), and
+`resolve` groups those rows into `Collection`s per a declarative grouping config
+(`BidsConfig`) — a small grammar of plain/named/sequential sets, permissive-but-loud on
+mismatches (`Warning`s attached to the `Collection`, not panics). The `fs::DatasetFs`
+trait is the I/O seam: it takes the place of `std::fs` so the same resolver runs against
+a native filesystem walker or a browser-side (e.g. Tauri/JS) directory listing without
+change. Downstream, `protocol::protocol_for` turns a `Collection` into a
+`qmrust_core::Protocol`, and the grouped volumes/`VolumeRef`s feed the fitting shell —
+this crate is the intended BIDS front door for both the CLI and a future Tauri app,
+independent of the `qmrust-core` purity rule (it is not part of core).
+
 ---
 
 ## The `Model` trait — the single contributor surface
@@ -126,8 +146,9 @@ slices and a scalar `Aux` bundle. That is the whole reason it is portable.
   future joint/dictionary methods (`bail!` until a model needs it).
 - **`Protocol { volumes, global }`** — a BIDS-sidecar-shaped acquisition protocol (one
   metadata map per volume + shared globals). Empty means "model, read your protocol from
-  your own config." Produced by `ProtocolSource` (YAML config today; `.mat` overrides;
-  BIDS sidecars are the next source).
+  your own config." Produced by `ProtocolSource` (a model's own YAML config, or a `.mat`
+  override); BIDS-sidecar protocols are produced separately by `rust-bids`'
+  `protocol_for`.
 - **`BidsSpec { suffix, entities }`** — the model's BIDS identity (e.g. `IRT1`, `MTS`).
 
 ---
@@ -272,9 +293,9 @@ comes from.
   locators); the shell resolves them. The compute layer only ever sees named scalars.
 - **Behaviour-preserving by contract.** Refactors are validated against byte-identical
   fit outputs (the CI OSF job runs the real pipelines end-to-end).
-- **Seams over speculation (YAGNI).** `FitStrategy::MatrixWise` and the BIDS
-  `Protocol`/`ProtocolSource` are declared seams, implemented when a real consumer needs
-  them, not before.
+- **Seams over speculation (YAGNI).** `FitStrategy::MatrixWise` remains a declared seam
+  (`bail!` until a model needs it). The BIDS sidecar→`Protocol` path began as a seam and
+  is now realized by the `rust-bids` crate.
 
 ---
 
@@ -285,8 +306,9 @@ core. A model declares its BIDS identity (`bids()` → suffix + entities) and it
 BIDS locators (`InputSpec.bids`); the shell uses those to locate a file collection and
 read acquisition metadata from JSON sidecars into a `Protocol`, which is handed to the
 model's `build`. The model's `forward`/`fit` still only see ordered params + `Aux`. The
-seams (`BidsSpec`, `Protocol`, `ProtocolSource`) are in place; the sidecar reader is the
-next increment.
+seams (`BidsSpec`, `Protocol`, `ProtocolSource`) are in place, and the sidecar reader now
+exists as the `rust-bids` crate — flat-table parse → declarative-grammar grouping →
+sidecar-to-`Protocol` bridge (see the `rust-bids` subsection above).
 
 ---
 
@@ -311,4 +333,6 @@ wasm-pack build crates/qmrust-wasm --target web --features threads -- -Z build-s
 CI (`.github/workflows/ci.yml`) runs four jobs: **lint** (fmt + clippy), **native**
 (test + release binary), **wasm** (threaded `wasm-pack` build + headless-browser test),
 and **integration-osf** (downloads qMRLab's datasets from OSF and runs the real fit
-pipelines). Large test fixtures are fetched from OSF, never committed.
+pipelines). Large test fixtures are fetched from OSF, never committed. A separate
+`.github/workflows/docs.yml` builds the MyST human-docs site under `docs/` and deploys it
+to GitHub Pages on changes there.

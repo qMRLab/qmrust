@@ -1,0 +1,25 @@
+[package]
+name = "rust-bids"
+description = "qMRI-BIDS layout resolver: flat-table parse + declarative grouping — wasm-clean, I/O-abstracted"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "rust_bids"
+
+[dependencies]
+qmrust-core = { path = "../qmrust-core" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+anyhow.workspace = true
+
+[features]
+# Exposes the in-memory MemFs outside of unit tests (used by integration tests).
+testfs = []
+
+[dev-dependencies]
+rust-bids = { path = ".", features = ["testfs"] }
