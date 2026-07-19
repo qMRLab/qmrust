@@ -1,11 +1,59 @@
 //! The single voxel-fitting engine. Drives any `Model`, dispatching on its
 //! declared `FitStrategy`. Replaces the old `fitting::fit_volume*` pair.
 
-use crate::core::model::{Aux, FitStrategy, Model};
+use crate::core::model::{Aux, FitStrategy, Measurement, MeasurementKind, Model, Sample, VolumeId};
 use crate::fitting::FitResults;
 use anyhow::{bail, Result};
 use ndarray::{Array3, Array4};
 use rayon::prelude::*;
+use std::collections::BTreeMap;
+
+/// Build the per-voxel identity-keyed [`Measurement`] from the volume values
+/// and their [`VolumeId`]s, per the model's declared [`MeasurementKind`].
+fn build_measurement(
+    kind: &MeasurementKind,
+    values: &[f64],
+    volume_ids: &[VolumeId],
+) -> Measurement {
+    match kind {
+        MeasurementKind::Named { .. } => {
+            let mut map: BTreeMap<&'static str, f64> = BTreeMap::new();
+            for (id, &v) in volume_ids.iter().zip(values) {
+                match id {
+                    VolumeId::Role(r) => {
+                        map.insert(r, v);
+                    }
+                    // The shell builds every `VolumeId` from the same
+                    // `MeasurementKind` it read off this model; a `Params` id
+                    // here means that invariant broke, not a valid input.
+                    VolumeId::Params(row) => panic!(
+                        "Named measurement got a Params volume id {row:?}; shell/model \
+                         MeasurementKind mismatch"
+                    ),
+                }
+            }
+            Measurement::Named(map)
+        }
+        MeasurementKind::Series { .. } => {
+            let samples = volume_ids
+                .iter()
+                .zip(values)
+                .map(|(id, &value)| {
+                    let params = match id {
+                        VolumeId::Params(row) => row.clone(),
+                        // Same invariant as above, mirrored for the Series arm.
+                        VolumeId::Role(r) => panic!(
+                            "Series measurement got a Role volume id {r:?}; shell/model \
+                             MeasurementKind mismatch"
+                        ),
+                    };
+                    Sample { params, value }
+                })
+                .collect();
+            Measurement::Series(samples)
+        }
+    }
+}
 
 /// Loaded auxiliary 3D maps, keyed by `InputSpec.name` (None if absent).
 pub struct AuxMaps {
@@ -62,12 +110,13 @@ impl AuxMaps {
 pub fn run(
     model: &dyn Model,
     data: &Array4<f64>,
+    volume_ids: &[VolumeId],
     mask: Option<&Array3<bool>>,
     aux: &AuxMaps,
     progress: &mut dyn FnMut(u64),
 ) -> Result<FitResults> {
     match model.strategy() {
-        FitStrategy::Voxelwise => run_voxelwise(model, data, mask, aux, progress),
+        FitStrategy::Voxelwise => run_voxelwise(model, data, volume_ids, mask, aux, progress),
         FitStrategy::MatrixWise => bail!("matrix-wise fitting not yet implemented"),
     }
 }
@@ -75,11 +124,20 @@ pub fn run(
 fn run_voxelwise(
     model: &dyn Model,
     data: &Array4<f64>,
+    volume_ids: &[VolumeId],
     mask: Option<&Array3<bool>>,
     aux: &AuxMaps,
     progress: &mut dyn FnMut(u64),
 ) -> Result<FitResults> {
     let (nx, ny, nz, n_t) = data.dim();
+
+    if volume_ids.len() != n_t {
+        bail!(
+            "volume_ids length {} != data volume count {}",
+            volume_ids.len(),
+            n_t
+        );
+    }
 
     if let Some(m) = mask {
         let (mx, my, mz) = m.dim();
@@ -121,13 +179,20 @@ fn run_voxelwise(
 
     let output_names = model.output_names();
     let n_outputs = output_names.len();
+    let kind = model.measurement();
     let results: Vec<_> = indices
         .par_iter()
         .map(|&(x, y, z)| {
             let voxel: Vec<f64> = (0..n_t).map(|t| data[[x, y, z, t]]).collect();
             let a = aux.at(x, y, z);
-            let fit =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| model.fit(&voxel, &a)));
+            // `build_measurement` can panic on a shell/model `MeasurementKind`
+            // mismatch (an internal invariant violation, not per-voxel data);
+            // keep it under the same `catch_unwind` as `fit` so it surfaces
+            // as a failed voxel rather than aborting the whole parallel run.
+            let fit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let meas = build_measurement(&kind, &voxel, volume_ids);
+                model.fit(&meas, &a)
+            }));
             ((x, y, z), fit.ok())
         })
         .collect();
@@ -157,8 +222,20 @@ fn run_voxelwise(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::model::{Aux, InputSpec, Model};
+    use crate::core::model::{Aux, InputSpec, Measurement, MeasurementKind, Model, VolumeId};
     use ndarray::{Array3, Array4};
+
+    /// Two `Series` identity rows keyed by acquisition index `t`.
+    fn sum_rows() -> Vec<BTreeMap<String, f64>> {
+        vec![
+            BTreeMap::from([("t".to_string(), 0.0)]),
+            BTreeMap::from([("t".to_string(), 1.0)]),
+        ]
+    }
+
+    fn sum_ids() -> Vec<VolumeId> {
+        sum_rows().into_iter().map(VolumeId::Params).collect()
+    }
 
     struct SumModel;
     impl Model for SumModel {
@@ -181,14 +258,22 @@ mod tests {
                 bids: None,
             }]
         }
-        fn n_acquisitions(&self) -> usize {
-            2
+        fn measurement(&self) -> MeasurementKind {
+            MeasurementKind::Series { rows: sum_rows() }
         }
-        fn forward(&self, _p: &[f64], _a: &Aux) -> Vec<f64> {
-            vec![0.0, 0.0]
+        fn forward(&self, _p: &[f64], _a: &Aux) -> Measurement {
+            Measurement::Series(
+                sum_rows()
+                    .into_iter()
+                    .map(|params| Sample { params, value: 0.0 })
+                    .collect(),
+            )
         }
-        fn fit(&self, sig: &[f64], aux: &Aux) -> Vec<f64> {
-            vec![sig.iter().sum(), aux.get("k").unwrap_or(-1.0)]
+        fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
+            vec![
+                m.series().iter().map(|s| s.value).sum(),
+                aux.get("k").unwrap_or(-1.0),
+            ]
         }
     }
 
@@ -200,7 +285,7 @@ mod tests {
         let mut k = Array3::<f64>::zeros((1, 1, 1));
         k[[0, 0, 0]] = 7.0;
         let aux = AuxMaps::new(vec![("k".to_string(), Some(k))]);
-        let res = run(&SumModel, &data, None, &aux, &mut |_| {}).unwrap();
+        let res = run(&SumModel, &data, &sum_ids(), None, &aux, &mut |_| {}).unwrap();
         assert_eq!(res["sum"][[0, 0, 0]], 3.0);
         assert_eq!(res["aux"][[0, 0, 0]], 7.0);
     }
@@ -215,7 +300,10 @@ mod tests {
         data[[1, 0, 0, 1]] = 2.0;
         let aux = AuxMaps::empty();
         let mut ticks = 0u64;
-        let _ = run(&SumModel, &data, None, &aux, &mut |n| ticks += n).unwrap();
+        let _ = run(&SumModel, &data, &sum_ids(), None, &aux, &mut |n| {
+            ticks += n
+        })
+        .unwrap();
         assert_eq!(ticks, 2); // two non-empty voxels
     }
 }

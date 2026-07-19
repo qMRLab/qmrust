@@ -117,19 +117,20 @@ pub trait Model: Send + Sync {
     fn param_bounds(&self) -> Vec<(f64, f64)>;    // per-param (lower, upper)
     fn fixed_mask(&self) -> Vec<bool>;            // true = not independently recovered
     fn required_inputs(&self) -> Vec<InputSpec>;  // auxiliary maps (B1/B0/R1, …)
-    fn n_acquisitions(&self) -> usize;            // expected number of volumes
+    fn measurement(&self) -> MeasurementKind;     // measurement shape + identities read by
 
     fn strategy(&self) -> FitStrategy { FitStrategy::Voxelwise }   // fit granularity
 
-    fn forward(&self, params: &[f64], aux: &Aux) -> Vec<f64>;      // noise-free signal
-    fn fit(&self, signal: &[f64], aux: &Aux) -> Vec<f64>;          // signal → outputs
+    fn forward(&self, params: &[f64], aux: &Aux) -> Measurement;   // noise-free, identity-tagged
+    fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;         // identity-keyed measurement → outputs
 
     fn bids(&self) -> Option<BidsSpec> { None }   // BIDS grouping suffix + entity map
 }
 ```
 
 The core never sees files, JSON, typed arrays, or config formats — only ordered `f64`
-slices and a scalar `Aux` bundle. That is the whole reason it is portable.
+params, an identity-keyed `Measurement`, and a scalar `Aux` bundle. That is the whole
+reason it is portable.
 
 ### Supporting value types
 
@@ -150,6 +151,22 @@ slices and a scalar `Aux` bundle. That is the whole reason it is portable.
   override); BIDS-sidecar protocols are produced separately by `rust-bids`'
   `protocol_for`.
 - **`BidsSpec { suffix, entities }`** — the model's BIDS identity (e.g. `IRT1`, `MTS`).
+- **`MeasurementKind { Named { roles }, Series { rows } }`** — a model's declared
+  measurement shape: a fixed set of role-labeled volumes, or a variable-length series
+  whose canonical per-volume identity `rows` (e.g. one `{"InversionTime": ti}` per TI) the
+  model owns.
+- **`Measurement { Named(BTreeMap<role, f64>), Series(Vec<Sample>) }`** — the per-voxel
+  measurement handed to `forward`/`fit`, read via `.role(name)` / `.series()` — never by
+  position.
+- **`Sample { params, value }`** — one acquired volume's value tagged with the identity
+  row (e.g. `{"InversionTime": 500.0}`) that names it.
+- **`VolumeId { Role(&str), Params(BTreeMap<String, f64>) }`** — the identity the shell
+  attaches to one data volume before the engine assembles it into a `Measurement`.
+
+Measurements are identity-keyed, not positional: the engine matches each supplied volume
+to a model's declared identity by value, so fitting is order-independent — reordering the
+acquisition list yields identical fitted results. An identity with no match fails loudly
+(a panic for that voxel) instead of silently assembling the wrong signal.
 
 ---
 
@@ -186,12 +203,16 @@ here is the only wiring a new model needs.
 YAML config ─► config::parse_config ─► (Config, raw Value)
    registry::by_name(cfg.model).build(raw, protocol) ─► Box<dyn Model>
    shell loads model.required_inputs() as 3-D maps ─► AuxMaps
-   engine::run(model, data4d, mask, aux, progress) ─► FitResults (name → 3-D map)
+   shell labels each data volume with a VolumeId (Role or Params)
+   engine::run(model, data4d, mask, volume_ids, aux, progress) ─► FitResults (name → 3-D map)
    io::nifti writes each map
 ```
 
 `engine::run` dispatches on `model.strategy()`; `run_voxelwise` fits masked, non-empty
-voxels in parallel (`rayon`), building a per-voxel `Aux` and calling `model.fit`.
+voxels in parallel (`rayon`), assembling each voxel's per-volume values and their
+`VolumeId`s into an identity-keyed `Measurement` (matching `model.measurement()`), building
+a per-voxel `Aux`, and calling `model.fit`. There is no positional signal slice anywhere
+in this path — a reordered volume list produces the same `Measurement` and the same fit.
 
 ### Simulate (CLI / core)
 
@@ -234,9 +255,30 @@ kept together:
 fn param_names(&self)    -> Vec<&'static str> { IrFitter::param_names().to_vec() }   // [T1, a, b]
 fn output_names(&self)   -> Vec<String>       { self.output_names.clone() }          // [T1, b, a, res, …]
 fn required_inputs(&self)-> Vec<InputSpec>    { vec![] }                             // IR needs no aux maps
-fn n_acquisitions(&self) -> usize             { self.n_ti }
-fn forward(&self, p: &[f64], _aux: &Aux) -> Vec<f64> { self.fitter.forward(p[0], p[1], p[2]) }
-fn fit(&self, sig: &[f64], _aux: &Aux)   -> Vec<f64> { self.fitter.fit_voxel(&Array1::from(sig)) }
+fn measurement(&self) -> MeasurementKind {
+    // One {"InversionTime": ti} identity row per fitter TI, canonical order.
+    MeasurementKind::Series { rows: ir_rows(&self.fitter) }
+}
+fn forward(&self, p: &[f64], _aux: &Aux) -> Measurement {
+    // Tag each forward-simulated value with the TI that produced it.
+    let samples = self.fitter.ti().iter().zip(self.fitter.forward(p[0], p[1], p[2]))
+        .map(|(&ti, value)| Sample { params: BTreeMap::from([("InversionTime".into(), ti)]), value })
+        .collect();
+    Measurement::Series(samples)
+}
+fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
+    // Assemble the signal in the fitter's own TI order by matching each
+    // expected TI to its sample BY VALUE — never by array position. An
+    // unmatched TI panics rather than silently mis-assembling the signal.
+    let samples = m.series();
+    let signal: Vec<f64> = self.fitter.ti().iter()
+        .map(|&ti| samples.iter()
+            .find(|s| s.params.get("InversionTime") == Some(&ti))
+            .map(|s| s.value)
+            .unwrap_or_else(|| panic!("measurement has no sample with InversionTime={ti}")))
+        .collect();
+    self.fitter.fit_voxel(&Array1::from_vec(signal))
+}
 fn bids(&self) -> Option<BidsSpec> { Some(BidsSpec { suffix: "IRT1", entities: IR_ENTITIES }) }
 
 // the registry builder: parse this model's config, apply any protocol override, validate, box it
@@ -245,12 +287,16 @@ pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> 
     // e.g. a .mat file may override inversion times via the resolved Protocol
     if !proto.volumes.is_empty() { /* pull InversionTime values from proto */ }
     cfg.validate()?;
-    Ok(Box::new(IrModel::new(cfg)))
+    let model = IrModel::new(cfg);
+    // Fail loudly at build if `proto` is inconsistent with the model's own
+    // declared measurement, rather than per-voxel at fit time.
+    validate_against_protocol(&model.measurement(), proto)?;
+    Ok(Box::new(model))
 }
 ```
 
-qMT reads its config from a nested `qmt_spgr:` key and declares aux inputs with BIDS
-locators:
+qMT reads its config from a nested `qmt_spgr:` key, declares aux inputs with BIDS
+locators, and reads a `Series` measurement keyed by `(Angle, Offset)` rather than TI:
 
 ```rust
 fn required_inputs(&self) -> Vec<InputSpec> { vec![
@@ -258,8 +304,9 @@ fn required_inputs(&self) -> Vec<InputSpec> { vec![
     InputSpec { name: "B1map", required: false, bids: Some(BidsMap { suffix: "TB1map", entity: None }) },
     InputSpec { name: "B0map", required: false, bids: Some(BidsMap { suffix: "B0map",  entity: None }) },
 ]}
-fn fit(&self, signal: &[f64], aux: &Aux) -> Vec<f64> {
+fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
     let b1 = aux.get("B1map").unwrap_or(1.0);   // shell supplied it; model just reads it
+    // m.series() is matched to this model's protocol rows by (Angle, Offset), not position.
     /* … */
 }
 ```

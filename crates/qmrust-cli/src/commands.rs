@@ -11,7 +11,55 @@ use owo_colors::{OwoColorize, Stream::Stderr};
 use std::path::{Path, PathBuf};
 
 use crate::io;
+use qmrust_core::core::model::{MeasurementKind, Protocol, VolumeId};
 use qmrust_core::models;
+
+/// Build per-volume identities for `engine::run` from a model's declared
+/// measurement kind and the resolved protocol — dispatch on the measurement
+/// shape, never on the model name. Every volume is labeled with a real
+/// identity, so the model's `fit` always assembles by value, never by position.
+///
+/// - `Named { roles }`: volume `i` takes role `roles[i]` (requires exactly
+///   `roles.len()` volumes).
+/// - `Series { rows }`: prefer externally-resolved per-volume rows
+///   (`proto.volumes`, e.g. `.mat` sidecar TIs); otherwise fall back to the
+///   model's own canonical identity rows. Both carry populated params — an
+///   empty/positional row is never emitted. (The future BIDS shell supplies
+///   sidecar-derived rows here.)
+fn build_volume_ids(
+    kind: MeasurementKind,
+    proto: &Protocol,
+    n_volumes: usize,
+) -> Result<Vec<VolumeId>> {
+    match kind {
+        MeasurementKind::Named { roles } => {
+            if roles.len() != n_volumes {
+                bail!(
+                    "Data has {} volumes but model expects {} named volumes ({:?})",
+                    n_volumes,
+                    roles.len(),
+                    roles
+                );
+            }
+            Ok(roles.iter().map(|&r| VolumeId::Role(r)).collect())
+        }
+        MeasurementKind::Series { rows } => {
+            let source = if proto.volumes.len() == n_volumes {
+                &proto.volumes
+            } else {
+                &rows
+            };
+            if source.len() != n_volumes {
+                bail!(
+                    "Data has {} volumes but the model's series protocol has {} rows",
+                    n_volumes,
+                    source.len()
+                );
+            }
+            Ok(source.iter().cloned().map(VolumeId::Params).collect())
+        }
+    }
+}
 
 /// Read a config file from disk and parse + validate it, also returning the
 /// raw YAML tree so per-model builders can pull their own sub-config. File
@@ -287,13 +335,11 @@ pub fn run_fit(
 
     let n_volumes = input.data.dim().3;
     eprintln!("Model: {}, {} volumes", cfg.model, n_volumes);
-    if n_volumes != model.n_acquisitions() {
-        bail!(
-            "Data has {} volumes but model protocol expects {}",
-            n_volumes,
-            model.n_acquisitions()
-        );
-    }
+    // Build the per-volume identities from the model's declared measurement
+    // kind and the resolved protocol — no per-model branching. `Named` maps
+    // each volume to its role; `Series` tags each volume with its protocol
+    // row (from the resolved sidecar/.mat rows when available).
+    let volume_ids = build_volume_ids(model.measurement(), &proto, n_volumes)?;
 
     // Load the aux maps this model declares (by logical name).
     let mut aux_pairs: Vec<(String, Option<Array3<f64>>)> = Vec::new();
@@ -318,6 +364,7 @@ pub fn run_fit(
     let results = qmrust_core::engine::run(
         model.as_ref(),
         &input.data,
+        &volume_ids,
         input.mask.as_ref(),
         &aux,
         &mut cb,

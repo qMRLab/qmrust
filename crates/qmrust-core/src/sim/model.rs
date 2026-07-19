@@ -59,8 +59,8 @@ mod tests {
         let model = build_model(&cfg, &raw).unwrap();
         let p = param_vector(model.as_ref(), cfg.sim.as_ref().unwrap()).unwrap();
         assert_eq!(p, vec![900.0, 500.0, -1000.0]);
-        let sig = model.forward(&p, &Aux::new());
-        let fitted = model.fit(&sig, &Aux::new());
+        let meas = model.forward(&p, &Aux::new());
+        let fitted = model.fit(&meas, &Aux::new());
         assert!((fitted[0] - 900.0).abs() < 1.0, "T1: {}", fitted[0]);
     }
 
