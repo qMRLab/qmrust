@@ -98,6 +98,7 @@ cargo run -p qmrust-cli -- fit  --mat-dir <dir> --config prots/<cfg>.yaml --outp
 cargo run -p qmrust-cli -- sim  single-voxel --config prots/<cfg>.yaml --output <out>.json
 cargo build -p qmrust-core --target wasm32-unknown-unknown   # core must stay wasm-clean
 cargo build -p rust-bids   --target wasm32-unknown-unknown   # rust-bids must stay wasm-clean too
+cargo test  -p qmrust-wasm --target wasm32-unknown-unknown --no-run  # wasm bindings + browser tests must compile (CI runs them in a headless browser)
 ```
 
 Before claiming work is done: `cargo test --workspace`, `cargo fmt --all --check`, and
