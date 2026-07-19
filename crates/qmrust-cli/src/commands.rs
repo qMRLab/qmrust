@@ -581,6 +581,8 @@ pub fn run_fit_bids(
         bids_dir
     );
 
+    let mut fit_count = 0usize;
+    let mut skipped = 0usize;
     for c in &collections {
         for w in &c.warnings {
             eprintln!("  warning ({}): {}", c.subject, w.message);
@@ -590,15 +592,24 @@ pub fn run_fit_bids(
             Some(ses) => format!("{}/{}", c.subject, ses),
             None => c.subject.clone(),
         };
-        eprintln!("Fitting {}...", label);
 
-        let (data, proto, header) = match load_collection(&fs, c, &key_refs) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("  skipping {}: {}", label, e);
-                continue;
-            }
-        };
+        // Only the expected, structural case is a skip: `Named` collections
+        // (e.g. qMT/MTS-style sets) aren't reorderable to a model's axis order
+        // yet (see `load_collection`). Anything else `load_collection` (or the
+        // model build / fit_and_write below) reports — a corrupt NIfTI, a
+        // spatial-dims mismatch, a broken sidecar — is a real failure and must
+        // propagate loudly (`?`), never be logged-and-skipped alongside it.
+        if matches!(c.data, GroupedData::Named(_)) {
+            eprintln!(
+                "  skipping {}: named-collection fit not yet supported (follow-up)",
+                label
+            );
+            skipped += 1;
+            continue;
+        }
+
+        eprintln!("Fitting {}...", label);
+        let (data, proto, header) = load_collection(&fs, c, &key_refs)?;
 
         let model = (entry.build)(&raw, &proto)?;
         eprintln!("  Model: {}, {} volumes", cfg.model, data.dim().3);
@@ -622,6 +633,17 @@ pub fn run_fit_bids(
             from_mat,
             &subject_dir,
         )?;
+        fit_count += 1;
+    }
+
+    eprintln!("Fit {} subject(s), skipped {}", fit_count, skipped);
+    if fit_count == 0 {
+        bail!(
+            "no {} collections were fit in {:?} ({} skipped)",
+            suffix,
+            bids_dir,
+            skipped
+        );
     }
 
     Ok(())
@@ -777,6 +799,94 @@ mod tests {
             "T1: {} (expected ~{})",
             t1_map[[0, 0, 0]],
             t1
+        );
+    }
+
+    /// A real per-volume failure (here: a spatial-dims mismatch that
+    /// `load_collection` detects) must fail the whole run loudly — not be
+    /// logged as a "skip" alongside the deliberate Named-collection skip.
+    #[test]
+    fn run_fit_bids_propagates_a_real_load_error_instead_of_skipping() {
+        let tmp = TempDir::new("fit-bids-corrupt");
+        let bids_dir = tmp.0.join("dataset");
+        let anat_dir = bids_dir.join("sub-01/anat");
+        std::fs::create_dir_all(&anat_dir).unwrap();
+
+        let t1 = 900.0_f64;
+        let a = 500.0_f64;
+        let b = -1000.0_f64;
+        let tis = [350.0_f64, 500.0, 650.0, 800.0, 950.0, 1100.0, 1250.0];
+        let header = make_minimal_header(1, 1, 1);
+        // A second header with mismatched spatial dims (2x1x1 vs 1x1x1), used
+        // for one volume so `load_collection` hits its dims-mismatch bail.
+        let bad_header = make_minimal_header(2, 1, 1);
+        for (i, ti) in tis.iter().enumerate() {
+            let signal = ir_signal(*ti, t1, a, b);
+            let nii_path = anat_dir.join(format!("sub-01_inv-{:02}_IRT1.nii.gz", i + 1));
+            if i == 2 {
+                let data = Array3::from_elem((2, 1, 1), signal);
+                io::nifti::write_3d_nifti(&data, &bad_header, &nii_path).unwrap();
+            } else {
+                let data = Array3::from_elem((1, 1, 1), signal);
+                io::nifti::write_3d_nifti(&data, &header, &nii_path).unwrap();
+            }
+            let json_path = anat_dir.join(format!("sub-01_inv-{:02}_IRT1.json", i + 1));
+            std::fs::write(&json_path, format!(r#"{{"InversionTime": {ti}}}"#)).unwrap();
+        }
+
+        let config_path = tmp.0.join("ir.yaml");
+        std::fs::write(
+            &config_path,
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800, 950, 1100, 1250]\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.0.join("out");
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
+            Ok(()) => panic!("a spatial-dims mismatch must fail the run, not be skipped"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("spatial dims"),
+            "expected a dims-mismatch error, got: {err}"
+        );
+    }
+
+    /// An all-skipped dataset (every resolved collection is `Named`, e.g. an
+    /// MTS/qmt_spgr set — not yet BIDS-fittable) must exit non-zero, not
+    /// silently report success having fit zero subjects.
+    #[test]
+    fn run_fit_bids_bails_when_every_collection_is_skipped() {
+        let tmp = TempDir::new("fit-bids-all-named");
+        let bids_dir = tmp.0.join("dataset");
+        let anat_dir = bids_dir.join("sub-01/anat");
+        std::fs::create_dir_all(&anat_dir).unwrap();
+
+        let header = make_minimal_header(1, 1, 1);
+        let data = Array3::from_elem((1, 1, 1), 1.0_f64);
+        for fname in [
+            "sub-01_flip-1_mt-off_MTS.nii.gz",
+            "sub-01_flip-1_mt-on_MTS.nii.gz",
+            "sub-01_flip-2_mt-off_MTS.nii.gz",
+        ] {
+            io::nifti::write_3d_nifti(&data, &header, &anat_dir.join(fname)).unwrap();
+        }
+
+        let config_path = tmp.0.join("qmt.yaml");
+        std::fs::write(
+            &config_path,
+            "model: qmt_spgr\nqmt_spgr:\n  model: Ramani\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.0.join("out");
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
+            Ok(()) => panic!("an all-Named/all-skipped dataset must bail, not exit Ok"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("no MTS collections were fit"),
+            "expected the all-skipped bail message, got: {err}"
         );
     }
 
