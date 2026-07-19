@@ -214,6 +214,24 @@ voxels in parallel (`rayon`), assembling each voxel's per-volume values and thei
 a per-voxel `Aux`, and calling `model.fit`. There is no positional signal slice anywhere
 in this path — a reordered volume list produces the same `Measurement` and the same fit.
 
+### Fit from a BIDS dataset (CLI)
+
+```
+qmrust fit --bids-dir <dir> ─► StdFs (native DatasetFs) ─► rust_bids::collections_for
+   for each Collection: load_collection ─► ordered 4-D volumes + Protocol (rust_bids::protocol_for)
+   build_volume_ids(model.measurement(), protocol) ─► engine::run ─► FitResults
+   io::nifti writes output_dir/<subject>[/<session>]/<map>.nii.gz
+```
+
+`run_fit_bids` groups the dataset per the registry's `bids_suffix` and fits each resolved
+collection through the same order-free `build_volume_ids` → `engine::run` path as the
+file-based flow above — a BIDS collection is just another way to arrive at a `Protocol`
+and an ordered volume set. v1 scope: `Sequential` collections (e.g. IRT1) and models with
+no required aux input; a model that declares required aux is rejected up front (loud
+error, not a silent skip). `Named` collections (e.g. MTS) are logged and skipped for now.
+Deferred to a follow-up: fitting `Named` collections, and resolving BIDS-side auxiliary
+maps (B1/B0/R1) so aux-dependent models can fit straight from a BIDS dataset.
+
 ### Simulate (CLI / core)
 
 `sim::{run_signal, run_single_voxel, run_sensitivity, run_montecarlo}` build a model

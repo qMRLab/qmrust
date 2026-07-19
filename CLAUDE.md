@@ -95,6 +95,7 @@ cargo test  --workspace
 cargo fmt --all --check                                 # CI format gate
 cargo clippy --workspace --all-targets -- -D warnings   # CI lint gate (must be clean)
 cargo run -p qmrust-cli -- fit  --mat-dir <dir> --config prots/<cfg>.yaml --output-dir <out>
+cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config prots/<cfg>.yaml --output-dir <out>  # v1: no-aux, sequential (e.g. IRT1)
 cargo run -p qmrust-cli -- sim  single-voxel --config prots/<cfg>.yaml --output <out>.json
 cargo build -p qmrust-core --target wasm32-unknown-unknown   # core must stay wasm-clean
 cargo build -p rust-bids   --target wasm32-unknown-unknown   # rust-bids must stay wasm-clean too
