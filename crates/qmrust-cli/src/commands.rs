@@ -11,8 +11,10 @@ use owo_colors::{OwoColorize, Stream::Stderr};
 use std::path::{Path, PathBuf};
 
 use crate::io;
+use crate::io::bids_fs::StdFs;
 use qmrust_core::core::model::{MeasurementKind, Protocol, VolumeId};
 use qmrust_core::models;
+use rust_bids::{Collection, GroupedData};
 
 /// Build per-volume identities for `engine::run` from a model's declared
 /// measurement kind and the resolved protocol — dispatch on the measurement
@@ -248,6 +250,69 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
     }
 }
 
+/// Load one resolved BIDS `Collection` into the `(data, protocol, header)`
+/// triple the engine needs: the volumes stacked in the collection's order as
+/// `[nx,ny,nz,nt]`, the per-volume sidecar `Protocol` (for the given keys),
+/// and the first volume's header for output geometry. `Named` collections
+/// (e.g. qMT-style MTS sets) are a later increment — reordering them to a
+/// model's `required` axis order is not yet implemented, so they bail loudly
+/// rather than silently mis-assign volumes.
+///
+/// Not yet wired into a CLI command — that lands with `--bids-dir` in a later
+/// task (matches `StdFs`, which this builds on).
+#[allow(dead_code)]
+fn load_collection(
+    fs: &StdFs,
+    c: &Collection,
+    keys: &[&str],
+) -> Result<(Array4<f64>, Protocol, Option<NiftiHeader>)> {
+    let vols = match &c.data {
+        GroupedData::Sequential(vols) => vols,
+        GroupedData::Named(_) => {
+            bail!("named-collection fit not yet supported (see fitting-integration follow-ups)")
+        }
+    };
+    if vols.is_empty() {
+        bail!("collection for '{}' has no volumes", c.suffix);
+    }
+
+    let mut header = None;
+    let mut dims: Option<(usize, usize, usize)> = None;
+    let mut slices: Vec<Array3<f64>> = Vec::with_capacity(vols.len());
+    for v in vols {
+        let path = fs.root.join(&v.nii);
+        let (data, h) = io::nifti::read_map_nifti_with_header(&path)?;
+        let d = data.dim();
+        match dims {
+            None => dims = Some(d),
+            Some(expected) => {
+                if expected != d {
+                    bail!(
+                        "volume {:?} has spatial dims {:?}, expected {:?} (from the first volume)",
+                        path,
+                        d,
+                        expected
+                    );
+                }
+            }
+        }
+        if header.is_none() {
+            header = Some(h);
+        }
+        slices.push(data);
+    }
+
+    let (nx, ny, nz) = dims.expect("checked non-empty above");
+    let nt = slices.len();
+    let mut out = Array4::<f64>::zeros((nx, ny, nz, nt));
+    for (t, slice) in slices.iter().enumerate() {
+        out.index_axis_mut(ndarray::Axis(3), t).assign(slice);
+    }
+
+    let proto = rust_bids::protocol_for(fs, c, keys)?;
+    Ok((out, proto, header))
+}
+
 // ─── Fitting dispatch ───────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -433,4 +498,109 @@ fn make_minimal_header(nx: usize, ny: usize, nz: usize) -> NiftiHeader {
     h.srow_y = [0.0, 1.0, 0.0, 1.0];
     h.srow_z = [0.0, 0.0, 1.0, 1.0];
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A unique tempdir under `std::env::temp_dir()`, removed on drop so
+    /// repeated test runs don't accumulate stale fixture directories.
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "qmrust-cli-test-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Clean IR signal `a + b*exp(-ti/t1)`, matching the fixture the fitting
+    /// engine round-trips against elsewhere in the workspace.
+    fn ir_signal(ti: f64, t1: f64, a: f64, b: f64) -> f64 {
+        a + b * (-ti / t1).exp()
+    }
+
+    #[test]
+    fn load_collection_stacks_sequential_irt1_series_in_ti_order() {
+        let tmp = TempDir::new("load-collection");
+        let anat_dir = tmp.0.join("sub-01/anat");
+        std::fs::create_dir_all(&anat_dir).unwrap();
+
+        let t1 = 900.0_f64;
+        let a = 500.0_f64;
+        let b = -1000.0_f64;
+        let tis = [350.0_f64, 500.0, 650.0, 800.0];
+        let header = make_minimal_header(1, 1, 1);
+        for (i, ti) in tis.iter().enumerate() {
+            let signal = ir_signal(*ti, t1, a, b);
+            let data = Array3::from_elem((1, 1, 1), signal);
+            let nii_path = anat_dir.join(format!("sub-01_inv-{:02}_IRT1.nii.gz", i + 1));
+            io::nifti::write_3d_nifti(&data, &header, &nii_path).unwrap();
+            let json_path = anat_dir.join(format!("sub-01_inv-{:02}_IRT1.json", i + 1));
+            std::fs::write(&json_path, format!(r#"{{"InversionTime": {ti}}}"#)).unwrap();
+        }
+
+        let fs = StdFs {
+            root: tmp.0.clone(),
+        };
+        let cfg = rust_bids::default_config();
+        let cols = rust_bids::collections_for(&fs, &cfg, "IRT1").unwrap();
+        assert_eq!(cols.len(), 1, "one IRT1 collection for sub-01");
+
+        let (data, proto, header) = load_collection(&fs, &cols[0], &["InversionTime"]).unwrap();
+
+        assert_eq!(data.dim(), (1, 1, 1, 4));
+        assert!(header.is_some());
+        for (i, ti) in tis.iter().enumerate() {
+            let expected = ir_signal(*ti, t1, a, b);
+            assert!(
+                (data[[0, 0, 0, i]] - expected).abs() < 1e-6,
+                "volume {i} (TI={ti}) should carry the clean IR signal in TI order"
+            );
+        }
+
+        assert_eq!(proto.volumes.len(), 4);
+        for (i, ti) in tis.iter().enumerate() {
+            assert_eq!(
+                proto.volumes[i].get("InversionTime"),
+                Some(ti),
+                "protocol volume {i} should carry the matching InversionTime"
+            );
+        }
+    }
+
+    #[test]
+    fn load_collection_rejects_named_collections_for_now() {
+        let c = Collection {
+            subject: "sub-01".into(),
+            session: None,
+            run: None,
+            task: None,
+            suffix: "MTS".into(),
+            data: GroupedData::Named(Default::default()),
+            warnings: vec![],
+        };
+        let fs = StdFs {
+            root: std::env::temp_dir(),
+        };
+        match load_collection(&fs, &c, &["FlipAngle"]) {
+            Ok(_) => panic!("named collections must be rejected, not silently loaded"),
+            Err(e) => assert!(e
+                .to_string()
+                .contains("named-collection fit not yet supported")),
+        }
+    }
 }
