@@ -19,8 +19,17 @@ fn build_measurement(
         MeasurementKind::Named { .. } => {
             let mut map: BTreeMap<&'static str, f64> = BTreeMap::new();
             for (id, &v) in volume_ids.iter().zip(values) {
-                if let VolumeId::Role(r) = id {
-                    map.insert(r, v);
+                match id {
+                    VolumeId::Role(r) => {
+                        map.insert(r, v);
+                    }
+                    // The shell builds every `VolumeId` from the same
+                    // `MeasurementKind` it read off this model; a `Params` id
+                    // here means that invariant broke, not a valid input.
+                    VolumeId::Params(row) => panic!(
+                        "Named measurement got a Params volume id {row:?}; shell/model \
+                         MeasurementKind mismatch"
+                    ),
                 }
             }
             Measurement::Named(map)
@@ -32,7 +41,11 @@ fn build_measurement(
                 .map(|(id, &value)| {
                     let params = match id {
                         VolumeId::Params(row) => row.clone(),
-                        VolumeId::Role(_) => BTreeMap::new(),
+                        // Same invariant as above, mirrored for the Series arm.
+                        VolumeId::Role(r) => panic!(
+                            "Series measurement got a Role volume id {r:?}; shell/model \
+                             MeasurementKind mismatch"
+                        ),
                     };
                     Sample { params, value }
                 })
@@ -172,9 +185,14 @@ fn run_voxelwise(
         .map(|&(x, y, z)| {
             let voxel: Vec<f64> = (0..n_t).map(|t| data[[x, y, z, t]]).collect();
             let a = aux.at(x, y, z);
-            let meas = build_measurement(&kind, &voxel, volume_ids);
-            let fit =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| model.fit(&meas, &a)));
+            // `build_measurement` can panic on a shell/model `MeasurementKind`
+            // mismatch (an internal invariant violation, not per-voxel data);
+            // keep it under the same `catch_unwind` as `fit` so it surfaces
+            // as a failed voxel rather than aborting the whole parallel run.
+            let fit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let meas = build_measurement(&kind, &voxel, volume_ids);
+                model.fit(&meas, &a)
+            }));
             ((x, y, z), fit.ok())
         })
         .collect();

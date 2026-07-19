@@ -1,12 +1,12 @@
 //! qMT-SPGR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsMap, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, Protocol, Sample,
+    validate_against_protocol, Aux, BidsMap, BidsSpec, EntityRole, FitStrategy, InputSpec,
+    Measurement, MeasurementKind, Model, Protocol, Sample,
 };
 use crate::models::qmt_spgr::config::QmtSpgrConfig;
 use crate::models::qmt_spgr::QmtSpgrFitter;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 
 pub struct QmtModel {
@@ -158,16 +158,19 @@ impl Model for QmtModel {
 }
 
 /// Registry builder: parse `QmtSpgrConfig` from the `qmt_spgr` sub-key of the
-/// raw YAML tree, validate, and box the model. `proto` is currently unused —
-/// qMT reads its protocol from its own config; a BIDS protocol source may
-/// populate it later.
-pub fn build(v: &serde_yaml::Value, _proto: &Protocol) -> Result<Box<dyn Model>> {
+/// raw YAML tree, validate, and box the model. qMT reads its own acquisition
+/// protocol from its config today, so `proto` is expected empty; it is still
+/// checked for consistency in case a BIDS protocol source populates it later.
+pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
     let mut cfg: QmtSpgrConfig = match v.get("qmt_spgr") {
         Some(sub) => serde_yaml::from_value(sub.clone())?,
         None => QmtSpgrConfig::default(),
     };
     cfg.validate()?;
-    Ok(Box::new(QmtModel::new(&cfg)))
+    let model = QmtModel::new(&cfg);
+    validate_against_protocol(&model.measurement(), proto)
+        .context("qmt_spgr: protocol inconsistent with model's measurement")?;
+    Ok(Box::new(model))
 }
 
 #[cfg(test)]

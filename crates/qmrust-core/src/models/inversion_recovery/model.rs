@@ -1,12 +1,12 @@
 //! IR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
-    Protocol, Sample,
+    validate_against_protocol, Aux, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement,
+    MeasurementKind, Model, Protocol, Sample,
 };
 use crate::models::inversion_recovery::config::IrConfig;
 use crate::models::inversion_recovery::fit::IrFitter;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 
 pub struct IrModel {
@@ -124,7 +124,10 @@ pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> 
         }
     }
     cfg.validate()?;
-    Ok(Box::new(IrModel::new(cfg)))
+    let model = IrModel::new(cfg);
+    validate_against_protocol(&model.measurement(), proto)
+        .context("inversion_recovery: protocol inconsistent with model's measurement")?;
+    Ok(Box::new(model))
 }
 
 #[cfg(test)]
@@ -147,6 +150,33 @@ mod tests {
         let fitted = m.fit(&sig, &Aux::new());
         // output_names[0] == "T1"
         assert!((fitted[0] - 900.0).abs() < 1.0, "T1: {}", fitted[0]);
+    }
+
+    #[test]
+    fn build_rejects_protocol_with_missing_identity_key() {
+        // Four protocol volumes, but only three carry `InversionTime` (the
+        // fourth is some unrelated key); the build overrides
+        // `cfg.inversion_times` from the three matching values (enough to
+        // pass the fitter's own minimum-TI-count check), so the model would
+        // expect 3 volumes while the protocol supplies 4 — an inconsistency
+        // that must fail loudly at build, not per voxel.
+        let proto = Protocol {
+            volumes: vec![
+                BTreeMap::from([("InversionTime".to_string(), 350.0)]),
+                BTreeMap::from([("InversionTime".to_string(), 500.0)]),
+                BTreeMap::from([("InversionTime".to_string(), 650.0)]),
+                BTreeMap::from([("SomeOtherKey".to_string(), 1.0)]),
+            ],
+            global: BTreeMap::new(),
+        };
+        let err = match build(&ir_value(), &proto) {
+            Ok(_) => panic!("expected build to reject an inconsistent protocol"),
+            Err(e) => e,
+        };
+        let msg = format!("{err:#}");
+        assert!(msg.contains("inversion_recovery"), "{msg}");
+        assert!(msg.contains("expected 3 volumes"), "{msg}");
+        assert!(msg.contains("supplies 4"), "{msg}");
     }
 
     #[test]
