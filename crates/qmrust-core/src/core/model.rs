@@ -118,14 +118,44 @@ pub fn validate_against_protocol(kind: &MeasurementKind, proto: &Protocol) -> An
                     proto.volumes.len()
                 );
             }
-            for key in series_keys(rows) {
+            let keys = series_keys(rows);
+            for key in &keys {
                 if let Some((i, _)) = proto
                     .volumes
                     .iter()
                     .enumerate()
-                    .find(|(_, vol)| !vol.contains_key(key))
+                    .find(|(_, vol)| !vol.contains_key(*key))
                 {
                     bail!("protocol volume {} is missing expected key '{}'", i, key);
+                }
+            }
+            // Count + keys match; now confirm the supplied rows are the same
+            // *multiset* of identities as the model's canonical rows (order-free —
+            // the shell may hand volumes back in any order). Matching each
+            // canonical row against a shrinking pool of supplied rows, by exact
+            // value, catches a sidecar/protocol whose TIs (etc.) don't line up
+            // with the model's rows even though the count and keys do.
+            let mut pool: Vec<&BTreeMap<String, f64>> = proto.volumes.iter().collect();
+            for model_row in rows {
+                let row_bits = |m: &BTreeMap<String, f64>| -> Vec<u64> {
+                    keys.iter().map(|k| m[*k].to_bits()).collect()
+                };
+                let target = row_bits(model_row);
+                match pool.iter().position(|vol| row_bits(vol) == target) {
+                    Some(pos) => {
+                        pool.remove(pos);
+                    }
+                    None => {
+                        let desc: Vec<String> = keys
+                            .iter()
+                            .map(|k| format!("{}={}", k, model_row[*k]))
+                            .collect();
+                        bail!(
+                            "protocol does not supply a volume matching expected identity ({}); \
+                             supplied values differ from the model's canonical protocol",
+                            desc.join(", ")
+                        );
+                    }
                 }
             }
             Ok(())
@@ -313,6 +343,24 @@ mod tests {
         proto.volumes[1].insert("OtherKey".to_string(), 1.0);
         let err = validate_against_protocol(&kind, &proto).unwrap_err();
         assert!(err.to_string().contains("InversionTime"));
+    }
+
+    #[test]
+    fn validate_against_protocol_ok_when_permuted() {
+        let kind = series_kind(&[350.0, 500.0, 650.0]);
+        // Same TIs, count-matching, but supplied in a different order.
+        let proto = proto_with_tis(&[650.0, 350.0, 500.0]);
+        assert!(validate_against_protocol(&kind, &proto).is_ok());
+    }
+
+    #[test]
+    fn validate_against_protocol_rejects_wrong_value_at_matching_count() {
+        let kind = series_kind(&[350.0, 500.0, 650.0]);
+        // Same count and keys, but one TI value doesn't match any canonical row.
+        let proto = proto_with_tis(&[350.0, 500.0, 700.0]);
+        let err = validate_against_protocol(&kind, &proto).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("InversionTime=650"), "{msg}");
     }
 
     #[test]
