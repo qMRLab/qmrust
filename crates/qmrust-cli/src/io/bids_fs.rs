@@ -3,8 +3,6 @@ use rust_bids::{DatasetFs, Entry};
 use std::path::PathBuf;
 
 /// Native filesystem feeder for `rust-bids` (the browser supplies its own).
-/// Not yet wired into a CLI command — that lands with `--bids-dir` in a later task.
-#[allow(dead_code)]
 pub struct StdFs {
     pub root: PathBuf,
 }

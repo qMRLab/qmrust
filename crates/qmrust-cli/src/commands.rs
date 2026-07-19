@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 
 use crate::io;
 use crate::io::bids_fs::StdFs;
-use qmrust_core::core::model::{MeasurementKind, Protocol, VolumeId};
+use qmrust_core::core::model::{MeasurementKind, Model, Protocol, VolumeId};
+use qmrust_core::engine::AuxMaps;
 use qmrust_core::models;
 use rust_bids::{Collection, GroupedData};
 
@@ -257,10 +258,6 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 /// (e.g. qMT-style MTS sets) are a later increment — reordering them to a
 /// model's `required` axis order is not yet implemented, so they bail loudly
 /// rather than silently mis-assign volumes.
-///
-/// Not yet wired into a CLI command — that lands with `--bids-dir` in a later
-/// task (matches `StdFs`, which this builds on).
-#[allow(dead_code)]
 fn load_collection(
     fs: &StdFs,
     c: &Collection,
@@ -400,11 +397,6 @@ pub fn run_fit(
 
     let n_volumes = input.data.dim().3;
     eprintln!("Model: {}, {} volumes", cfg.model, n_volumes);
-    // Build the per-volume identities from the model's declared measurement
-    // kind and the resolved protocol — no per-model branching. `Named` maps
-    // each volume to its role; `Series` tags each volume with its protocol
-    // row (from the resolved sidecar/.mat rows when available).
-    let volume_ids = build_volume_ids(model.measurement(), &proto, n_volumes)?;
 
     // Load the aux maps this model declares (by logical name).
     let mut aux_pairs: Vec<(String, Option<Array3<f64>>)> = Vec::new();
@@ -421,19 +413,55 @@ pub fn run_fit(
         };
         aux_pairs.push((spec.name.to_string(), map));
     }
-    let aux = qmrust_core::engine::AuxMaps::new(aux_pairs);
+    let aux = AuxMaps::new(aux_pairs);
 
-    let start = std::time::Instant::now();
-    let (nx, ny, nz, _) = input.data.dim();
-    let (pb, mut cb) = crate::progress::voxel_bar(nx * ny * nz);
-    let results = qmrust_core::engine::run(
+    // NIfTI inputs carry a real spatial header → preserve it (write_3d_nifti).
+    // .mat inputs have none → emit a make_nii-compatible header
+    // (write_map_nifti: 2D when z=1, sform origin at voxel (1,1,1)) so the
+    // maps overlay/subtract cleanly against qMRLab's FitResults.
+    let from_mat = input.nifti_header.is_none();
+    let header = input.nifti_header.unwrap_or_else(|| {
+        let (nx, ny, nz, _) = input.data.dim();
+        make_minimal_header(nx, ny, nz)
+    });
+
+    fit_and_write(
         model.as_ref(),
         &input.data,
-        &volume_ids,
+        &proto,
         input.mask.as_ref(),
         &aux,
-        &mut cb,
-    )?;
+        &header,
+        from_mat,
+        &output_dir,
+    )
+}
+
+/// Run the engine over one (data, protocol) volume and write the result maps
+/// as NIfTI into `output_dir` — the shared tail of both `run_fit` (NIfTI/.mat
+/// input) and `run_fit_bids` (one call per resolved BIDS collection).
+#[allow(clippy::too_many_arguments)]
+fn fit_and_write(
+    model: &dyn Model,
+    data: &Array4<f64>,
+    proto: &Protocol,
+    mask: Option<&Array3<bool>>,
+    aux: &AuxMaps,
+    header: &NiftiHeader,
+    from_mat: bool,
+    output_dir: &Path,
+) -> Result<()> {
+    let n_volumes = data.dim().3;
+    // Build the per-volume identities from the model's declared measurement
+    // kind and the resolved protocol — no per-model branching. `Named` maps
+    // each volume to its role; `Series` tags each volume with its protocol
+    // row (from the resolved sidecar/.mat rows when available).
+    let volume_ids = build_volume_ids(model.measurement(), proto, n_volumes)?;
+
+    let start = std::time::Instant::now();
+    let (nx, ny, nz, _) = data.dim();
+    let (pb, mut cb) = crate::progress::voxel_bar(nx * ny * nz);
+    let results = qmrust_core::engine::run(model, data, &volume_ids, mask, aux, &mut cb)?;
     pb.finish_and_clear();
     let elapsed = start.elapsed().as_secs_f64();
     let done_msg = format!("Fitting complete in {:.2}s", elapsed);
@@ -442,24 +470,14 @@ pub fn run_fit(
         done_msg.if_supports_color(Stderr, |t| t.green().bold().to_string())
     );
 
-    // Write outputs. NIfTI inputs carry a real spatial header → preserve it
-    // (write_3d_nifti). .mat inputs have none → emit a make_nii-compatible
-    // header (write_map_nifti: 2D when z=1, sform origin at voxel (1,1,1)) so
-    // the maps overlay/subtract cleanly against qMRLab's FitResults.
-    std::fs::create_dir_all(&output_dir)?;
-    let from_mat = input.nifti_header.is_none();
-    let header = input.nifti_header.unwrap_or_else(|| {
-        let (nx, ny, nz, _) = input.data.dim();
-        make_minimal_header(nx, ny, nz)
-    });
-
+    std::fs::create_dir_all(output_dir)?;
     eprintln!("Writing results to {:?}...", output_dir);
     for (name, map) in &results {
         let path = output_dir.join(format!("{}.nii.gz", name));
         if from_mat {
-            io::nifti::write_map_nifti(map, &header, &path)?;
+            io::nifti::write_map_nifti(map, header, &path)?;
         } else {
-            io::nifti::write_3d_nifti(map, &header, &path)?;
+            io::nifti::write_3d_nifti(map, header, &path)?;
         }
         let fname = format!("{}.nii.gz", name);
         eprintln!(
@@ -472,6 +490,140 @@ pub fn run_fit(
         "{}",
         "Done.".if_supports_color(Stderr, |t| t.green().bold().to_string())
     );
+    Ok(())
+}
+
+/// Every distinct key used across a model's `Series` identity rows, sorted —
+/// the axis keys `load_collection` resolves per-volume sidecar values for.
+/// `Named` models are not BIDS-collection-loadable yet (see `load_collection`),
+/// so they resolve no keys.
+fn measurement_keys(kind: MeasurementKind) -> Vec<String> {
+    match kind {
+        MeasurementKind::Series { rows } => {
+            let mut keys: Vec<String> = rows.into_iter().flat_map(|r| r.into_keys()).collect();
+            keys.sort();
+            keys.dedup();
+            keys
+        }
+        MeasurementKind::Named { .. } => vec![],
+    }
+}
+
+/// Fit every collection of a BIDS dataset matching the config's model,
+/// writing each subject's (and session's, if present) result maps under
+/// `output_dir/<subject>[/<session>]/`. v1 targets no-aux models (e.g. IRT1):
+/// BIDS-side B1/B0/R1 map resolution is a follow-up, so a model that
+/// `required`-declares any aux input is rejected up front rather than fit
+/// with a silently-missing map.
+pub fn run_fit_bids(
+    bids_dir: PathBuf,
+    config_path: PathBuf,
+    output_dir: PathBuf,
+    threads: Option<usize>,
+) -> Result<()> {
+    if let Some(n) = threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .ok();
+    }
+
+    let (cfg, raw) = load_config_raw(&config_path)?;
+    let entry = qmrust_core::registry::by_name(&cfg.model).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Unknown model: '{}'. Available: {}",
+            cfg.model,
+            qmrust_core::registry::all()
+                .iter()
+                .map(|e| e.name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })?;
+
+    // Probe the model's shape (required aux, series identity keys) against an
+    // empty protocol — these are structural and don't depend on any one
+    // collection's resolved sidecar values.
+    let probe = (entry.build)(&raw, &Protocol::default())?;
+    let required: Vec<&'static str> = probe
+        .required_inputs()
+        .into_iter()
+        .filter(|s| s.required)
+        .map(|s| s.name)
+        .collect();
+    if !required.is_empty() {
+        bail!(
+            "qmrust fit --bids-dir does not yet resolve BIDS auxiliary maps; model '{}' \
+             requires {:?}. This is a tracked follow-up — for now, fit it via --mat-dir/--data \
+             with explicit --r1map/--b1map/--b0map.",
+            cfg.model,
+            required
+        );
+    }
+    let keys = measurement_keys(probe.measurement());
+    let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+
+    let fs = StdFs {
+        root: bids_dir.clone(),
+    };
+    let bids_cfg = rust_bids::default_config();
+    let suffix = entry.bids_suffix;
+    let collections = rust_bids::collections_for(&fs, &bids_cfg, suffix)?;
+
+    if collections.is_empty() {
+        eprintln!("No {} collections found in {:?}", suffix, bids_dir);
+        return Ok(());
+    }
+    eprintln!(
+        "Found {} {} collection(s) in {:?}",
+        collections.len(),
+        suffix,
+        bids_dir
+    );
+
+    for c in &collections {
+        for w in &c.warnings {
+            eprintln!("  warning ({}): {}", c.subject, w.message);
+        }
+
+        let label = match &c.session {
+            Some(ses) => format!("{}/{}", c.subject, ses),
+            None => c.subject.clone(),
+        };
+        eprintln!("Fitting {}...", label);
+
+        let (data, proto, header) = match load_collection(&fs, c, &key_refs) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("  skipping {}: {}", label, e);
+                continue;
+            }
+        };
+
+        let model = (entry.build)(&raw, &proto)?;
+        eprintln!("  Model: {}, {} volumes", cfg.model, data.dim().3);
+
+        let from_mat = header.is_none();
+        let (nx, ny, nz, _) = data.dim();
+        let header = header.unwrap_or_else(|| make_minimal_header(nx, ny, nz));
+
+        let subject_dir = match &c.session {
+            Some(ses) => output_dir.join(&c.subject).join(ses),
+            None => output_dir.join(&c.subject),
+        };
+
+        fit_and_write(
+            model.as_ref(),
+            &data,
+            &proto,
+            None,
+            &AuxMaps::empty(),
+            &header,
+            from_mat,
+            &subject_dir,
+        )?;
+    }
+
     Ok(())
 }
 
@@ -580,6 +732,52 @@ mod tests {
                 "protocol volume {i} should carry the matching InversionTime"
             );
         }
+    }
+
+    /// `qmrust fit --bids-dir` end to end: a synthetic sub-01 IRT1 series on
+    /// disk (same layout `load_collection`'s test builds) fitted through
+    /// `run_fit_bids`, writing `T1.nii.gz` whose single voxel recovers the
+    /// known T1.
+    #[test]
+    fn run_fit_bids_recovers_t1_from_a_synthetic_dataset() {
+        let tmp = TempDir::new("fit-bids");
+        let bids_dir = tmp.0.join("dataset");
+        let anat_dir = bids_dir.join("sub-01/anat");
+        std::fs::create_dir_all(&anat_dir).unwrap();
+
+        let t1 = 900.0_f64;
+        let a = 500.0_f64;
+        let b = -1000.0_f64;
+        let tis = [350.0_f64, 500.0, 650.0, 800.0, 950.0, 1100.0, 1250.0];
+        let header = make_minimal_header(1, 1, 1);
+        for (i, ti) in tis.iter().enumerate() {
+            let signal = ir_signal(*ti, t1, a, b);
+            let data = Array3::from_elem((1, 1, 1), signal);
+            let nii_path = anat_dir.join(format!("sub-01_inv-{:02}_IRT1.nii.gz", i + 1));
+            io::nifti::write_3d_nifti(&data, &header, &nii_path).unwrap();
+            let json_path = anat_dir.join(format!("sub-01_inv-{:02}_IRT1.json", i + 1));
+            std::fs::write(&json_path, format!(r#"{{"InversionTime": {ti}}}"#)).unwrap();
+        }
+
+        let config_path = tmp.0.join("ir.yaml");
+        std::fs::write(
+            &config_path,
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800, 950, 1100, 1250]\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.0.join("out");
+        run_fit_bids(bids_dir, config_path, out_dir.clone(), None).unwrap();
+
+        let t1_path = out_dir.join("sub-01").join("T1.nii.gz");
+        assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
+        let t1_map = io::nifti::read_map_nifti(&t1_path).unwrap();
+        assert!(
+            (t1_map[[0, 0, 0]] - t1).abs() < 1.0,
+            "T1: {} (expected ~{})",
+            t1_map[[0, 0, 0]],
+            t1
+        );
     }
 
     #[test]
