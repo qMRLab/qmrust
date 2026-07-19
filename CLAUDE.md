@@ -63,8 +63,16 @@ only make sense to someone who watched it being written, delete it.
 That's it — do **not** add `match cfg.model` branches in the CLI, engine, sim, or config.
 The `Model` trait is the whole contributor surface; the registry is the whole dispatch
 point. Auxiliary inputs (B1/B0/R1, …) are *declared* via `required_inputs()`; the shell
-loads them and the model reads scalars via `aux.get("B1map")`. Use IR
-(`models/inversion_recovery/`) as the minimal reference; qMT (`models/qmt_spgr/`) shows a
+loads them and the model reads scalars via `aux.get("B1map")`. A model declares its
+measurement shape via `measurement() -> MeasurementKind` (`Named { roles }` for a fixed
+set of role-labeled volumes, or `Series { rows }` for a variable-length series with its
+own canonical per-volume identity rows), and `forward`/`fit` read the identity-keyed
+`Measurement` they're handed by identity — `m.role("MTw")` / `s.params["InversionTime"]`
+— never by position. The engine assembles that keyed `Measurement` from the shell's
+per-volume `VolumeId`s; `build` validates the supplied `Protocol` against the model's own
+declared measurement (`validate_against_protocol`), failing loudly at build rather than
+per-voxel. Use IR (`models/inversion_recovery/`) as the minimal reference; qMT
+(`models/qmt_spgr/`) shows a
 nested-config model with aux inputs.
 
 ## Invariants to respect
