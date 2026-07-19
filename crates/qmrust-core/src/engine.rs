@@ -207,14 +207,16 @@ mod tests {
     use crate::core::model::{Aux, InputSpec, Measurement, MeasurementKind, Model, VolumeId};
     use ndarray::{Array3, Array4};
 
-    const SUM_AXES: &[&str] = &["t"];
-
-    /// Two positional-index `Series` ids (empty params), one per volume.
-    fn sum_ids() -> Vec<VolumeId> {
+    /// Two `Series` identity rows keyed by acquisition index `t`.
+    fn sum_rows() -> Vec<BTreeMap<String, f64>> {
         vec![
-            VolumeId::Params(BTreeMap::new()),
-            VolumeId::Params(BTreeMap::new()),
+            BTreeMap::from([("t".to_string(), 0.0)]),
+            BTreeMap::from([("t".to_string(), 1.0)]),
         ]
+    }
+
+    fn sum_ids() -> Vec<VolumeId> {
+        sum_rows().into_iter().map(VolumeId::Params).collect()
     }
 
     struct SumModel;
@@ -239,19 +241,15 @@ mod tests {
             }]
         }
         fn measurement(&self) -> MeasurementKind {
-            MeasurementKind::Series { axes: SUM_AXES }
+            MeasurementKind::Series { rows: sum_rows() }
         }
         fn forward(&self, _p: &[f64], _a: &Aux) -> Measurement {
-            Measurement::Series(vec![
-                Sample {
-                    params: BTreeMap::new(),
-                    value: 0.0,
-                },
-                Sample {
-                    params: BTreeMap::new(),
-                    value: 0.0,
-                },
-            ])
+            Measurement::Series(
+                sum_rows()
+                    .into_iter()
+                    .map(|params| Sample { params, value: 0.0 })
+                    .collect(),
+            )
         }
         fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
             vec![

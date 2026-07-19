@@ -82,9 +82,13 @@ impl Aux {
 pub enum MeasurementKind {
     /// A fixed set of role-labeled volumes (e.g. MTS: `["PDw","MTw","T1w"]`).
     Named { roles: &'static [&'static str] },
-    /// A series indexed by one or more acquisition parameters
-    /// (e.g. IRT1: `["InversionTime"]`).
-    Series { axes: &'static [&'static str] },
+    /// A variable-length series whose per-volume identity rows the model owns:
+    /// one `params` row per acquired volume, in the model's canonical order
+    /// (e.g. IRT1: one `{"InversionTime": ti}` per TI). The shell labels each
+    /// data volume with one of these rows, so `fit` assembles the signal by
+    /// matching identities by value — never by array position. Each row's keys
+    /// are the series' acquisition axes.
+    Series { rows: Vec<BTreeMap<String, f64>> },
 }
 
 /// One acquired volume's value with the metadata identifying it.

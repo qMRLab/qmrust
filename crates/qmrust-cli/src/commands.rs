@@ -13,18 +13,19 @@ use std::path::{Path, PathBuf};
 use crate::io;
 use qmrust_core::core::model::{MeasurementKind, Protocol, VolumeId};
 use qmrust_core::models;
-use std::collections::BTreeMap;
 
 /// Build per-volume identities for `engine::run` from a model's declared
 /// measurement kind and the resolved protocol — dispatch on the measurement
-/// shape, never on the model name.
+/// shape, never on the model name. Every volume is labeled with a real
+/// identity, so the model's `fit` always assembles by value, never by position.
 ///
 /// - `Named { roles }`: volume `i` takes role `roles[i]` (requires exactly
 ///   `roles.len()` volumes).
-/// - `Series`: each volume carries its protocol row from `proto.volumes` when
-///   the resolver supplied one per volume; otherwise an empty row, and the
-///   model reads values in acquisition order until the BIDS shell supplies
-///   full per-volume sidecar identities.
+/// - `Series { rows }`: prefer externally-resolved per-volume rows
+///   (`proto.volumes`, e.g. `.mat` sidecar TIs); otherwise fall back to the
+///   model's own canonical identity rows. Both carry populated params — an
+///   empty/positional row is never emitted. (The future BIDS shell supplies
+///   sidecar-derived rows here.)
 fn build_volume_ids(
     kind: MeasurementKind,
     proto: &Protocol,
@@ -42,19 +43,20 @@ fn build_volume_ids(
             }
             Ok(roles.iter().map(|&r| VolumeId::Role(r)).collect())
         }
-        MeasurementKind::Series { .. } => {
-            if proto.volumes.len() == n_volumes {
-                Ok(proto
-                    .volumes
-                    .iter()
-                    .cloned()
-                    .map(VolumeId::Params)
-                    .collect())
+        MeasurementKind::Series { rows } => {
+            let source = if proto.volumes.len() == n_volumes {
+                &proto.volumes
             } else {
-                Ok((0..n_volumes)
-                    .map(|_| VolumeId::Params(BTreeMap::new()))
-                    .collect())
+                &rows
+            };
+            if source.len() != n_volumes {
+                bail!(
+                    "Data has {} volumes but the model's series protocol has {} rows",
+                    n_volumes,
+                    source.len()
+                );
             }
+            Ok(source.iter().cloned().map(VolumeId::Params).collect())
         }
     }
 }

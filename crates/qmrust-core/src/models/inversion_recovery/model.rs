@@ -14,8 +14,14 @@ pub struct IrModel {
     output_names: Vec<String>,
 }
 
-/// The single axis an IR series is indexed by.
-const IR_AXES: &[&str] = &["InversionTime"];
+/// One `{"InversionTime": ti}` identity row per fitter TI, in canonical order.
+fn ir_rows(fitter: &IrFitter) -> Vec<BTreeMap<String, f64>> {
+    fitter
+        .ti()
+        .iter()
+        .map(|&ti| BTreeMap::from([("InversionTime".to_string(), ti)]))
+        .collect()
+}
 
 impl IrModel {
     pub fn new(cfg: IrConfig) -> Self {
@@ -52,7 +58,9 @@ impl Model for IrModel {
         vec![]
     }
     fn measurement(&self) -> MeasurementKind {
-        MeasurementKind::Series { axes: IR_AXES }
+        MeasurementKind::Series {
+            rows: ir_rows(&self.fitter),
+        }
     }
     fn strategy(&self) -> FitStrategy {
         FitStrategy::Voxelwise
@@ -73,20 +81,22 @@ impl Model for IrModel {
     }
     fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
         // Assemble the signal in the fitter's own TI order by matching each
-        // sample's `InversionTime` to the expected TI by value — order-free.
+        // expected TI to its sample by value. Identities must match: assembly
+        // is never positional. A TI with no matching sample is a mislabeled
+        // measurement → panic (the engine records the voxel as a failed fit).
+        // TIs are assumed unique; first match wins (values pass through
+        // unmodified, so a duplicate TI is a misconfiguration, not a hazard).
         let samples = m.series();
         let signal: Vec<f64> = self
             .fitter
             .ti()
             .iter()
-            .enumerate()
-            .map(|(pos, &ti)| {
+            .map(|&ti| {
                 samples
                     .iter()
                     .find(|s| s.params.get("InversionTime") == Some(&ti))
                     .map(|s| s.value)
-                    .or_else(|| samples.get(pos).map(|s| s.value))
-                    .unwrap_or(0.0)
+                    .unwrap_or_else(|| panic!("measurement has no sample with InversionTime={ti}"))
             })
             .collect();
         self.fitter.fit_voxel(&ndarray::Array1::from_vec(signal))
@@ -140,9 +150,11 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_is_order_free() {
-        // Fit with the forward series, then again with its samples reversed:
-        // matching by InversionTime must give byte-identical T1.
+    fn fit_assembles_by_identity_not_position() {
+        // The samples are supplied in REVERSED order with distinct TIs, so a
+        // positional assembly would feed the fitter a mirrored (wrong) signal
+        // and miss T1; only value-matching recovers 900. This test fails if
+        // `fit` ever assembles by position.
         let m = build(&ir_value(), &Protocol::default()).unwrap();
         let sig = m.forward(&[900.0, 500.0, -1000.0], &Aux::new());
         let mut reversed: Vec<Sample> = match sig {
@@ -158,7 +170,22 @@ mod tests {
         reversed.reverse();
         let a = m.fit(&sig, &Aux::new());
         let b = m.fit(&Measurement::Series(reversed), &Aux::new());
+        assert!((a[0] - 900.0).abs() < 1.0, "in-order T1: {}", a[0]);
+        assert!((b[0] - 900.0).abs() < 1.0, "reordered T1: {}", b[0]);
         assert_eq!(a[0], b[0], "T1 must be identical under reordering");
+    }
+
+    #[test]
+    #[should_panic(expected = "no sample with InversionTime")]
+    fn fit_panics_on_unmatched_identity() {
+        // A measurement whose sample identities match no expected TI must fail
+        // loudly — never fall back to positional assembly.
+        let m = build(&ir_value(), &Protocol::default()).unwrap();
+        let bogus = Measurement::Series(vec![Sample {
+            params: BTreeMap::from([("InversionTime".to_string(), 99999.0)]),
+            value: 1.0,
+        }]);
+        let _ = m.fit(&bogus, &Aux::new());
     }
 
     #[test]

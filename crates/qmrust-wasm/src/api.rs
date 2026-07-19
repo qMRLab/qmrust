@@ -81,11 +81,19 @@ fn parse_measurement(json: &str, kind: &MeasurementKind) -> Result<Measurement, 
 
 /// Parse per-volume identities for `engine::run`. `Named` → JSON array of role
 /// names; `Series` → JSON array of param-row objects. Each maps to one volume.
+/// An empty `json` falls back to the model's own canonical identities (role
+/// list / series rows) so a caller with no external sidecar still labels every
+/// volume with real params — never a positional/empty row.
 fn parse_volume_ids(json: &str, kind: &MeasurementKind) -> Result<Vec<VolumeId>, String> {
+    let json = json.trim();
     match kind {
         MeasurementKind::Named { roles } => {
-            let names: Vec<String> = serde_json::from_str(json)
-                .map_err(|e| format!("invalid Named volume_ids JSON: {}", e))?;
+            let names: Vec<String> = if json.is_empty() {
+                roles.iter().map(|r| r.to_string()).collect()
+            } else {
+                serde_json::from_str(json)
+                    .map_err(|e| format!("invalid Named volume_ids JSON: {}", e))?
+            };
             names
                 .iter()
                 .map(|n| {
@@ -98,10 +106,14 @@ fn parse_volume_ids(json: &str, kind: &MeasurementKind) -> Result<Vec<VolumeId>,
                 })
                 .collect()
         }
-        MeasurementKind::Series { .. } => {
-            let rows: Vec<BTreeMap<String, f64>> = serde_json::from_str(json)
-                .map_err(|e| format!("invalid Series volume_ids JSON: {}", e))?;
-            Ok(rows.into_iter().map(VolumeId::Params).collect())
+        MeasurementKind::Series { rows } => {
+            let parsed: Vec<BTreeMap<String, f64>> = if json.is_empty() {
+                rows.clone()
+            } else {
+                serde_json::from_str(json)
+                    .map_err(|e| format!("invalid Series volume_ids JSON: {}", e))?
+            };
+            Ok(parsed.into_iter().map(VolumeId::Params).collect())
         }
     }
 }

@@ -25,10 +25,19 @@ impl QmtModel {
     }
 }
 
-/// The two acquisition axes a qMT-SPGR series is indexed by: the saturation
-/// pulse flip angle (deg) and its offset frequency (Hz) — the two columns of
-/// the model's `mtdata` protocol.
-const QMT_AXES: &[&str] = &["Angle", "Offset"];
+/// One identity row per `mtdata` volume, keyed by the two acquisition axes:
+/// the saturation pulse flip angle (deg) and its offset frequency (Hz).
+fn qmt_rows(protocol: &[[f64; 2]]) -> Vec<BTreeMap<String, f64>> {
+    protocol
+        .iter()
+        .map(|row| {
+            BTreeMap::from([
+                ("Angle".to_string(), row[0]),
+                ("Offset".to_string(), row[1]),
+            ])
+        })
+        .collect()
+}
 
 const QMT_ENTITIES: &[EntityRole] = &[EntityRole::Mt, EntityRole::Flip];
 
@@ -78,7 +87,9 @@ impl Model for QmtModel {
         ]
     }
     fn measurement(&self) -> MeasurementKind {
-        MeasurementKind::Series { axes: QMT_AXES }
+        MeasurementKind::Series {
+            rows: qmt_rows(&self.protocol),
+        }
     }
     fn strategy(&self) -> FitStrategy {
         FitStrategy::Voxelwise
@@ -110,14 +121,17 @@ impl Model for QmtModel {
         let b1 = aux.get("B1map");
         let b0 = aux.get("B0map");
         // Assemble the full-protocol signal in the fitter's mtdata order by
-        // matching each protocol row to its sample by (Angle, Offset) — the
+        // matching each protocol row to its sample by (Angle, Offset). The
         // fitter then normalizes and selects rows internally, unchanged.
+        // Identities must match: assembly is never positional. A row with no
+        // matching sample is a mislabeled measurement → panic (the engine
+        // records the voxel as a failed fit). (Angle, Offset) tuples are
+        // assumed unique per protocol; first match wins.
         let samples = m.series();
         let signal: Vec<f64> = self
             .protocol
             .iter()
-            .enumerate()
-            .map(|(pos, row)| {
+            .map(|row| {
                 samples
                     .iter()
                     .find(|s| {
@@ -125,8 +139,12 @@ impl Model for QmtModel {
                             && s.params.get("Offset") == Some(&row[1])
                     })
                     .map(|s| s.value)
-                    .or_else(|| samples.get(pos).map(|s| s.value))
-                    .unwrap_or(0.0)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "measurement has no sample with Angle={} Offset={}",
+                            row[0], row[1]
+                        )
+                    })
             })
             .collect();
         self.fitter.fit_voxel(&signal, r1, b1, b0)
@@ -194,6 +212,44 @@ mod tests {
         aux.set("R1map", 1.0);
         let out = m.fit(&qmt_series(0.5), &aux);
         assert_eq!(out.len(), 8);
+    }
+
+    #[test]
+    fn fit_assembles_by_identity_not_position() {
+        // Reversing the (distinct) protocol samples must not change the fit:
+        // matching is by (Angle, Offset), never by array position.
+        let m = build(&qmt_value(), &Protocol::default()).unwrap();
+        let mut aux = Aux::new();
+        aux.set("R1map", 1.0);
+        // Distinct per-volume values via a clean forward, then reverse them.
+        let forward = m.forward(&[0.15, 25.0, 1.0, 1.0, 0.028, 1.1e-5], &aux);
+        let mut reversed: Vec<Sample> = match forward {
+            Measurement::Series(ref s) => s
+                .iter()
+                .map(|s| Sample {
+                    params: s.params.clone(),
+                    value: s.value,
+                })
+                .collect(),
+            _ => unreachable!(),
+        };
+        reversed.reverse();
+        let a = m.fit(&forward, &aux);
+        let b = m.fit(&Measurement::Series(reversed), &aux);
+        assert_eq!(a, b, "qMT fit must be identical under sample reordering");
+    }
+
+    #[test]
+    #[should_panic(expected = "no sample with Angle")]
+    fn fit_panics_on_unmatched_identity() {
+        // Sample identities that match no protocol row must fail loudly, never
+        // fall back to positional assembly.
+        let m = build(&qmt_value(), &Protocol::default()).unwrap();
+        let bogus = Measurement::Series(vec![Sample {
+            params: BTreeMap::from([("Angle".to_string(), 999.0), ("Offset".to_string(), 999.0)]),
+            value: 0.5,
+        }]);
+        let _ = m.fit(&bogus, &Aux::new());
     }
 
     #[test]
