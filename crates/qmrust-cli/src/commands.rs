@@ -571,8 +571,7 @@ pub fn run_fit_bids(
     let collections = rust_bids::collections_for(&fs, &bids_cfg, suffix)?;
 
     if collections.is_empty() {
-        eprintln!("No {} collections found in {:?}", suffix, bids_dir);
-        return Ok(());
+        bail!("no {} collections found in {:?}", suffix, bids_dir);
     }
     eprintln!(
         "Found {} {} collection(s) in {:?}",
@@ -887,6 +886,46 @@ mod tests {
         assert!(
             err.to_string().contains("no MTS collections were fit"),
             "expected the all-skipped bail message, got: {err}"
+        );
+    }
+
+    /// A dataset with zero matching collections for the config's model (e.g.
+    /// an inversion_recovery config pointed at an MTS-only dataset — wrong
+    /// config, typo, whatever) must exit non-zero, not silently succeed
+    /// having fit nothing.
+    #[test]
+    fn run_fit_bids_bails_when_no_collections_are_found() {
+        let tmp = TempDir::new("fit-bids-no-collections");
+        let bids_dir = tmp.0.join("dataset");
+        let anat_dir = bids_dir.join("sub-01/anat");
+        std::fs::create_dir_all(&anat_dir).unwrap();
+
+        // An MTS-only dataset; no IRT1 files anywhere.
+        let header = make_minimal_header(1, 1, 1);
+        let data = Array3::from_elem((1, 1, 1), 1.0_f64);
+        for fname in [
+            "sub-01_flip-1_mt-off_MTS.nii.gz",
+            "sub-01_flip-1_mt-on_MTS.nii.gz",
+            "sub-01_flip-2_mt-off_MTS.nii.gz",
+        ] {
+            io::nifti::write_3d_nifti(&data, &header, &anat_dir.join(fname)).unwrap();
+        }
+
+        let config_path = tmp.0.join("ir.yaml");
+        std::fs::write(
+            &config_path,
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800]\n",
+        )
+        .unwrap();
+
+        let out_dir = tmp.0.join("out");
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
+            Ok(()) => panic!("zero matching collections must bail, not exit Ok"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("no IRT1 collections found"),
+            "expected the no-collections-found bail message, got: {err}"
         );
     }
 
