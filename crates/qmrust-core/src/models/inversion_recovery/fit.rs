@@ -48,6 +48,11 @@ impl IrFitter {
         ["T1", "a", "b"]
     }
 
+    /// Inversion times in the order `forward`/`fit_voxel` expect them.
+    pub fn ti(&self) -> &[f64] {
+        &self.ti
+    }
+
     /// Noise-free IR signal: a + b*exp(-TI/T1); magnitude method takes |·|.
     pub fn forward(&self, t1: f64, a: f64, b: f64) -> Vec<f64> {
         self.ti

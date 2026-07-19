@@ -1,15 +1,21 @@
 //! IR adapter onto the core `Model` trait.
 
-use crate::core::model::{Aux, BidsSpec, EntityRole, FitStrategy, InputSpec, Model, Protocol};
+use crate::core::model::{
+    Aux, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
+    Protocol, Sample,
+};
 use crate::models::inversion_recovery::config::IrConfig;
 use crate::models::inversion_recovery::fit::IrFitter;
 use anyhow::Result;
+use std::collections::BTreeMap;
 
 pub struct IrModel {
     fitter: IrFitter,
     output_names: Vec<String>,
-    n_ti: usize,
 }
+
+/// The single axis an IR series is indexed by.
+const IR_AXES: &[&str] = &["InversionTime"];
 
 impl IrModel {
     pub fn new(cfg: IrConfig) -> Self {
@@ -22,7 +28,6 @@ impl IrModel {
         Self {
             fitter,
             output_names,
-            n_ti: cfg.inversion_times.len(),
         }
     }
 }
@@ -46,18 +51,45 @@ impl Model for IrModel {
     fn required_inputs(&self) -> Vec<InputSpec> {
         vec![]
     }
-    fn n_acquisitions(&self) -> usize {
-        self.n_ti
+    fn measurement(&self) -> MeasurementKind {
+        MeasurementKind::Series { axes: IR_AXES }
     }
     fn strategy(&self) -> FitStrategy {
         FitStrategy::Voxelwise
     }
-    fn forward(&self, params: &[f64], _aux: &Aux) -> Vec<f64> {
-        self.fitter.forward(params[0], params[1], params[2])
+    fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
+        let values = self.fitter.forward(params[0], params[1], params[2]);
+        let samples = self
+            .fitter
+            .ti()
+            .iter()
+            .zip(values)
+            .map(|(&ti, value)| Sample {
+                params: BTreeMap::from([("InversionTime".to_string(), ti)]),
+                value,
+            })
+            .collect();
+        Measurement::Series(samples)
     }
-    fn fit(&self, signal: &[f64], _aux: &Aux) -> Vec<f64> {
-        self.fitter
-            .fit_voxel(&ndarray::Array1::from_vec(signal.to_vec()))
+    fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
+        // Assemble the signal in the fitter's own TI order by matching each
+        // sample's `InversionTime` to the expected TI by value — order-free.
+        let samples = m.series();
+        let signal: Vec<f64> = self
+            .fitter
+            .ti()
+            .iter()
+            .enumerate()
+            .map(|(pos, &ti)| {
+                samples
+                    .iter()
+                    .find(|s| s.params.get("InversionTime") == Some(&ti))
+                    .map(|s| s.value)
+                    .or_else(|| samples.get(pos).map(|s| s.value))
+                    .unwrap_or(0.0)
+            })
+            .collect();
+        self.fitter.fit_voxel(&ndarray::Array1::from_vec(signal))
     }
     fn bids(&self) -> Option<BidsSpec> {
         Some(BidsSpec {
@@ -99,12 +131,34 @@ mod tests {
     #[test]
     fn build_and_roundtrip_via_trait() {
         let m = build(&ir_value(), &Protocol::default()).unwrap();
-        assert_eq!(m.n_acquisitions(), 9);
         assert_eq!(m.param_names(), vec!["T1", "a", "b"]);
         let sig = m.forward(&[900.0, 500.0, -1000.0], &Aux::new());
+        assert_eq!(sig.series().len(), 9);
         let fitted = m.fit(&sig, &Aux::new());
         // output_names[0] == "T1"
         assert!((fitted[0] - 900.0).abs() < 1.0, "T1: {}", fitted[0]);
+    }
+
+    #[test]
+    fn roundtrip_is_order_free() {
+        // Fit with the forward series, then again with its samples reversed:
+        // matching by InversionTime must give byte-identical T1.
+        let m = build(&ir_value(), &Protocol::default()).unwrap();
+        let sig = m.forward(&[900.0, 500.0, -1000.0], &Aux::new());
+        let mut reversed: Vec<Sample> = match sig {
+            Measurement::Series(ref s) => s
+                .iter()
+                .map(|s| Sample {
+                    params: s.params.clone(),
+                    value: s.value,
+                })
+                .collect(),
+            _ => unreachable!(),
+        };
+        reversed.reverse();
+        let a = m.fit(&sig, &Aux::new());
+        let b = m.fit(&Measurement::Series(reversed), &Aux::new());
+        assert_eq!(a[0], b[0], "T1 must be identical under reordering");
     }
 
     #[test]
@@ -116,7 +170,8 @@ mod tests {
             proto.volumes.push(mm);
         }
         let m = build(&ir_value(), &proto).unwrap();
-        assert_eq!(m.n_acquisitions(), 3);
+        let sig = m.forward(&[900.0, 500.0, -1000.0], &Aux::new());
+        assert_eq!(sig.series().len(), 3);
     }
 
     #[test]

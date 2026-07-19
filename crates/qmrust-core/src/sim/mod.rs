@@ -12,9 +12,10 @@ use anyhow::{bail, Result};
 use rand_distr::{Distribution, Normal};
 
 use crate::config::Config;
-use crate::core::model::Model;
+use crate::core::model::{Measurement, Model, Sample};
 use model::{build_model, param_vector, sim_aux};
 use noise::{add_noise, seeded_rng, sigma_for, NoiseKind};
+use rand::rngs::StdRng;
 use report::{
     mean_std, MonteCarloReport, ParamStat, SensitivityReport, SignalReport, SingleVoxelReport,
     SweepPoint,
@@ -54,6 +55,39 @@ fn compute_stats(model: &dyn Model, truth: &[f64], per_trial: &[Vec<f64>]) -> Ve
     out
 }
 
+/// Extract a measurement's values in a defined order (the reports and plots
+/// stay value vectors): `Series` → sample order; `Named` → role order.
+fn measurement_values(m: &Measurement) -> Vec<f64> {
+    match m {
+        Measurement::Named(map) => map.values().copied().collect(),
+        Measurement::Series(s) => s.iter().map(|s| s.value).collect(),
+    }
+}
+
+/// Apply `add_noise` to a measurement's values, preserving its shape and
+/// identities. Noise is drawn in `measurement_values` order, so the RNG draw
+/// sequence is identical to noising the extracted value vector directly.
+fn add_noise_measurement(
+    m: &Measurement,
+    kind: NoiseKind,
+    sigma: f64,
+    rng: &mut StdRng,
+) -> Measurement {
+    let noised = add_noise(&measurement_values(m), kind, sigma, rng);
+    match m {
+        Measurement::Named(map) => Measurement::Named(map.keys().copied().zip(noised).collect()),
+        Measurement::Series(s) => Measurement::Series(
+            s.iter()
+                .zip(noised)
+                .map(|(s, value)| Sample {
+                    params: s.params.clone(),
+                    value,
+                })
+                .collect(),
+        ),
+    }
+}
+
 /// Clamp a value into a (lb, ub) range.
 fn clamp_to_bounds(val: f64, bound: (f64, f64)) -> f64 {
     let (lo, hi) = bound;
@@ -68,7 +102,7 @@ pub fn run_signal(cfg: &Config, raw: &serde_yaml::Value) -> Result<SignalReport>
     let model = build_model(cfg, raw)?;
     let aux = sim_aux(sim);
     let truth = param_vector(model.as_ref(), sim)?;
-    let signal = model.forward(&truth, &aux);
+    let signal = measurement_values(&model.forward(&truth, &aux));
     let names = model.param_names();
     Ok(SignalReport {
         mode: "signal".into(),
@@ -90,7 +124,8 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
     let model = build_model(cfg, raw)?;
     let aux = sim_aux(sim);
     let truth = param_vector(model.as_ref(), sim)?;
-    let clean = model.forward(&truth, &aux);
+    let clean_meas = model.forward(&truth, &aux);
+    let clean = measurement_values(&clean_meas);
     let kind = NoiseKind::from_str(&sim.noise.kind)?;
     let sigma = sigma_for(&clean, sim.noise.snr);
     let mut rng = seeded_rng(sim.seed);
@@ -98,9 +133,9 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
     let mut per_trial = Vec::with_capacity(sim.trials);
     let mut first_noisy = clean.clone();
     for t in 0..sim.trials {
-        let noisy = add_noise(&clean, kind, sigma, &mut rng);
+        let noisy = add_noise_measurement(&clean_meas, kind, sigma, &mut rng);
         if t == 0 {
-            first_noisy = noisy.clone();
+            first_noisy = measurement_values(&noisy);
         }
         per_trial.push(model.fit(&noisy, &aux));
     }
@@ -163,11 +198,11 @@ pub fn run_sensitivity(cfg: &Config, raw: &serde_yaml::Value) -> Result<Sensitiv
         let value = sweep.start + step * k as f64;
         let mut truth = base.clone();
         truth[pi] = value;
-        let clean = model.forward(&truth, &aux);
-        let sigma = sigma_for(&clean, sim.noise.snr);
+        let clean_meas = model.forward(&truth, &aux);
+        let sigma = sigma_for(&measurement_values(&clean_meas), sim.noise.snr);
         let mut per_trial = Vec::with_capacity(sim.trials);
         for _ in 0..sim.trials {
-            let noisy = add_noise(&clean, kind, sigma, &mut rng);
+            let noisy = add_noise_measurement(&clean_meas, kind, sigma, &mut rng);
             per_trial.push(model.fit(&noisy, &aux));
         }
         points.push(SweepPoint {
@@ -231,9 +266,9 @@ pub fn run_montecarlo(cfg: &Config, raw: &serde_yaml::Value) -> Result<MonteCarl
         for (pi, dist) in &drawn {
             truth[*pi] = clamp_to_bounds(dist.sample(&mut rng), bounds[*pi]);
         }
-        let clean = model.forward(&truth, &aux);
-        let sigma = sigma_for(&clean, sim.noise.snr);
-        let noisy = add_noise(&clean, kind, sigma, &mut rng);
+        let clean_meas = model.forward(&truth, &aux);
+        let sigma = sigma_for(&measurement_values(&clean_meas), sim.noise.snr);
+        let noisy = add_noise_measurement(&clean_meas, kind, sigma, &mut rng);
         per_trial_fit.push(model.fit(&noisy, &aux));
         per_trial_truth.push(truth);
     }
@@ -298,10 +333,10 @@ pub fn run_sim(mode: &str, config: PathBuf, output: PathBuf, plot: Option<PathBu
                 let model = build_model(&cfg, &raw)?;
                 let aux = sim_aux(sim);
                 let truth = param_vector(model.as_ref(), sim)?;
-                let clean = model.forward(&truth, &aux);
+                let clean = measurement_values(&model.forward(&truth, &aux));
                 // fitted-curve = forward of the first trial's fitted params, mapped by name.
                 let fitted_params = fitted_to_param_vec(model.as_ref(), &r.per_trial[0]);
-                let fitted_curve = model.forward(&fitted_params, &aux);
+                let fitted_curve = measurement_values(&model.forward(&fitted_params, &aux));
                 plot::plot_single_voxel(&clean, &r.noisy_signal, &fitted_curve, &p)?;
                 eprintln!("wrote plot {:?}", p);
             }

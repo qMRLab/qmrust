@@ -1,25 +1,34 @@
 //! qMT-SPGR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsMap, BidsSpec, EntityRole, FitStrategy, InputSpec, Model, Protocol,
+    Aux, BidsMap, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
+    Model, Protocol, Sample,
 };
 use crate::models::qmt_spgr::config::QmtSpgrConfig;
 use crate::models::qmt_spgr::QmtSpgrFitter;
 use anyhow::Result;
+use std::collections::BTreeMap;
 
 pub struct QmtModel {
     fitter: QmtSpgrFitter,
-    n_rows: usize,
+    /// Per-volume saturation protocol rows `[Angle (deg), Offset (Hz)]`, in the
+    /// order the fitter consumes them (mtdata order, incl. MToff rows).
+    protocol: Vec<[f64; 2]>,
 }
 
 impl QmtModel {
     pub fn new(cfg: &QmtSpgrConfig) -> Self {
         Self {
             fitter: QmtSpgrFitter::new(cfg),
-            n_rows: cfg.protocol.mtdata.len(),
+            protocol: cfg.protocol.mtdata.clone(),
         }
     }
 }
+
+/// The two acquisition axes a qMT-SPGR series is indexed by: the saturation
+/// pulse flip angle (deg) and its offset frequency (Hz) — the two columns of
+/// the model's `mtdata` protocol.
+const QMT_AXES: &[&str] = &["Angle", "Offset"];
 
 const QMT_ENTITIES: &[EntityRole] = &[EntityRole::Mt, EntityRole::Flip];
 
@@ -68,26 +77,59 @@ impl Model for QmtModel {
             },
         ]
     }
-    fn n_acquisitions(&self) -> usize {
-        self.n_rows
+    fn measurement(&self) -> MeasurementKind {
+        MeasurementKind::Series { axes: QMT_AXES }
     }
     fn strategy(&self) -> FitStrategy {
         FitStrategy::Voxelwise
     }
-    fn forward(&self, params: &[f64], aux: &Aux) -> Vec<f64> {
+    fn forward(&self, params: &[f64], aux: &Aux) -> Measurement {
         let x = [
             params[0], params[1], params[2], params[3], params[4], params[5],
         ];
         let b1 = aux.get("B1map").unwrap_or(1.0);
         let b0 = aux.get("B0map").unwrap_or(0.0);
         let r1 = aux.get("R1map");
-        self.fitter.forward(&x, b1, b0, r1)
+        let values = self.fitter.forward(&x, b1, b0, r1);
+        let samples = self
+            .protocol
+            .iter()
+            .zip(values)
+            .map(|(row, value)| Sample {
+                params: BTreeMap::from([
+                    ("Angle".to_string(), row[0]),
+                    ("Offset".to_string(), row[1]),
+                ]),
+                value,
+            })
+            .collect();
+        Measurement::Series(samples)
     }
-    fn fit(&self, signal: &[f64], aux: &Aux) -> Vec<f64> {
+    fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
         let r1 = aux.get("R1map");
         let b1 = aux.get("B1map");
         let b0 = aux.get("B0map");
-        self.fitter.fit_voxel(signal, r1, b1, b0)
+        // Assemble the full-protocol signal in the fitter's mtdata order by
+        // matching each protocol row to its sample by (Angle, Offset) — the
+        // fitter then normalizes and selects rows internally, unchanged.
+        let samples = m.series();
+        let signal: Vec<f64> = self
+            .protocol
+            .iter()
+            .enumerate()
+            .map(|(pos, row)| {
+                samples
+                    .iter()
+                    .find(|s| {
+                        s.params.get("Angle") == Some(&row[0])
+                            && s.params.get("Offset") == Some(&row[1])
+                    })
+                    .map(|s| s.value)
+                    .or_else(|| samples.get(pos).map(|s| s.value))
+                    .unwrap_or(0.0)
+            })
+            .collect();
+        self.fitter.fit_voxel(&signal, r1, b1, b0)
     }
     fn bids(&self) -> Option<BidsSpec> {
         Some(BidsSpec {
@@ -121,10 +163,28 @@ mod tests {
     #[test]
     fn build_defaults_and_shapes() {
         let m = build(&qmt_value(), &Protocol::default()).unwrap();
-        assert_eq!(m.n_acquisitions(), 10);
+        let sig = m.forward(&[0.16, 30.0, 1.0, 1.0, 0.03, 1.3e-5], &Aux::new());
+        assert_eq!(sig.series().len(), 10);
         assert_eq!(m.param_names().len(), 6);
         assert_eq!(m.output_names().len(), 8);
         assert_eq!(m.fixed_mask(), vec![false, false, true, true, false, false]);
+    }
+
+    fn qmt_series(value: f64) -> Measurement {
+        let cfg = crate::models::qmt_spgr::config::QmtSpgrConfig::default();
+        let samples = cfg
+            .protocol
+            .mtdata
+            .iter()
+            .map(|row| Sample {
+                params: BTreeMap::from([
+                    ("Angle".to_string(), row[0]),
+                    ("Offset".to_string(), row[1]),
+                ]),
+                value,
+            })
+            .collect();
+        Measurement::Series(samples)
     }
 
     #[test]
@@ -132,7 +192,7 @@ mod tests {
         let m = build(&qmt_value(), &Protocol::default()).unwrap();
         let mut aux = Aux::new();
         aux.set("R1map", 1.0);
-        let out = m.fit(&[0.5; 10], &aux);
+        let out = m.fit(&qmt_series(0.5), &aux);
         assert_eq!(out.len(), 8);
     }
 

@@ -133,16 +133,16 @@ pub trait Model: Send + Sync {
     fn fixed_mask(&self) -> Vec<bool>;
     /// Auxiliary inputs this model consumes.
     fn required_inputs(&self) -> Vec<InputSpec>;
-    /// Number of acquisition volumes the model's protocol expects.
-    fn n_acquisitions(&self) -> usize;
+    /// The shape of measurement this model consumes and the identities it reads by.
+    fn measurement(&self) -> MeasurementKind;
     /// Fit granularity. Defaults to voxelwise.
     fn strategy(&self) -> FitStrategy {
         FitStrategy::Voxelwise
     }
-    /// Noise-free forward signal for `params`, protocol-aligned.
-    fn forward(&self, params: &[f64], aux: &Aux) -> Vec<f64>;
-    /// Fit a signal, returning values in `output_names` order.
-    fn fit(&self, signal: &[f64], aux: &Aux) -> Vec<f64>;
+    /// Noise-free forward signal for `params`, identity-tagged per `measurement`.
+    fn forward(&self, params: &[f64], aux: &Aux) -> Measurement;
+    /// Fit an identity-keyed measurement, returning values in `output_names` order.
+    fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;
     /// BIDS identity, if this model maps to a BIDS grouping suffix.
     fn bids(&self) -> Option<BidsSpec> {
         None
