@@ -8,10 +8,24 @@
 use anyhow::{bail, Result};
 use ndarray::{Array3, Array4, Axis};
 use nifti::NiftiHeader;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 use crate::commands::make_minimal_header;
 use crate::io;
+
+/// IRT1 per-volume sidecar fields (BIDS-qMRI convention). `repetition_time`
+/// is `None` for IR — see `bidsify_ir`'s per-volume loop for why — and is
+/// skipped rather than serialized as `null`. Kept as a typed struct (not a
+/// hand-formatted string) so it stays correct as fields grow (this shape,
+/// and later QMTSPGR's much larger sidecar).
+#[derive(Serialize)]
+struct IrSidecar {
+    #[serde(rename = "InversionTime")]
+    inversion_time: f64,
+    #[serde(rename = "RepetitionTime", skip_serializing_if = "Option::is_none")]
+    repetition_time: Option<f64>,
+}
 
 /// Parsed CLI arguments for `qmrust bidsify`.
 pub struct BidsifyArgs {
@@ -104,10 +118,11 @@ pub fn bidsify_ir(
         // RepetitionTime is omitted: the IR config (`IrConfig`) carries no TR
         // field and qMRLab's IR_demo .mat/config pair doesn't supply one
         // either — only InversionTime is well-defined here.
-        std::fs::write(
-            &json_path,
-            format!(r#"{{"InversionTime":{inversion_time}}}"#),
-        )?;
+        let sidecar = IrSidecar {
+            inversion_time,
+            repetition_time: None,
+        };
+        std::fs::write(&json_path, serde_json::to_string_pretty(&sidecar)?)?;
     }
 
     if let Some(mask) = mask {
@@ -204,6 +219,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Non-square byte-identical round-trip: a 2x2x1 fixture can't
+    /// distinguish a value-transpose from an nx<->ny shape-swap. A 3x2x1
+    /// fixture pins both: read-back shape must stay (3,2,1) (not (2,3,1))
+    /// AND every voxel must match by (i,j,k), guarding the fix in
+    /// `io::nifti`'s 2D->3D reshape (see the commit that fixed it).
+    #[test]
+    fn write_inv_volume_is_byte_identical_non_square() {
+        let dir = tmp_dir("roundtrip-nonsquare");
+        let header = make_minimal_header(3, 2, 1);
+
+        let vol = Array3::from_shape_fn((3, 2, 1), |(i, j, _k)| (i * 10 + j) as f64 + 0.25);
+        let path = dir.join("vol.nii.gz");
+        write_inv_volume(&vol, &header, &path).unwrap();
+
+        let read_back = io::nifti::read_map_nifti(&path).unwrap();
+        assert_eq!(
+            read_back.dim(),
+            (3, 2, 1),
+            "read-back shape must match the source (nx, ny, nz), not a swapped (ny, nx, nz)"
+        );
+        for ((i, j, k), &expected) in vol.indexed_iter() {
+            assert_eq!(
+                read_back[[i, j, k]],
+                expected,
+                "voxel ({i},{j},{k}) mismatch"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Step 2/3: structure test — the IRT1 tree is produced from an
     /// in-memory Array4 + TI fixture (no .mat writer exists, per the plan).
     #[test]
@@ -228,7 +274,9 @@ mod tests {
             let nii = anat.join(format!("{base}.nii.gz"));
             assert!(nii.exists(), "missing {:?}", nii);
             let json = std::fs::read_to_string(anat.join(format!("{base}.json"))).unwrap();
-            assert!(json.contains(&format!("\"InversionTime\":{t}")));
+            let sidecar: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(sidecar["InversionTime"], t);
+            assert!(sidecar.get("RepetitionTime").is_none());
 
             let read_back = io::nifti::read_map_nifti(&nii).unwrap();
             let expected = ir_data.index_axis(Axis(3), i);
