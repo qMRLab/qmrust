@@ -9,25 +9,26 @@ pub enum FitMethod {
     Complex,
 }
 
-/// T1 grid search range configuration.
+/// T1 grid search range configuration, in BIDS-native **seconds** (no
+/// internal ms↔s conversion — see CLAUDE.md "Units — BIDS-native (SI)").
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct T1Range {
     #[serde(default = "default_t1_start")]
-    pub start: u32,
+    pub start: f64,
     #[serde(default = "default_t1_stop")]
-    pub stop: u32,
+    pub stop: f64,
     #[serde(default = "default_t1_step")]
-    pub step: u32,
+    pub step: f64,
 }
 
-fn default_t1_start() -> u32 {
-    1
+fn default_t1_start() -> f64 {
+    0.001
 }
-fn default_t1_stop() -> u32 {
-    5000
+fn default_t1_stop() -> f64 {
+    5.0
 }
-fn default_t1_step() -> u32 {
-    1
+fn default_t1_step() -> f64 {
+    0.001
 }
 
 impl Default for T1Range {
@@ -212,7 +213,7 @@ mod qmt_tests {
 
     #[test]
     fn existing_ir_config_still_parses() {
-        let yaml = "inversion_times: [350, 500, 650]\nmethod: magnitude\n";
+        let yaml = "inversion_times: [0.350, 0.500, 0.650]\nmethod: magnitude\n";
         let mut cfg: Config = serde_yaml::from_str(yaml).unwrap();
         cfg.validate().unwrap();
         assert_eq!(cfg.model, "inversion_recovery");
@@ -221,7 +222,7 @@ mod qmt_tests {
 
     #[test]
     fn parse_config_typed_parses_and_validates_from_text() {
-        let yaml = "inversion_times: [350, 500, 650]\nmethod: magnitude\n";
+        let yaml = "inversion_times: [0.350, 0.500, 0.650]\nmethod: magnitude\n";
         let cfg = parse_config_typed(yaml).unwrap();
         assert_eq!(cfg.model, "inversion_recovery");
         assert_eq!(cfg.inversion_times.len(), 3);
@@ -236,7 +237,7 @@ mod qmt_tests {
 
     #[test]
     fn parse_config_returns_typed_and_raw_tree() {
-        let yaml = "inversion_times: [350, 500, 650]\nmethod: magnitude\n";
+        let yaml = "inversion_times: [0.350, 0.500, 0.650]\nmethod: magnitude\n";
         let (cfg, raw) = parse_config(yaml).unwrap();
         assert_eq!(cfg.model, "inversion_recovery");
         assert_eq!(

@@ -1,20 +1,20 @@
 model: inversion_recovery
 inversion_times:
-- 350.0
-- 500.0
-- 650.0
-- 800.0
-- 950.0
-- 1100.0
-- 1250.0
-- 1400.0
-- 1700.0
+- 0.350
+- 0.500
+- 0.650
+- 0.800
+- 0.950
+- 1.100
+- 1.250
+- 1.400
+- 1.700
 method: magnitude
-repetition_time: 2500.0
+repetition_time: 2.5
 t1_range:
-  start: 1
-  stop: 5000
-  step: 1
+  start: 0.001
+  stop: 5.0
+  step: 0.001
 zoom:
   iterations: 2
   points: 21

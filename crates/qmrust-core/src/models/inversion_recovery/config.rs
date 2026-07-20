@@ -31,7 +31,7 @@ impl IrConfig {
                 self.inversion_times.len()
             );
         }
-        if self.t1_range.start == 0 {
+        if self.t1_range.start <= 0.0 {
             bail!("T1 range start must be > 0");
         }
         if self.t1_range.start >= self.t1_range.stop {
@@ -57,13 +57,13 @@ mod tests {
     #[test]
     fn parses_top_level_ir_keys() {
         let v: serde_yaml::Value = serde_yaml::from_str(
-            "model: inversion_recovery\nmethod: complex\ninversion_times: [650, 350, 500]\n",
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [0.650, 0.350, 0.500]\n",
         )
         .unwrap();
         let mut cfg: IrConfig = serde_yaml::from_value(v).unwrap();
         cfg.validate().unwrap();
-        // sorted ascending
-        assert_eq!(cfg.inversion_times, vec![350.0, 500.0, 650.0]);
+        // sorted ascending (seconds)
+        assert_eq!(cfg.inversion_times, vec![0.350, 0.500, 0.650]);
     }
 
     #[test]
