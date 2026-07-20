@@ -1144,4 +1144,114 @@ mod tests {
                 .contains("named-collection fit not yet supported")),
         }
     }
+
+    /// End-to-end validation (Task 5): the BIDS fit path (`bidsify` +
+    /// `run_fit_bids`) must reproduce the `.mat` fit path (`run_fit
+    /// --mat-data`) exactly, since `bidsify` writes byte-identical voxel data
+    /// (see `bidsify.rs`'s round-trip tests). Needs a *real* qMRLab OSF IR
+    /// dataset (`IRData.mat`/`Mask.mat`) supplied via env vars — no network
+    /// access here, so it's `#[ignore]`d by default and skipped by a plain
+    /// `cargo test`. Run explicitly with:
+    ///
+    /// ```text
+    /// QMRUST_IR_MAT=<path>/IRData.mat QMRUST_IR_MASK=<path>/Mask.mat \
+    ///   cargo test -p qmrust-cli --release bids_fit_matches_mat_fit -- --ignored --nocapture
+    /// ```
+    ///
+    /// `scripts/make_bids_examples.sh` fetches such a dataset from OSF.
+    ///
+    /// `run_fit_bids` doesn't yet resolve a BIDS mask (see its doc comment —
+    /// aux-map resolution is a tracked follow-up, and mask resolution shares
+    /// that gap), so it fits every nonzero voxel while the `.mat` path only
+    /// fits the `Mask.mat` region. The two runs can therefore only agree
+    /// where the `.mat` path actually fit a voxel: inside the mask, on the
+    /// same byte-identical input, the fit must be exactly equal; outside it,
+    /// the `.mat` path leaves `NaN` while the BIDS path may fit real values,
+    /// which is a known, separately-tracked limitation, not a fit divergence.
+    #[test]
+    #[ignore]
+    fn bids_fit_matches_mat_fit() {
+        let ir_mat = PathBuf::from(
+            std::env::var("QMRUST_IR_MAT").expect("set QMRUST_IR_MAT=<path>/IRData.mat"),
+        );
+        let ir_mask = PathBuf::from(
+            std::env::var("QMRUST_IR_MASK").expect("set QMRUST_IR_MASK=<path>/Mask.mat"),
+        );
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..");
+        let config = repo_root.join("prots").join("irt1_config.yaml");
+
+        let tmp = TempDir::new("bids-matches-mat");
+        let out_mat = tmp.0.join("out_mat");
+        let bids_dir = tmp.0.join("ds-qmrust");
+        // `output_dir` is the *derivatives root*: `run_fit_bids`/`write_derivatives`
+        // append `qmrust/<subject>/anat/...` themselves (mirrors
+        // `scripts/make_bids_examples.sh`'s `--output-dir ds-qmrust/derivatives`).
+        let deriv_dir = bids_dir.join("derivatives");
+
+        // (a) Fit via the .mat path, in-process.
+        run_fit(
+            None,
+            Some(ir_mat.clone()),
+            config.clone(),
+            Some(ir_mask.clone()),
+            out_mat.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("mat-path fit failed");
+        let mat_mask = io::mat::read_mask_mat(&ir_mask).expect("read Mask.mat");
+        let t1_mat = io::nifti::read_map_nifti(&out_mat.join("T1.nii.gz")).expect("read T1.mat");
+
+        // (b) bidsify (in-process) + fit via the BIDS path, in-process.
+        crate::bidsify::run_bidsify(crate::bidsify::BidsifyArgs {
+            model: "inversion_recovery".to_string(),
+            mat_data: ir_mat,
+            mask: Some(ir_mask),
+            config: config.clone(),
+            subject: "01".to_string(),
+            out: bids_dir.clone(),
+        })
+        .expect("bidsify failed");
+        run_fit_bids(bids_dir, config, deriv_dir.clone(), None).expect("bids-path fit failed");
+        let t1_bids = io::nifti::read_map_nifti(
+            &deriv_dir
+                .join("qmrust")
+                .join("sub-01")
+                .join("anat")
+                .join("sub-01_T1map.nii.gz"),
+        )
+        .expect("read T1map (bids)");
+
+        assert_eq!(t1_mat.dim(), t1_bids.dim(), "T1 map shapes must match");
+
+        let mut n_in_mask = 0usize;
+        let mut n_mismatch = 0usize;
+        for ((x, y, z), &in_mask) in mat_mask.indexed_iter() {
+            if !in_mask {
+                continue;
+            }
+            n_in_mask += 1;
+            let a = t1_mat[[x, y, z]];
+            let b = t1_bids[[x, y, z]];
+            // Both NaN (fit failed identically on identical input) counts as
+            // agreement; otherwise require exact equality (byte-identical
+            // input -> byte-identical fit, no tolerance).
+            let equal = (a.is_nan() && b.is_nan()) || a == b;
+            if !equal {
+                n_mismatch += 1;
+                eprintln!("  mismatch at ({x},{y},{z}): mat={a} bids={b}");
+            }
+        }
+        eprintln!("in-mask voxels: {n_in_mask}, mismatches: {n_mismatch}");
+        assert_eq!(
+            n_mismatch, 0,
+            "BIDS-path T1 must exactly match .mat-path T1 for every masked voxel \
+             (byte-identical input must produce byte-identical fit)"
+        );
+    }
 }
