@@ -89,17 +89,12 @@ A `cdylib` exposing the core to JavaScript via `wasm-bindgen`. Two layers:
 ### `rust-bids` — the BIDS layout resolver
 
 A wasm-clean, standalone qMRI-BIDS layout resolver, kept as its own crate rather than
-folded into `qmrust-core` because it is generalizable beyond this workspace. Two layers:
-`table` parses a raw dataset into flat rows (filename entities + sidecar fields), and
-`resolve` groups those rows into `Collection`s per a declarative grouping config
-(`BidsConfig`) — a small grammar of plain/named/sequential sets, permissive-but-loud on
-mismatches (`Warning`s attached to the `Collection`, not panics). The `fs::DatasetFs`
-trait is the I/O seam: it takes the place of `std::fs` so the same resolver runs against
-a native filesystem walker or a browser-side (e.g. Tauri/JS) directory listing without
-change. Downstream, `protocol::protocol_for` turns a `Collection` into a
-`qmrust_core::Protocol`, and the grouped volumes/`VolumeRef`s feed the fitting shell —
-this crate is the intended BIDS front door for both the CLI and a future Tauri app,
-independent of the `qmrust-core` purity rule (it is not part of core).
+folded into `qmrust-core` because it is generalizable beyond this workspace. It groups a
+raw dataset into `Collection`s, builds each image's inheritance-merged `Sidecar`, and
+evaluates a model's `protocol_schema()` against it to produce a `qmrust_core::Protocol` —
+the intended BIDS front door for both the CLI and a future Tauri app, independent of the
+`qmrust-core` purity rule (it is not part of core). See
+[`DATA-PIPELINE.md`](DATA-PIPELINE.md) for the full walkthrough.
 
 ---
 
@@ -125,6 +120,8 @@ pub trait Model: Send + Sync {
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;         // identity-keyed measurement → outputs
 
     fn bids(&self) -> Option<BidsSpec> { None }   // BIDS grouping suffix + entity map
+
+    fn protocol_schema(&self) -> Vec<ProtoParam> { vec![] }   // sidecar/config → Protocol mapping
 }
 ```
 
@@ -145,12 +142,13 @@ reason it is portable.
 - **`FitStrategy { Voxelwise, MatrixWise }`** — how the engine iterates. `Voxelwise`
   (independent per-voxel, parallel) is implemented; `MatrixWise` is a declared seam for
   future joint/dictionary methods (`bail!` until a model needs it).
-- **`Protocol { volumes, global }`** — a BIDS-sidecar-shaped acquisition protocol (one
-  metadata map per volume + shared globals). Empty means "model, read your protocol from
-  your own config." Produced by `ProtocolSource` (a model's own YAML config, or a `.mat`
-  override); BIDS-sidecar protocols are produced separately by `rust-bids`'
-  `protocol_for`.
-- **`BidsSpec { suffix, entities }`** — the model's BIDS identity (e.g. `IRT1`, `MTS`).
+- **`Protocol { volumes, global }`**, **`ProtoParam`/`Source`/`Scope`**, **`Meta`**, and
+  **`BidsSpec { suffix, entities }`** — together, the model input contract for BIDS/sidecar
+  metadata: a model declares its BIDS identity and a declarative mapping from sidecar
+  fields (or config) onto its acquisition protocol; the shell resolves it into a
+  `Protocol` and hands it to `build`. Full detail (including the `Source::{Field,
+  Derived, Option}` variants and how `resolve_protocol` evaluates them) is in
+  [`DATA-PIPELINE.md`](DATA-PIPELINE.md).
 - **`MeasurementKind { Named { roles }, Series { rows } }`** — a model's declared
   measurement shape: a fixed set of role-labeled volumes, or a variable-length series
   whose canonical per-volume identity `rows` (e.g. one `{"InversionTime": ti}` per TI) the
@@ -213,6 +211,21 @@ voxels in parallel (`rayon`), assembling each voxel's per-volume values and thei
 `VolumeId`s into an identity-keyed `Measurement` (matching `model.measurement()`), building
 a per-voxel `Aux`, and calling `model.fit`. There is no positional signal slice anywhere
 in this path — a reordered volume list produces the same `Measurement` and the same fit.
+
+### Fit from a BIDS dataset (CLI)
+
+```
+qmrust fit --bids-dir <dir> ─► StdFs (native DatasetFs) ─► rust_bids::collections_for
+   for each Collection: resolve_protocol + load 4-D volumes
+   build_volume_ids(model.measurement(), protocol) ─► engine::run ─► FitResults
+   io::nifti writes output_dir/<subject>[/<session>]/<map>.nii.gz
+```
+
+A BIDS collection is just another way to arrive at a `Protocol` and an ordered volume
+set, feeding the same order-free `build_volume_ids` → `engine::run` path as the
+file-based flow above. See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for how collections are
+resolved, how sidecars are merged, and current v1 scope/limitations (`Sequential`-only,
+no BIDS-resolved aux).
 
 ### Simulate (CLI / core)
 
@@ -280,6 +293,10 @@ fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
     self.fitter.fit_voxel(&Array1::from_vec(signal))
 }
 fn bids(&self) -> Option<BidsSpec> { Some(BidsSpec { suffix: "IRT1", entities: IR_ENTITIES }) }
+fn protocol_schema(&self) -> Vec<ProtoParam> {
+    // InversionTime comes straight off each volume's sidecar, one per volume.
+    vec![ProtoParam { name: "InversionTime", source: Source::Field("InversionTime"), scope: Scope::PerVolume }]
+}
 
 // the registry builder: parse this model's config, apply any protocol override, validate, box it
 pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
@@ -349,13 +366,14 @@ comes from.
 ## BIDS-first design
 
 qMRI-BIDS is treated as an **imperative-shell concern**, so it never touches the pure
-core. A model declares its BIDS identity (`bids()` → suffix + entities) and its inputs'
-BIDS locators (`InputSpec.bids`); the shell uses those to locate a file collection and
-read acquisition metadata from JSON sidecars into a `Protocol`, which is handed to the
-model's `build`. The model's `forward`/`fit` still only see ordered params + `Aux`. The
-seams (`BidsSpec`, `Protocol`, `ProtocolSource`) are in place, and the sidecar reader now
-exists as the `rust-bids` crate — flat-table parse → declarative-grammar grouping →
-sidecar-to-`Protocol` bridge (see the `rust-bids` subsection above).
+core: a model only ever declares its BIDS identity and metadata mapping
+(`bids()`, `InputSpec.bids`, `protocol_schema()`); the shell (`rust-bids` + the CLI)
+resolves those declarations into a `Protocol` before calling the model's `build`, and
+`forward`/`fit` still only see ordered params + `Aux`. This makes `--config` what it
+should have been all along: algorithm options and the non-BIDS fallback, not a place to
+duplicate acquisition parameters that already live in JSON sidecars. See
+[`DATA-PIPELINE.md`](DATA-PIPELINE.md) for the full mapping mechanism, the `rust-bids`
+crate, and what's deferred.
 
 ---
 

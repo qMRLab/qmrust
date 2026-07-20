@@ -9,10 +9,14 @@ project:
   license: MIT
   toc:
     - file: index.md
-    - file: getting-started.md
-    - file: architecture.md
-    - file: models.md
-    - file: bids.md
-    - file: browser.md
+    - title: User Guide
+      children:
+        - file: getting-started.md
+        - file: bids.md
+        - file: browser.md
+    - title: Developer Guide
+      children:
+        - file: architecture.md
+        - file: models.md
 site:
   template: book-theme

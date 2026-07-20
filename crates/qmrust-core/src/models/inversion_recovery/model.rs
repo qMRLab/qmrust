@@ -2,7 +2,7 @@
 
 use crate::core::model::{
     validate_against_protocol, Aux, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement,
-    MeasurementKind, Model, Protocol, Sample,
+    MeasurementKind, Model, ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::inversion_recovery::config::IrConfig;
 use crate::models::inversion_recovery::fit::IrFitter;
@@ -106,6 +106,13 @@ impl Model for IrModel {
             suffix: "IRT1",
             entities: IR_ENTITIES,
         })
+    }
+    fn protocol_schema(&self) -> Vec<ProtoParam> {
+        vec![ProtoParam {
+            name: "InversionTime",
+            source: Source::Field("InversionTime"),
+            scope: Scope::PerVolume,
+        }]
     }
 }
 
@@ -235,5 +242,15 @@ mod tests {
     fn declares_bids_irt1() {
         let m = build(&ir_value(), &Protocol::default()).unwrap();
         assert_eq!(m.bids().unwrap().suffix, "IRT1");
+    }
+
+    #[test]
+    fn declares_inversion_time_protocol_schema() {
+        let m = build(&ir_value(), &Protocol::default()).unwrap();
+        let schema = m.protocol_schema();
+        assert_eq!(schema.len(), 1);
+        assert_eq!(schema[0].name, "InversionTime");
+        assert!(matches!(schema[0].source, Source::Field("InversionTime")));
+        assert!(matches!(schema[0].scope, Scope::PerVolume));
     }
 }

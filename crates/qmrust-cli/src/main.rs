@@ -29,6 +29,11 @@ enum Commands {
         #[arg(long, group = "input")]
         mat_data: Option<PathBuf>,
 
+        /// Path to a qMRI-BIDS dataset root; fits every collection matching
+        /// the config's model, one subject/session at a time
+        #[arg(long, group = "input")]
+        bids_dir: Option<PathBuf>,
+
         /// Path to YAML configuration file
         #[arg(long)]
         config: PathBuf,
@@ -136,6 +141,7 @@ fn main() -> Result<()> {
         Commands::Fit {
             data,
             mat_data,
+            bids_dir,
             config,
             mask,
             output_dir,
@@ -144,9 +150,15 @@ fn main() -> Result<()> {
             r1map,
             b1map,
             b0map,
-        } => commands::run_fit(
-            data, mat_data, config, mask, output_dir, threads, mat_dir, r1map, b1map, b0map,
-        ),
+        } => {
+            if let Some(bids_dir) = bids_dir {
+                commands::run_fit_bids(bids_dir, config, output_dir, threads)
+            } else {
+                commands::run_fit(
+                    data, mat_data, config, mask, output_dir, threads, mat_dir, r1map, b1map, b0map,
+                )
+            }
+        }
         Commands::DumpSf { config, output } => commands::run_dump_sf(config, output),
         Commands::DumpConfig { config } => commands::run_dump_config(config),
         Commands::Sim { mode } => {

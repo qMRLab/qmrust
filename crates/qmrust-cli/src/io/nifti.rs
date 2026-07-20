@@ -83,28 +83,32 @@ pub fn read_mask_nifti(path: &Path) -> Result<Array3<bool>> {
 
 /// Read a 2D/3D NIfTI scalar map as a 3D f64 array (z=1 for 2D).
 pub fn read_map_nifti(path: &Path) -> Result<Array3<f64>> {
-    let (data, _header) = read_nifti_raw(path)?;
+    let (arr, _header) = read_map_nifti_with_header(path)?;
+    Ok(arr)
+}
+
+/// Read a 2D/3D NIfTI scalar map as a 3D f64 array (z=1 for 2D), also
+/// returning the header — used when a single volume's spatial geometry must
+/// be threaded through (e.g. one timepoint of a BIDS `Sequential` series).
+pub fn read_map_nifti_with_header(path: &Path) -> Result<(Array3<f64>, NiftiHeader)> {
+    let (data, header) = read_nifti_raw(path)?;
     let shape = data.shape();
-    match shape.len() {
-        3 => {
-            let arr = data
-                .into_dimensionality::<ndarray::Ix3>()
-                .map_err(|e| anyhow::anyhow!("Failed to reshape map to 3D: {}", e))?;
-            Ok(arr)
-        }
+    let arr = match shape.len() {
+        3 => data
+            .into_dimensionality::<ndarray::Ix3>()
+            .map_err(|e| anyhow::anyhow!("Failed to reshape map to 3D: {}", e))?,
         2 => {
             let dim = (shape[0], shape[1], 1);
             let flat = data.into_raw_vec_and_offset().0;
-            let arr =
-                Array3::from_shape_vec(dim, flat).context("Failed to reshape 2D map to 3D")?;
-            Ok(arr)
+            Array3::from_shape_vec(dim, flat).context("Failed to reshape 2D map to 3D")?
         }
         _ => bail!(
             "Expected 2D or 3D NIfTI map, got {}D from {:?}",
             shape.len(),
             path
         ),
-    }
+    };
+    Ok((arr, header))
 }
 
 /// Create a 3D header from a 4D reference header.

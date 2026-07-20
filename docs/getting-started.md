@@ -45,6 +45,34 @@ Print the fully-resolved config (defaults applied, validated) before running:
 cargo run -p qmrust-cli -- dump-config --config prots/qmt_config_sledpikerp.yaml
 ```
 
+## Fit a BIDS dataset
+
+If your data is already laid out as a BIDS dataset, point at the dataset root
+instead of individual files:
+
+```bash
+cargo run -p qmrust-cli -- fit \
+  --bids-dir <path-to-bids-dataset> \
+  --config prots/irt1_config.yaml \
+  --output-dir <out>
+```
+
+This scans the dataset, groups files into collections per the config's model
+(e.g. an inversion-time series for IRT1), and fits each subject (and session,
+if present), writing `<out>/<subject>[/<session>]/<map>.nii.gz`. v1 scope:
+sequential collections (IRT1-style) and models with no required auxiliary
+input — a model needing B1/B0/R1 maps or a named collection like MTS isn't
+BIDS-fittable yet; use `--mat-dir`/`--data` with explicit `--r1map`/`--b1map`/
+`--b0map` for those. See [BIDS](bids.md) for how `rust-bids` resolves the
+dataset layout.
+
+Notice `--config` above still points at `irt1_config.yaml`, but in a BIDS fit
+it no longer needs to carry the inversion times — the model declares which
+acquisition parameters it needs from the JSON sidecars, so `--config` is just
+algorithm options (fit bounds, etc.). See
+[From sidecar metadata to `Protocol`](bids.md#from-sidecar-metadata-to-protocol)
+for how that mapping works.
+
 ## Run a simulation
 
 `qmrust sim` generates a forward signal from ground-truth parameters,
