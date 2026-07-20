@@ -451,20 +451,17 @@ pub fn run_fit(
     )
 }
 
-/// Run the engine over one (data, protocol) volume and write the result maps
-/// as NIfTI into `output_dir` — the shared tail of both `run_fit` (NIfTI/.mat
-/// input) and `run_fit_bids` (one call per resolved BIDS collection).
-#[allow(clippy::too_many_arguments)]
-fn fit_and_write(
+/// Run the engine over one (data, protocol) volume, honoring the model's
+/// `FitStrategy`/measurement kind. Shared by `fit_and_write` (flat `run_fit`
+/// output) and `run_fit_bids` (BIDS-derivatives output) so both write from
+/// the identical `FitResults`.
+fn run_model_fit(
     model: &dyn Model,
     data: &Array4<f64>,
     proto: &Protocol,
     mask: Option<&Array3<bool>>,
     aux: &AuxMaps,
-    header: &NiftiHeader,
-    from_mat: bool,
-    output_dir: &Path,
-) -> Result<()> {
+) -> Result<qmrust_core::fitting::FitResults> {
     let n_volumes = data.dim().3;
     // Build the per-volume identities from the model's declared measurement
     // kind and the resolved protocol — no per-model branching. `Named` maps
@@ -483,6 +480,25 @@ fn fit_and_write(
         "{}",
         done_msg.if_supports_color(Stderr, |t| t.green().bold().to_string())
     );
+    Ok(results)
+}
+
+/// Run the engine over one (data, protocol) volume and write the result maps
+/// as NIfTI into `output_dir` — the flat layout `run_fit` (NIfTI/.mat input)
+/// uses. Behaviour-preserving: unchanged since before the BIDS-derivatives
+/// output was added (the OSF integration script asserts `out_ir/T1.nii.gz`).
+#[allow(clippy::too_many_arguments)]
+fn fit_and_write(
+    model: &dyn Model,
+    data: &Array4<f64>,
+    proto: &Protocol,
+    mask: Option<&Array3<bool>>,
+    aux: &AuxMaps,
+    header: &NiftiHeader,
+    from_mat: bool,
+    output_dir: &Path,
+) -> Result<()> {
+    let results = run_model_fit(model, data, proto, mask, aux)?;
 
     std::fs::create_dir_all(output_dir)?;
     eprintln!("Writing results to {:?}...", output_dir);
@@ -507,9 +523,69 @@ fn fit_and_write(
     Ok(())
 }
 
+/// Write `model`'s declared BIDS output maps (`Model::bids_outputs()`) from a
+/// fitted `results` into a BIDS-derivatives tree rooted at `deriv_root`:
+/// `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`
+/// plus a minimal JSON sidecar next to each. Outputs `bids_outputs()` doesn't
+/// declare (diagnostics like `res`/`idx`/`kf`/`resnorm`) are never written —
+/// only real BIDS maps get exported to the derivatives layout. Uses the same
+/// writer `fit_and_write`'s flat output uses (`write_map_nifti` for
+/// `.mat`-sourced data, `write_3d_nifti` otherwise), so map values are
+/// byte-identical between the flat and derivatives layouts. Also ensures a
+/// `deriv_root/qmrust/dataset_description.json` exists (created once, never
+/// overwritten on subsequent subjects/sessions).
+fn write_derivatives(
+    results: &qmrust_core::fitting::FitResults,
+    model: &dyn Model,
+    subject: &str,
+    session: Option<&str>,
+    deriv_root: &Path,
+    header: &NiftiHeader,
+    from_mat: bool,
+) -> Result<()> {
+    let qmrust_root = deriv_root.join("qmrust");
+    std::fs::create_dir_all(&qmrust_root)?;
+    let dd_path = qmrust_root.join("dataset_description.json");
+    if !dd_path.exists() {
+        std::fs::write(
+            &dd_path,
+            r#"{"Name":"qmrust derivatives","BIDSVersion":"1.8.0","GeneratedBy":[{"Name":"qmrust"}],"DatasetType":"derivative"}"#,
+        )?;
+    }
+
+    let subject_dir = match session {
+        Some(ses) => qmrust_root.join(subject).join(ses),
+        None => qmrust_root.join(subject),
+    };
+    let anat_dir = subject_dir.join("anat");
+    std::fs::create_dir_all(&anat_dir)?;
+
+    let entity_stem = match session {
+        Some(ses) => format!("{subject}_{ses}"),
+        None => subject.to_string(),
+    };
+
+    for (output_name, suffix) in model.bids_outputs() {
+        let Some(map) = results.get(output_name) else {
+            continue;
+        };
+        let base = format!("{entity_stem}_{suffix}");
+        let nii_path = anat_dir.join(format!("{base}.nii.gz"));
+        if from_mat {
+            io::nifti::write_map_nifti(map, header, &nii_path)?;
+        } else {
+            io::nifti::write_3d_nifti(map, header, &nii_path)?;
+        }
+        let json_path = anat_dir.join(format!("{base}.json"));
+        std::fs::write(&json_path, r#"{"GeneratedBy":[{"Name":"qmrust"}]}"#)?;
+    }
+    Ok(())
+}
+
 /// Fit every collection of a BIDS dataset matching the config's model,
 /// writing each subject's (and session's, if present) result maps under
-/// `output_dir/<subject>[/<session>]/`. v1 targets no-aux models (e.g. IRT1):
+/// `output_dir/qmrust/<subject>[/<session>]/anat/` in the BIDS-derivatives
+/// layout (see `write_derivatives`). v1 targets no-aux models (e.g. IRT1):
 /// BIDS-side B1/B0/R1 map resolution is a follow-up, so a model that
 /// `required`-declares any aux input is rejected up front rather than fit
 /// with a silently-missing map.
@@ -598,9 +674,10 @@ pub fn run_fit_bids(
         // Only the expected, structural case is a skip: `Named` collections
         // (e.g. qMT/MTS-style sets) aren't reorderable to a model's axis order
         // yet (see `load_collection`). Anything else `load_collection` (or the
-        // model build / fit_and_write below) reports — a corrupt NIfTI, a
-        // spatial-dims mismatch, a broken sidecar — is a real failure and must
-        // propagate loudly (`?`), never be logged-and-skipped alongside it.
+        // model build / run_model_fit / write_derivatives below) reports — a
+        // corrupt NIfTI, a spatial-dims mismatch, a broken sidecar — is a real
+        // failure and must propagate loudly (`?`), never be logged-and-skipped
+        // alongside it.
         if matches!(c.data, GroupedData::Named(_)) {
             eprintln!(
                 "  skipping {}: named-collection fit not yet supported (follow-up)",
@@ -620,20 +697,18 @@ pub fn run_fit_bids(
         let (nx, ny, nz, _) = data.dim();
         let header = header.unwrap_or_else(|| make_minimal_header(nx, ny, nz));
 
-        let subject_dir = match &c.session {
-            Some(ses) => output_dir.join(&c.subject).join(ses),
-            None => output_dir.join(&c.subject),
-        };
-
-        fit_and_write(
+        let results = run_model_fit(model.as_ref(), &data, &proto, None, &AuxMaps::empty())?;
+        // `output_dir` is treated as the derivatives root: BIDS output lands
+        // at `output_dir/qmrust/<subject>[/<session>]/anat/...` (see
+        // `write_derivatives`), not the flat layout `run_fit` uses.
+        write_derivatives(
+            &results,
             model.as_ref(),
-            &data,
-            &proto,
-            None,
-            &AuxMaps::empty(),
+            &c.subject,
+            c.session.as_deref(),
+            &output_dir,
             &header,
             from_mat,
-            &subject_dir,
         )?;
         fit_count += 1;
     }
@@ -824,7 +899,14 @@ mod tests {
         let out_dir = tmp.0.join("out");
         run_fit_bids(bids_dir, config_path, out_dir.clone(), None).unwrap();
 
-        let t1_path = out_dir.join("sub-01").join("T1.nii.gz");
+        // BIDS-derivatives layout: output_dir is the derivatives root, so the
+        // T1 map lands at qmrust/sub-01/anat/sub-01_T1map.nii.gz (mapped from
+        // IR's `T1` output via `bids_outputs()`), not a flat `T1.nii.gz`.
+        let t1_path = out_dir
+            .join("qmrust")
+            .join("sub-01")
+            .join("anat")
+            .join("sub-01_T1map.nii.gz");
         assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
         let t1_map = io::nifti::read_map_nifti(&t1_path).unwrap();
         assert!(
@@ -832,6 +914,84 @@ mod tests {
             "T1: {} (expected ~{})",
             t1_map[[0, 0, 0]],
             t1
+        );
+
+        let sidecar = out_dir
+            .join("qmrust")
+            .join("sub-01")
+            .join("anat")
+            .join("sub-01_T1map.json");
+        assert!(sidecar.exists(), "expected a JSON sidecar next to the map");
+
+        let dataset_description = out_dir.join("qmrust").join("dataset_description.json");
+        assert!(
+            dataset_description.exists(),
+            "expected qmrust/dataset_description.json to exist"
+        );
+    }
+
+    /// `write_derivatives` in isolation: given a fitted `FitResults` with a
+    /// declared map (`T1`) and an undeclared diagnostic (`res`), it writes
+    /// only the declared map (as `T1map`, IR's `bids_outputs()` mapping) plus
+    /// its JSON sidecar, ensures `dataset_description.json`, and leaves `res`
+    /// out of the derivatives tree entirely.
+    #[test]
+    fn write_derivatives_writes_only_declared_bids_outputs() {
+        let tmp = TempDir::new("write-derivatives");
+        let deriv_root = tmp.0.join("derivatives");
+
+        let config_path = tmp.0.join("ir.yaml");
+        std::fs::write(
+            &config_path,
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800]\n",
+        )
+        .unwrap();
+        let (_cfg, raw) = load_config_raw(&config_path).unwrap();
+        let entry = qmrust_core::registry::by_name("inversion_recovery").unwrap();
+        let model = (entry.build)(&raw, &Protocol::default()).unwrap();
+
+        let mut results = qmrust_core::fitting::FitResults::new();
+        let t1_map = Array3::from_elem((1, 1, 1), 900.0_f64);
+        results.insert("T1".to_string(), t1_map.clone());
+        // A diagnostic output not in `bids_outputs()` — must not be written.
+        results.insert("res".to_string(), Array3::from_elem((1, 1, 1), 0.001));
+
+        let header = make_minimal_header(1, 1, 1);
+        write_derivatives(
+            &results,
+            model.as_ref(),
+            "sub-01",
+            None,
+            &deriv_root,
+            &header,
+            true,
+        )
+        .unwrap();
+
+        let anat_dir = deriv_root.join("qmrust").join("sub-01").join("anat");
+        let t1_path = anat_dir.join("sub-01_T1map.nii.gz");
+        assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
+        assert!(
+            anat_dir.join("sub-01_T1map.json").exists(),
+            "expected a JSON sidecar next to the T1 map"
+        );
+        assert!(
+            !anat_dir.join("sub-01_res.nii.gz").exists(),
+            "the undeclared diagnostic 'res' output must not be written"
+        );
+        assert!(
+            deriv_root
+                .join("qmrust")
+                .join("dataset_description.json")
+                .exists(),
+            "expected qmrust/dataset_description.json to exist"
+        );
+
+        let read_back = io::nifti::read_map_nifti(&t1_path).unwrap();
+        assert_eq!(
+            read_back[[0, 0, 0]],
+            t1_map[[0, 0, 0]],
+            "map values must be byte-identical to the input FitResults"
         );
     }
 
