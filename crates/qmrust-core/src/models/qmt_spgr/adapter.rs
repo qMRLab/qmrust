@@ -64,8 +64,15 @@ impl Model for QmtModel {
             InputSpec {
                 name: "R1map",
                 required: false,
+                // This aux is an R1 map (rate, 1/s, VFA-derived per qMRLab),
+                // not a T1 map — the honest BIDS locator is `R1map`, matching
+                // both the data's actual units and what `bidsify` writes
+                // (`sub-XX_R1map.nii.gz`). Labeling it `T1map` would be a
+                // units/semantic error that a future BIDS-aux resolver would
+                // silently fail to find (searching for a `T1map`-suffixed
+                // file that doesn't exist).
                 bids: Some(BidsMap {
-                    suffix: "T1map",
+                    suffix: "R1map",
                     entity: None,
                 }),
             },
