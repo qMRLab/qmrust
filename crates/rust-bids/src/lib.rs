@@ -16,7 +16,7 @@ pub mod table;
 pub use collection::{Collection, GroupedData, VolumeRef, Warning};
 pub use config::{default_config, parse_config, BidsConfig, SetDef};
 pub use fs::{DatasetFs, Entry};
-pub use protocol::{protocol_for, resolve_protocol};
+pub use protocol::resolve_protocol;
 pub use resolve::{collections_for, resolve_set};
 pub use scan::scan_dataset;
 pub use sidecar::{sidecar_for, Sidecar};

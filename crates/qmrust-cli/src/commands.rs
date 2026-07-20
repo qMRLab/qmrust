@@ -253,15 +253,20 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 
 /// Load one resolved BIDS `Collection` into the `(data, protocol, header)`
 /// triple the engine needs: the volumes stacked in the collection's order as
-/// `[nx,ny,nz,nt]`, the per-volume sidecar `Protocol` (for the given keys),
-/// and the first volume's header for output geometry. `Named` collections
-/// (e.g. qMT-style MTS sets) are a later increment — reordering them to a
-/// model's `required` axis order is not yet implemented, so they bail loudly
-/// rather than silently mis-assign volumes.
+/// `[nx,ny,nz,nt]`, the per-volume sidecar `Protocol` (resolved against
+/// `schema`), and the first volume's header for output geometry. `Named`
+/// collections (e.g. qMT-style MTS sets) are a later increment — reordering
+/// them to a model's `required` axis order is not yet implemented, so they
+/// bail loudly rather than silently mis-assign volumes.
+///
+/// An empty `schema` (a model that hasn't declared a `protocol_schema()`)
+/// resolves to an empty `Protocol` — the model falls back to reading its own
+/// `--config` in that case, matching the pre-schema behaviour.
 fn load_collection(
     fs: &StdFs,
     c: &Collection,
-    keys: &[&str],
+    schema: &[qmrust_core::core::model::ProtoParam],
+    options: &std::collections::BTreeMap<String, f64>,
 ) -> Result<(Array4<f64>, Protocol, Option<NiftiHeader>)> {
     let vols = match &c.data {
         GroupedData::Sequential(vols) => vols,
@@ -306,7 +311,11 @@ fn load_collection(
         out.index_axis_mut(ndarray::Axis(3), t).assign(slice);
     }
 
-    let proto = rust_bids::protocol_for(fs, c, keys)?;
+    let proto = if schema.is_empty() {
+        Protocol::default()
+    } else {
+        rust_bids::resolve_protocol(fs, c, schema, options)?
+    };
     Ok((out, proto, header))
 }
 
@@ -493,22 +502,6 @@ fn fit_and_write(
     Ok(())
 }
 
-/// Every distinct key used across a model's `Series` identity rows, sorted —
-/// the axis keys `load_collection` resolves per-volume sidecar values for.
-/// `Named` models are not BIDS-collection-loadable yet (see `load_collection`),
-/// so they resolve no keys.
-fn measurement_keys(kind: MeasurementKind) -> Vec<String> {
-    match kind {
-        MeasurementKind::Series { rows } => {
-            let mut keys: Vec<String> = rows.into_iter().flat_map(|r| r.into_keys()).collect();
-            keys.sort();
-            keys.dedup();
-            keys
-        }
-        MeasurementKind::Named { .. } => vec![],
-    }
-}
-
 /// Fit every collection of a BIDS dataset matching the config's model,
 /// writing each subject's (and session's, if present) result maps under
 /// `output_dir/<subject>[/<session>]/`. v1 targets no-aux models (e.g. IRT1):
@@ -560,8 +553,13 @@ pub fn run_fit_bids(
             required
         );
     }
-    let keys = measurement_keys(probe.measurement());
-    let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+    // Declarative BIDS metadata -> protocol mapping. Empty for a model that
+    // hasn't migrated to `protocol_schema()` yet — `load_collection` then
+    // falls back to an empty `Protocol`, matching pre-schema behaviour.
+    let schema = probe.protocol_schema();
+    // No model declares a `Source::Option` param yet; wired here so a future
+    // one can read its options straight out of `--config`.
+    let options: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
 
     let fs = StdFs {
         root: bids_dir.clone(),
@@ -608,7 +606,7 @@ pub fn run_fit_bids(
         }
 
         eprintln!("Fitting {}...", label);
-        let (data, proto, header) = load_collection(&fs, c, &key_refs)?;
+        let (data, proto, header) = load_collection(&fs, c, &schema, &options)?;
 
         let model = (entry.build)(&raw, &proto)?;
         eprintln!("  Model: {}, {} volumes", cfg.model, data.dim().3);
@@ -676,6 +674,17 @@ fn make_minimal_header(nx: usize, ny: usize, nz: usize) -> NiftiHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qmrust_core::core::model::{ProtoParam, Scope, Source};
+
+    /// The IR model's declared schema, for tests exercising `load_collection`
+    /// directly (outside `run_fit_bids`, which pulls this from the model).
+    fn ir_schema() -> Vec<ProtoParam> {
+        vec![ProtoParam {
+            name: "InversionTime",
+            source: Source::Field("InversionTime"),
+            scope: Scope::PerVolume,
+        }]
+    }
 
     /// A unique tempdir under `std::env::temp_dir()`, removed on drop so
     /// repeated test runs don't accumulate stale fixture directories.
@@ -723,7 +732,14 @@ mod tests {
             let nii_path = anat_dir.join(format!("sub-01_inv-{:02}_IRT1.nii.gz", i + 1));
             io::nifti::write_3d_nifti(&data, &header, &nii_path).unwrap();
             let json_path = anat_dir.join(format!("sub-01_inv-{:02}_IRT1.json", i + 1));
-            std::fs::write(&json_path, format!(r#"{{"InversionTime": {ti}}}"#)).unwrap();
+            // A stray, non-declared field alongside InversionTime: the schema
+            // only names `InversionTime`, so `FlipAngle` must not leak into
+            // the resolved `Protocol` below.
+            std::fs::write(
+                &json_path,
+                format!(r#"{{"InversionTime": {ti}, "FlipAngle": 9}}"#),
+            )
+            .unwrap();
         }
 
         let fs = StdFs {
@@ -733,7 +749,13 @@ mod tests {
         let cols = rust_bids::collections_for(&fs, &cfg, "IRT1").unwrap();
         assert_eq!(cols.len(), 1, "one IRT1 collection for sub-01");
 
-        let (data, proto, header) = load_collection(&fs, &cols[0], &["InversionTime"]).unwrap();
+        let (data, proto, header) = load_collection(
+            &fs,
+            &cols[0],
+            &ir_schema(),
+            &std::collections::BTreeMap::new(),
+        )
+        .unwrap();
 
         assert_eq!(data.dim(), (1, 1, 1, 4));
         assert!(header.is_some());
@@ -746,6 +768,13 @@ mod tests {
         }
 
         assert_eq!(proto.volumes.len(), 4);
+        for vol in &proto.volumes {
+            assert_eq!(
+                vol.get("FlipAngle"),
+                None,
+                "FlipAngle isn't in the IR schema and must not be captured"
+            );
+        }
         for (i, ti) in tis.iter().enumerate() {
             assert_eq!(
                 proto.volumes[i].get("InversionTime"),
@@ -943,7 +972,7 @@ mod tests {
         let fs = StdFs {
             root: std::env::temp_dir(),
         };
-        match load_collection(&fs, &c, &["FlipAngle"]) {
+        match load_collection(&fs, &c, &ir_schema(), &std::collections::BTreeMap::new()) {
             Ok(_) => panic!("named collections must be rejected, not silently loaded"),
             Err(e) => assert!(e
                 .to_string()
