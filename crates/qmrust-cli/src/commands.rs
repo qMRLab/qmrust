@@ -730,7 +730,7 @@ pub fn run_fit_bids(
 /// matching qMRLab's `make_nii`/`save_nii_v2` convention so Rust maps overlay
 /// exactly on qMRLab's FitResults: no qform, an sform identity with the origin
 /// at voxel (1,1,1), and float64 datatype.
-fn make_minimal_header(nx: usize, ny: usize, nz: usize) -> NiftiHeader {
+pub(crate) fn make_minimal_header(nx: usize, ny: usize, nz: usize) -> NiftiHeader {
     let mut h = NiftiHeader::default();
     h.dim[0] = 3;
     h.dim[1] = nx as u16;

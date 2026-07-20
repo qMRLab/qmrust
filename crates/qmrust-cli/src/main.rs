@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use qmrust_core::sim;
 use std::path::PathBuf;
 
+mod bidsify;
 mod commands;
 mod io;
 mod progress;
@@ -91,6 +92,34 @@ enum Commands {
     Sim {
         #[command(subcommand)]
         mode: SimMode,
+    },
+
+    /// Convert a qMRLab .mat dataset into a byte-identical BIDS layout
+    /// (IRT1/inversion_recovery only, for now).
+    Bidsify {
+        /// Model name (only "inversion_recovery" is supported so far)
+        #[arg(long)]
+        model: String,
+
+        /// Path to the .mat file containing the IR data (+ optional Mask/TI)
+        #[arg(long)]
+        mat_data: PathBuf,
+
+        /// Path to a separate .mat mask file (overrides one embedded in mat_data)
+        #[arg(long)]
+        mask: Option<PathBuf>,
+
+        /// Path to the model's YAML config (for inversion_times fallback)
+        #[arg(long)]
+        config: PathBuf,
+
+        /// Subject label without the "sub-" prefix (e.g. "01")
+        #[arg(long)]
+        subject: String,
+
+        /// BIDS dataset root to create/append to
+        #[arg(long)]
+        out: PathBuf,
     },
 }
 
@@ -186,5 +215,20 @@ fn main() -> Result<()> {
             };
             sim::run_sim(name, config, output, plot)
         }
+        Commands::Bidsify {
+            model,
+            mat_data,
+            mask,
+            config,
+            subject,
+            out,
+        } => bidsify::run_bidsify(bidsify::BidsifyArgs {
+            model,
+            mat_data,
+            mask,
+            config,
+            subject,
+            out,
+        }),
     }
 }
