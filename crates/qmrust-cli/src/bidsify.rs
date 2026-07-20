@@ -15,12 +15,12 @@ use crate::commands::make_minimal_header;
 use crate::io;
 
 /// IRT1 per-volume sidecar fields (BIDS-qMRI convention). `repetition_time`
-/// comes from the IR config's `repetition_time` field (qMRLab's IR_demo
-/// protocol uses TR = 2500, in the same ms convention as `InversionTime`);
-/// it's `None`, and skipped rather than serialized as `null`, only when the
-/// config doesn't supply one. Kept as a typed struct (not a hand-formatted
-/// string) so it stays correct as fields grow (this shape, and later
-/// QMTSPGR's much larger sidecar).
+/// comes from the IR config's `repetition_time` field (qMRLab's IR_demo TR
+/// is 2.5 s — 2500 ms in qMRLab's ms convention, converted at the config
+/// boundary); it's `None`, and skipped rather than serialized as `null`,
+/// only when the config doesn't supply one. Kept as a typed struct (not a
+/// hand-formatted string) so it stays correct as fields grow (this shape,
+/// and later QMTSPGR's much larger sidecar).
 #[derive(Serialize)]
 struct IrSidecar {
     #[serde(rename = "InversionTime")]
@@ -134,11 +134,11 @@ pub fn bidsify_ir(
         write_inv_volume(&vol, &header, &nii_path)?;
 
         let json_path = anat_dir.join(format!("{base}.json"));
-        // RepetitionTime comes from the config (qMRLab's IR_demo TR = 2500,
-        // in the same ms convention as InversionTime). It's recorded here per
-        // BIDS convention even though the RD-NLS fitter itself doesn't
-        // consume TR; it's omitted (not serialized as `null`) if the config
-        // doesn't supply one.
+        // RepetitionTime comes from the config (qMRLab's IR_demo TR is 2.5 s
+        // — 2500 ms in qMRLab's ms convention, converted at the config
+        // boundary). It's recorded here per BIDS convention even though the
+        // RD-NLS fitter itself doesn't consume TR; it's omitted (not
+        // serialized as `null`) if the config doesn't supply one.
         let sidecar = IrSidecar {
             inversion_time,
             repetition_time: tr,
@@ -328,7 +328,7 @@ mod tests {
     fn bidsify_ir_participants_row_not_duplicated() {
         let dir = tmp_dir("dedup");
         let ir_data = Array4::from_shape_fn((1, 1, 1, 3), |(_, _, _, t)| t as f64);
-        let ti = vec![350.0, 650.0, 950.0];
+        let ti = vec![0.350, 0.650, 0.950];
 
         bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
         bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
@@ -345,7 +345,7 @@ mod tests {
     fn bidsify_ir_omits_repetition_time_when_absent() {
         let dir = tmp_dir("no-tr");
         let ir_data = Array4::from_shape_fn((1, 1, 1, 3), |(_, _, _, t)| t as f64);
-        let ti = vec![350.0, 650.0, 950.0];
+        let ti = vec![0.350, 0.650, 0.950];
 
         bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
 
