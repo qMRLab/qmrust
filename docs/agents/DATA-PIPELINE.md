@@ -198,7 +198,73 @@ way to arrive at a `Protocol` and an ordered volume set; a `.mat` file
   them (today only `Sequential` collections drive a real fit).
 - Resolving BIDS-side auxiliary maps (B1/B0/R1) so aux-dependent models can
   fit straight from a BIDS dataset (`run_fit_bids` currently rejects any
-  model with a required aux input).
+  model with a required aux input, and doesn't yet resolve a BIDS mask
+  either — it fits every nonzero voxel rather than a `derivatives/`-supplied
+  mask region).
 - A real multi-field `Source::Derived` model (e.g. MP2RAGE) — the mechanism
   is proven today only by IR's single-field `InversionTime` schema and a
   stub `Derived` test.
+- `qmrust bidsify` covers `inversion_recovery`/IRT1 only; QMTSPGR bidsify
+  (the `flip-<i>_mt-<i>` entity mapping, aux maps, `.bidsignore`) is a
+  tracked follow-up.
+
+---
+
+## 6. The output side — `bids_outputs()` and the derivatives layout
+
+Resolution (above) is how a dataset becomes a fit; this section is how a fit
+becomes a dataset again, in BIDS-derivatives form.
+
+- **`Model::bids_outputs() -> Vec<(&'static str, &'static str)>`** declares
+  which of a model's `output_names()` are genuine quantitative maps worth
+  exporting in qMRLab's BIDS-derivatives naming, and what suffix each gets.
+  Diagnostics (`res`, `idx`, `resnorm`, …) are omitted — only real maps are
+  listed. IR declares `[("T1", "T1map")]` (its `a`/`b` fit coefficients
+  aren't standalone qMRLab maps, so they're left out; `R1map`/`M0map` would
+  need the model to produce them directly, which it doesn't yet). qMT
+  declares `[("F","Fmap"), ("kr","kRmap"), ("R1f","R1Fmap"),
+  ("R1r","R1Rmap"), ("T2f","T2Fmap"), ("T2r","T2Rmap")]`. Default is `vec![]`
+  — additive, no behaviour change for a model that hasn't declared one.
+- **`write_derivatives`** (`qmrust-cli/src/commands.rs`), used by
+  `run_fit_bids`, writes each declared `(output, suffix)` pair present in a
+  fit's `FitResults` to
+  `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`,
+  plus a minimal JSON sidecar (`{"GeneratedBy":[{"Name":"qmrust"}]}`), and
+  ensures one `deriv_root/qmrust/dataset_description.json`
+  (`DatasetType: derivative`). It reuses the same NIfTI writer flat,
+  non-BIDS output uses (`write_map_nifti` for `.mat`-sourced data,
+  `write_3d_nifti` otherwise), so map values are identical between the flat
+  and derivatives layouts — only the path and file naming differ. Plain
+  `qmrust fit --output-dir` (no `--bids-dir`) keeps its existing flat
+  `output_dir/<map>.nii.gz` layout unchanged.
+
+## 7. `qmrust bidsify` — `.mat` → byte-identical BIDS (input provenance)
+
+The BIDS pipeline needs example datasets to fit; `bidsify`
+(`qmrust-cli/src/bidsify.rs`) is how one is produced from qMRLab's own OSF
+`.mat` test data, so that fitting the BIDS version reproduces the `.mat` fit
+exactly.
+
+- **Byte-identical is the guarantee**: each inversion volume is sliced
+  straight out of the `.mat` `Array4<f64>` and written as `f64`/datatype-64
+  NIfTI — no rescale, no dtype narrowing. `bidsify_ir` writes
+  `sub-<subject>/anat/sub-<subject>_inv-<i>_IRT1.nii.gz` (1-based `<i>`,
+  matching the `.mat`'s own TI order — never re-sorted) + a
+  `{InversionTime}` JSON sidecar per volume, `dataset_description.json`,
+  `participants.tsv`, and (if a mask is given) a
+  `derivatives/qmrust/sub-<subject>/anat/sub-<subject>_desc-brain_mask.nii.gz`.
+- **How it's validated**: a unit test round-trips an in-memory `Array4`
+  through the volume writer and asserts every voxel reads back `==` the
+  source (not approximate) — this is what proves no rescale/precision loss.
+  End to end, `scripts/make_bids_examples.sh` fetches qMRLab's OSF IR
+  dataset, runs `bidsify`, fits the result via `qmrust fit --bids-dir`, and
+  an `#[ignore]`d integration test (`bids_fit_matches_mat_fit` in
+  `commands.rs`) asserts the BIDS-path `T1map` is voxel-**equal** to fitting
+  the same `.mat` directly (inside the `.mat`'s mask — outside it, the BIDS
+  path currently fits extra nonzero voxels the mat path leaves `NaN`, per
+  the aux/mask-resolution gap above) and, separately, within the OSF
+  integration job's existing tolerance of qMRLab's own
+  `FitResults/T1.nii.gz`.
+- Only `inversion_recovery`/IRT1 is supported (`bail!`s otherwise); QMTSPGR
+  bidsify is deferred (see above) — its `flip-<i>_mt-<i>` entity mapping and
+  aux-map derivatives are fiddlier and tracked separately.

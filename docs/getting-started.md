@@ -73,6 +73,41 @@ algorithm options (fit bounds, etc.). See
 [From sidecar metadata to `Protocol`](bids.md#from-sidecar-metadata-to-protocol)
 for how that mapping works.
 
+Fitted maps are written under `--output-dir` as a **BIDS-derivatives** tree:
+`<output-dir>/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz`
+(+ a JSON sidecar per map, and a derivatives `dataset_description.json`).
+Only the maps a model declares via `bids_outputs()` are written (e.g. IRT1's
+`T1` → `T1map`) — diagnostic outputs like `res`/`idx` are not. See
+[DATA-PIPELINE.md](agents/DATA-PIPELINE.md) for the full output contract.
+
+## Create a BIDS example from qMRLab data
+
+`qmrust bidsify` converts a qMRLab `.mat` dataset into a BIDS layout whose
+voxel data is byte-identical to the source `.mat` (no rescale, no dtype
+narrowing — every volume round-trips as `f64`):
+
+```bash
+cargo run -p qmrust-cli -- bidsify \
+  --model inversion_recovery \
+  --mat-data IRData.mat --mask Mask.mat \
+  --config prots/irt1_config.yaml \
+  --subject 01 --out ds-qmrust
+```
+
+This writes `ds-qmrust/sub-01/anat/sub-01_inv-<i>_IRT1.nii.gz` (+
+`{InversionTime}` sidecars), `dataset_description.json`, `participants.tsv`,
+and the mask under `ds-qmrust/derivatives/qmrust/sub-01/anat/
+sub-01_desc-brain_mask.nii.gz`. Only `inversion_recovery`/IRT1 is supported
+today; QMTSPGR bidsify is a tracked follow-up.
+
+`scripts/make_bids_examples.sh` automates this end to end: it fetches
+qMRLab's OSF IR demo dataset, runs `bidsify`, then fits the resulting BIDS
+dataset with `qmrust fit --bids-dir` and confirms the result is voxel-identical
+to fitting the original `.mat` (in-mask) and within qMRLab's own reference
+tolerance (`FitResults/T1.nii.gz`). The generated dataset itself is not
+committed (large data stays out of the repo); re-run the script to regenerate
+it.
+
 ## Run a simulation
 
 `qmrust sim` generates a forward signal from ground-truth parameters,

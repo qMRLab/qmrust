@@ -72,7 +72,8 @@ The `qmrust` binary. Owns everything the core deliberately excludes:
 - `progress.rs` — an `indicatif` progress bar passed to the engine as a callback.
 
 Subcommands: `fit`, `sim {signal|single-voxel|sensitivity|montecarlo}`, `dump-config`,
-`dump-sf`.
+`dump-sf`, `bidsify` (qMRLab `.mat` → byte-identical BIDS dataset; see
+[`DATA-PIPELINE.md`](DATA-PIPELINE.md)).
 
 ### `qmrust-wasm` — the browser shell
 
@@ -226,6 +227,12 @@ set, feeding the same order-free `build_volume_ids` → `engine::run` path as th
 file-based flow above. See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for how collections are
 resolved, how sidecars are merged, and current v1 scope/limitations (`Sequential`-only,
 no BIDS-resolved aux).
+
+Output is written in the BIDS-derivatives convention too — `output_dir/qmrust/<subject>
+[/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz`, per each model's declared
+`bids_outputs()` — and `qmrust bidsify` is the reverse direction, turning a qMRLab `.mat`
+dataset into a byte-identical BIDS input for this path. See [`DATA-PIPELINE.md`
+](DATA-PIPELINE.md#6-the-output-side--bids_outputs-and-the-derivatives-layout) for both.
 
 ### Simulate (CLI / core)
 

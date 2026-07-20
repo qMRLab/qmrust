@@ -85,7 +85,11 @@ so this is opt-in — a model that skips it just reads its own `--config` as bef
 `--config` for a migrated model narrows to algorithm options plus the `Source::Option`
 fallback. Use IR (`models/inversion_recovery/`) as the minimal reference — its
 `protocol_schema()` maps `InversionTime`; qMT (`models/qmt_spgr/`) shows a nested-config
-model with aux inputs (its own protocol mapping is a deferred follow-up).
+model with aux inputs (its own protocol mapping is a deferred follow-up). A model also
+declares `bids_outputs() -> Vec<(&'static str, &'static str)>` — which `output_names()`
+are real quantitative maps and their BIDS-derivatives suffix (e.g. IR's `T1→T1map`) — so
+`qmrust fit --bids-dir` writes them into the `derivatives/qmrust/...` tree; see
+`docs/agents/DATA-PIPELINE.md`.
 
 ## Invariants to respect
 
@@ -107,7 +111,8 @@ cargo test  --workspace
 cargo fmt --all --check                                 # CI format gate
 cargo clippy --workspace --all-targets -- -D warnings   # CI lint gate (must be clean)
 cargo run -p qmrust-cli -- fit  --mat-dir <dir> --config prots/<cfg>.yaml --output-dir <out>
-cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config prots/<cfg>.yaml --output-dir <out>  # v1: no-aux, sequential (e.g. IRT1)
+cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config prots/<cfg>.yaml --output-dir <out>  # v1: no-aux, sequential (e.g. IRT1); writes derivatives/qmrust/...
+cargo run -p qmrust-cli -- bidsify --model inversion_recovery --mat-data <IRData.mat> --mask <Mask.mat> --config prots/irt1_config.yaml --subject 01 --out <ds-root>
 cargo run -p qmrust-cli -- sim  single-voxel --config prots/<cfg>.yaml --output <out>.json
 cargo build -p qmrust-core --target wasm32-unknown-unknown   # core must stay wasm-clean
 cargo build -p rust-bids   --target wasm32-unknown-unknown   # rust-bids must stay wasm-clean too
