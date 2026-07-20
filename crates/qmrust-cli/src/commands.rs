@@ -1274,7 +1274,8 @@ mod tests {
         // (b) bidsify (in-process) + fit via the BIDS path, in-process.
         crate::bidsify::run_bidsify(crate::bidsify::BidsifyArgs {
             model: "inversion_recovery".to_string(),
-            mat_data: ir_mat,
+            mat_data: Some(ir_mat),
+            mat_dir: None,
             mask: Some(ir_mask),
             config: config.clone(),
             subject: "01".to_string(),

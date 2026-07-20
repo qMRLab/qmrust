@@ -95,21 +95,28 @@ enum Commands {
     },
 
     /// Convert a qMRLab .mat dataset into a byte-identical BIDS layout
-    /// (IRT1/inversion_recovery only, for now).
+    /// ("inversion_recovery" or "qmt_spgr").
     Bidsify {
-        /// Model name (only "inversion_recovery" is supported so far)
+        /// Model name ("inversion_recovery" or "qmt_spgr")
         #[arg(long)]
         model: String,
 
-        /// Path to the .mat file containing the IR data (+ optional Mask/TI)
+        /// Path to the .mat file containing the IR/MT data (+ optional Mask/TI)
         #[arg(long)]
-        mat_data: PathBuf,
+        mat_data: Option<PathBuf>,
 
-        /// Path to a separate .mat mask file (overrides one embedded in mat_data)
+        /// Directory containing MTdata.mat + optional R1map.mat/B1map.mat/
+        /// B0map.mat/Mask.mat (qmt_spgr convenience, mirrors `fit --mat-dir`)
+        #[arg(long)]
+        mat_dir: Option<PathBuf>,
+
+        /// Path to a separate .mat mask file (overrides one embedded in mat_data
+        /// or found in --mat-dir)
         #[arg(long)]
         mask: Option<PathBuf>,
 
-        /// Path to the model's YAML config (for inversion_times fallback)
+        /// Path to the model's YAML config (for inversion_times/qmt_spgr
+        /// protocol fallback)
         #[arg(long)]
         config: PathBuf,
 
@@ -218,6 +225,7 @@ fn main() -> Result<()> {
         Commands::Bidsify {
             model,
             mat_data,
+            mat_dir,
             mask,
             config,
             subject,
@@ -225,6 +233,7 @@ fn main() -> Result<()> {
         } => bidsify::run_bidsify(bidsify::BidsifyArgs {
             model,
             mat_data,
+            mat_dir,
             mask,
             config,
             subject,

@@ -1,9 +1,9 @@
 //! `qmrust bidsify`: convert a qMRLab `.mat` dataset into a BIDS layout whose
 //! voxel data is byte-identical to the source `.mat` (no rescale, no dtype
-//! narrowing — every inversion volume is written as `f64`/datatype 64).
+//! narrowing — every volume is written as `f64`/datatype 64).
 //!
-//! IRT1 (`inversion_recovery`) is the only model supported so far; QMTSPGR is
-//! a tracked follow-up (see the BIDS-examples plan).
+//! Supports `inversion_recovery` (IRT1) and `qmt_spgr` (QMTSPGR, a
+//! non-official/`.bidsignore`'d suffix).
 
 use anyhow::{bail, Result};
 use ndarray::{Array3, Array4, Axis};
@@ -29,10 +29,28 @@ struct IrSidecar {
     repetition_time: Option<f64>,
 }
 
+/// qMT-SPGR per-volume sidecar fields. `Angle`/`Offset` match the protocol
+/// keys `qmt_spgr`'s `protocol_schema()` reads back out of BIDS sidecars, so
+/// a `QMTSPGR` fit is metadata-driven and order-free. `RepetitionTime` and
+/// `MTPulseDuration` come from the config's `protocol.timing` (already
+/// BIDS-native seconds — qMT configs carry no ms convention to convert).
+#[derive(Serialize)]
+struct QmtSidecar {
+    #[serde(rename = "Angle")]
+    angle: f64,
+    #[serde(rename = "Offset")]
+    offset: f64,
+    #[serde(rename = "RepetitionTime")]
+    repetition_time: f64,
+    #[serde(rename = "MTPulseDuration")]
+    mt_pulse_duration: f64,
+}
+
 /// Parsed CLI arguments for `qmrust bidsify`.
 pub struct BidsifyArgs {
     pub model: String,
-    pub mat_data: PathBuf,
+    pub mat_data: Option<PathBuf>,
+    pub mat_dir: Option<PathBuf>,
     pub mask: Option<PathBuf>,
     pub config: PathBuf,
     pub subject: String,
@@ -42,18 +60,27 @@ pub struct BidsifyArgs {
 /// Entry point for the `bidsify` subcommand: reads the `.mat` dataset (+
 /// optional mask + config) and writes the BIDS tree.
 pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
-    if args.model != "inversion_recovery" {
-        bail!(
-            "bidsify only supports --model inversion_recovery so far, got '{}'",
-            args.model
-        );
+    match args.model.as_str() {
+        "inversion_recovery" => run_bidsify_ir(args),
+        "qmt_spgr" => run_bidsify_qmt(args),
+        other => bail!(
+            "bidsify only supports --model inversion_recovery|qmt_spgr, got '{}'",
+            other
+        ),
     }
+}
+
+fn run_bidsify_ir(args: BidsifyArgs) -> Result<()> {
+    let mat_data = args
+        .mat_data
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("--mat-data is required for --model inversion_recovery"))?;
 
     let contents = std::fs::read_to_string(&args.config)
         .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", args.config, e))?;
     let (cfg, _raw) = qmrust_core::config::parse_config(&contents)?;
 
-    let mat = io::mat::read_mat_file(&args.mat_data)?;
+    let mat = io::mat::read_mat_file(mat_data)?;
 
     // The .mat's own TI vector (if present) is authoritative and, crucially,
     // in the same order as the data's 4th axis — never re-sort it. Falling
@@ -91,6 +118,69 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
         &args.subject,
         &args.out,
         tr,
+    )
+}
+
+fn run_bidsify_qmt(args: BidsifyArgs) -> Result<()> {
+    // --mat-data wins; otherwise fall back to <mat-dir>/MTdata.mat (mirrors
+    // `qmrust fit --mat-dir`'s convenience-path convention).
+    let mat_data_path = args
+        .mat_data
+        .clone()
+        .or_else(|| args.mat_dir.as_ref().map(|d| d.join("MTdata.mat")))
+        .ok_or_else(|| anyhow::anyhow!("--model qmt_spgr requires --mat-data or --mat-dir"))?;
+
+    let contents = std::fs::read_to_string(&args.config)
+        .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", args.config, e))?;
+    let (_cfg, raw) = qmrust_core::config::parse_config(&contents)?;
+    let mut q: qmrust_core::models::qmt_spgr::config::QmtSpgrConfig = match raw.get("qmt_spgr") {
+        Some(sub) => serde_yaml::from_value(sub.clone())?,
+        None => Default::default(),
+    };
+    q.validate()?;
+
+    let mat = io::mat::read_mat_file(&mat_data_path)?;
+
+    // --mask, then a Mask.mat found via --mat-dir, then one embedded in the
+    // MTdata .mat itself, in that precedence order (same as the IR path).
+    let mat_dir_mask = args
+        .mat_dir
+        .as_ref()
+        .map(|d| d.join("Mask.mat"))
+        .filter(|p| p.exists());
+    let mask = match args.mask.as_ref().or(mat_dir_mask.as_ref()) {
+        Some(p) => Some(io::mat::read_mask_mat(p)?),
+        None => mat.mask,
+    };
+
+    // Aux maps are only available via --mat-dir (OSF's qMT dataset ships them
+    // as separate single-variable .mat files alongside MTdata.mat).
+    let load_aux = |name: &str| -> Result<Option<Array3<f64>>> {
+        match args
+            .mat_dir
+            .as_ref()
+            .map(|d| d.join(name))
+            .filter(|p| p.exists())
+        {
+            Some(p) => Ok(Some(io::mat::read_map_mat(&p)?)),
+            None => Ok(None),
+        }
+    };
+    let r1map = load_aux("R1map.mat")?;
+    let b1map = load_aux("B1map.mat")?;
+    let b0map = load_aux("B0map.mat")?;
+
+    bidsify_qmt(
+        &mat.ir_data,
+        &q.protocol.mtdata,
+        q.protocol.timing.trep,
+        q.protocol.timing.tmt,
+        mask.as_ref(),
+        r1map.as_ref(),
+        b1map.as_ref(),
+        b0map.as_ref(),
+        &args.subject,
+        &args.out,
     )
 }
 
@@ -161,6 +251,121 @@ pub fn bidsify_ir(
     Ok(())
 }
 
+/// Write one qMT-SPGR `.mat` dataset as a BIDS tree rooted at `out`: one
+/// `sub-<subject>/anat/sub-<subject>_flip-<f>_mt-<m>_QMTSPGR.nii.gz` (+ JSON
+/// sidecar) per volume in `mt_data`'s 4th axis, plus `dataset_description.json`,
+/// `participants.tsv`, a root `.bidsignore` (QMTSPGR is a custom, non-official
+/// suffix), and — for any aux/mask maps supplied — derivatives under
+/// `derivatives/qmrust/sub-<subject>/anat/`.
+///
+/// `protocol[i]` is `[Angle (deg), Offset (Hz)]` for volume `i`, in the same
+/// order as `mt_data`'s 4th axis (never re-sorted — qMRLab's `.mat` volume
+/// order is authoritative, matching `bidsify_ir`'s TI-order convention).
+/// `flip-<f>` indexes the unique Angles in first-seen order; `mt-<m>` indexes
+/// the unique Offsets in first-seen order (both 1-based) — this reproduces
+/// qMRLab's `qmt_spgr_batch` file-naming convention. Correctness of any
+/// downstream fit does not depend on this ordering: `qmt_spgr` reads
+/// `Angle`/`Offset` back out of each sidecar via `protocol_schema()`.
+#[allow(clippy::too_many_arguments)]
+pub fn bidsify_qmt(
+    mt_data: &Array4<f64>,
+    protocol: &[[f64; 2]],
+    repetition_time: f64,
+    mt_pulse_duration: f64,
+    mask: Option<&Array3<bool>>,
+    r1map: Option<&Array3<f64>>,
+    b1map: Option<&Array3<f64>>,
+    b0map: Option<&Array3<f64>>,
+    subject: &str,
+    out: &Path,
+) -> Result<()> {
+    let (nx, ny, nz, n_vol) = mt_data.dim();
+    if protocol.len() != n_vol {
+        bail!(
+            "MT data has {} volumes but the protocol has {} rows",
+            n_vol,
+            protocol.len()
+        );
+    }
+
+    std::fs::create_dir_all(out)?;
+    write_dataset_description(out)?;
+    write_participants_row(out, subject)?;
+    write_bidsignore(out)?;
+
+    let anat_dir = out.join(format!("sub-{subject}")).join("anat");
+    std::fs::create_dir_all(&anat_dir)?;
+    let header = make_minimal_header(nx, ny, nz);
+
+    // First-seen-order indices, 1-based, matching qMRLab's flip/mt file
+    // naming (see the doc comment above).
+    let mut angles_seen: Vec<f64> = Vec::new();
+    let mut offsets_seen: Vec<f64> = Vec::new();
+
+    for (i, row) in protocol.iter().enumerate() {
+        let [angle, offset] = *row;
+        let flip_idx = first_seen_index(&mut angles_seen, angle);
+        let mt_idx = first_seen_index(&mut offsets_seen, offset);
+
+        let vol = mt_data.index_axis(Axis(3), i).to_owned();
+        let base = format!("sub-{subject}_flip-{flip_idx}_mt-{mt_idx}_QMTSPGR");
+        let nii_path = anat_dir.join(format!("{base}.nii.gz"));
+        write_inv_volume(&vol, &header, &nii_path)?;
+
+        let json_path = anat_dir.join(format!("{base}.json"));
+        let sidecar = QmtSidecar {
+            angle,
+            offset,
+            repetition_time,
+            mt_pulse_duration,
+        };
+        std::fs::write(&json_path, serde_json::to_string_pretty(&sidecar)?)?;
+    }
+
+    let have_aux = mask.is_some() || r1map.is_some() || b1map.is_some() || b0map.is_some();
+    if have_aux {
+        let deriv_anat = out
+            .join("derivatives")
+            .join("qmrust")
+            .join(format!("sub-{subject}"))
+            .join("anat");
+        std::fs::create_dir_all(&deriv_anat)?;
+
+        if let Some(mask) = mask {
+            let mask_f64 = mask.mapv(|b| if b { 1.0 } else { 0.0 });
+            let mask_path = deriv_anat.join(format!("sub-{subject}_desc-brain_mask.nii.gz"));
+            write_inv_volume(&mask_f64, &header, &mask_path)?;
+        }
+        if let Some(r1) = r1map {
+            let path = deriv_anat.join(format!("sub-{subject}_R1map.nii.gz"));
+            write_inv_volume(r1, &header, &path)?;
+        }
+        if let Some(b1) = b1map {
+            let path = deriv_anat.join(format!("sub-{subject}_TB1map.nii.gz"));
+            write_inv_volume(b1, &header, &path)?;
+        }
+        if let Some(b0) = b0map {
+            let path = deriv_anat.join(format!("sub-{subject}_B0map.nii.gz"));
+            write_inv_volume(b0, &header, &path)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Return `val`'s 1-based index in first-seen order within `seen`, appending
+/// it if not already present. Used to derive qMRLab's `flip-<f>`/`mt-<m>`
+/// BIDS entities from the protocol's raw Angle/Offset columns.
+fn first_seen_index(seen: &mut Vec<f64>, val: f64) -> usize {
+    match seen.iter().position(|&v| v == val) {
+        Some(idx) => idx + 1,
+        None => {
+            seen.push(val);
+            seen.len()
+        }
+    }
+}
+
 /// The byte-identical volume writer: a 3D `f64` array in, an `f64`/datatype
 /// 64 NIfTI out, no rescale — this is what makes `bidsify`'s output
 /// byte-identical to the source `.mat` array.
@@ -177,6 +382,31 @@ fn write_dataset_description(out: &Path) -> Result<()> {
             r#"{"Name":"qmrust BIDS example","BIDSVersion":"1.8.0"}"#,
         )?;
     }
+    Ok(())
+}
+
+/// Ensure the dataset root's `.bidsignore` contains a `*QMTSPGR*` line:
+/// `QMTSPGR` is a non-official BIDS suffix, so the raw dataset ignores it for
+/// generic validators (rust-bids's own discovery exempts registered model
+/// suffixes regardless of `.bidsignore` — see the rust-bids config/table
+/// plan tasks). Creates the file if missing; never duplicates the line.
+fn write_bidsignore(out: &Path) -> Result<()> {
+    let path = out.join(".bidsignore");
+    let line = "*QMTSPGR*";
+    if !path.exists() {
+        std::fs::write(&path, format!("{line}\n"))?;
+        return Ok(());
+    }
+    let mut contents = std::fs::read_to_string(&path)?;
+    if contents.lines().any(|l| l.trim() == line) {
+        return Ok(());
+    }
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    contents.push_str(line);
+    contents.push('\n');
+    std::fs::write(&path, contents)?;
     Ok(())
 }
 
@@ -353,6 +583,135 @@ mod tests {
         let json = std::fs::read_to_string(anat.join("sub-01_inv-1_IRT1.json")).unwrap();
         let sidecar: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(sidecar.get("RepetitionTime").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Step 3: byte-identical + structure test for QMTSPGR. Uses the same
+    /// `write_inv_volume` writer as IR (already proven byte-identical above,
+    /// including the non-square/shape-swap guard), so this test's job is to
+    /// pin the QMTSPGR-specific pieces: flip/mt filename derivation, the
+    /// Angle/Offset/RepetitionTime sidecar, and the `.bidsignore` line —
+    /// while still asserting every voxel round-trips exactly.
+    ///
+    /// The fixture's row order mirrors the real qMRLab qMT protocol quoted in
+    /// the task brief: [142,443],[426,443],[142,1088],[426,1088] = flip-1_mt-1,
+    /// flip-2_mt-1, flip-1_mt-2, flip-2_mt-2 (Angle varies fastest -> flip
+    /// index; Offset next -> mt index).
+    #[test]
+    fn bidsify_qmt_writes_expected_tree() {
+        let dir = tmp_dir("qmt-structure");
+        let mt_data = Array4::from_shape_fn((2, 2, 1, 4), |(i, j, _k, t)| {
+            (i * 10 + j) as f64 + t as f64 * 0.5
+        });
+        let protocol: Vec<[f64; 2]> = vec![
+            [142.0, 443.0],
+            [426.0, 443.0],
+            [142.0, 1088.0],
+            [426.0, 1088.0],
+        ];
+        let tr = 0.025;
+        let tmt = 0.0102;
+
+        bidsify_qmt(
+            &mt_data, &protocol, tr, tmt, None, None, None, None, "02", &dir,
+        )
+        .unwrap();
+
+        assert!(dir.join("dataset_description.json").exists());
+        let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
+        assert!(participants.contains("sub-02"));
+        let bidsignore = std::fs::read_to_string(dir.join(".bidsignore")).unwrap();
+        assert!(bidsignore.contains("*QMTSPGR*"));
+
+        let anat = dir.join("sub-02").join("anat");
+        let expected = [
+            ("sub-02_flip-1_mt-1_QMTSPGR", 142.0, 443.0),
+            ("sub-02_flip-2_mt-1_QMTSPGR", 426.0, 443.0),
+            ("sub-02_flip-1_mt-2_QMTSPGR", 142.0, 1088.0),
+            ("sub-02_flip-2_mt-2_QMTSPGR", 426.0, 1088.0),
+        ];
+        for (i, (base, angle, offset)) in expected.iter().enumerate() {
+            let nii = anat.join(format!("{base}.nii.gz"));
+            assert!(nii.exists(), "missing {:?}", nii);
+            let json = std::fs::read_to_string(anat.join(format!("{base}.json"))).unwrap();
+            let sidecar: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(sidecar["Angle"], *angle);
+            assert_eq!(sidecar["Offset"], *offset);
+            assert_eq!(sidecar["RepetitionTime"], tr);
+            assert_eq!(sidecar["MTPulseDuration"], tmt);
+
+            let read_back = io::nifti::read_map_nifti(&nii).unwrap();
+            let expected_vol = mt_data.index_axis(Axis(3), i);
+            for ((x, y, z), &v) in expected_vol.indexed_iter() {
+                assert_eq!(read_back[[x, y, z]], v, "voxel ({x},{y},{z}) mismatch");
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Aux/mask derivatives are only written when supplied; each present one
+    /// must round-trip byte-identically under `derivatives/qmrust/...`.
+    #[test]
+    fn bidsify_qmt_writes_aux_derivatives_when_present() {
+        let dir = tmp_dir("qmt-aux");
+        let mt_data = Array4::from_shape_fn((2, 1, 1, 1), |(i, _j, _k, _t)| i as f64);
+        let protocol = vec![[142.0, 443.0]];
+        let mask = Array3::from_shape_vec((2, 1, 1), vec![true, false]).unwrap();
+        let r1map = Array3::from_shape_vec((2, 1, 1), vec![1.1, 2.2]).unwrap();
+
+        bidsify_qmt(
+            &mt_data,
+            &protocol,
+            0.025,
+            0.0102,
+            Some(&mask),
+            Some(&r1map),
+            None,
+            None,
+            "02",
+            &dir,
+        )
+        .unwrap();
+
+        let deriv = dir
+            .join("derivatives")
+            .join("qmrust")
+            .join("sub-02")
+            .join("anat");
+        assert!(deriv.join("sub-02_desc-brain_mask.nii.gz").exists());
+        let r1_path = deriv.join("sub-02_R1map.nii.gz");
+        assert!(r1_path.exists());
+        assert!(!deriv.join("sub-02_TB1map.nii.gz").exists());
+        assert!(!deriv.join("sub-02_B0map.nii.gz").exists());
+
+        let read_back = io::nifti::read_map_nifti(&r1_path).unwrap();
+        for ((x, y, z), &v) in r1map.indexed_iter() {
+            assert_eq!(read_back[[x, y, z]], v);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Re-running `bidsify_qmt` must not duplicate the `.bidsignore` line.
+    #[test]
+    fn bidsify_qmt_bidsignore_not_duplicated() {
+        let dir = tmp_dir("qmt-bidsignore-dedup");
+        let mt_data = Array4::from_shape_fn((1, 1, 1, 1), |_| 0.0);
+        let protocol = vec![[142.0, 443.0]];
+
+        bidsify_qmt(
+            &mt_data, &protocol, 0.025, 0.0102, None, None, None, None, "02", &dir,
+        )
+        .unwrap();
+        bidsify_qmt(
+            &mt_data, &protocol, 0.025, 0.0102, None, None, None, None, "02", &dir,
+        )
+        .unwrap();
+
+        let bidsignore = std::fs::read_to_string(dir.join(".bidsignore")).unwrap();
+        assert_eq!(bidsignore.matches("*QMTSPGR*").count(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
