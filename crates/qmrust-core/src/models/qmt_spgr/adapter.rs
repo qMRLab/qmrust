@@ -155,6 +155,18 @@ impl Model for QmtModel {
             entities: QMT_ENTITIES,
         })
     }
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str)> {
+        // Per qMRLab QMTSPGR convention; `kf` (derived kr*F) and `resnorm`
+        // (diagnostic) are omitted.
+        vec![
+            ("F", "Fmap"),
+            ("kr", "kRmap"),
+            ("R1f", "R1Fmap"),
+            ("R1r", "R1Rmap"),
+            ("T2f", "T2Fmap"),
+            ("T2r", "T2Rmap"),
+        ]
+    }
 }
 
 /// Registry builder: parse `QmtSpgrConfig` from the `qmt_spgr` sub-key of the
@@ -253,6 +265,18 @@ mod tests {
             value: 0.5,
         }]);
         let _ = m.fit(&bogus, &Aux::new());
+    }
+
+    #[test]
+    fn bids_outputs_reference_real_output_names() {
+        let m = build(&qmt_value(), &Protocol::default()).unwrap();
+        let names = m.output_names();
+        for (out, _suffix) in m.bids_outputs() {
+            assert!(
+                names.iter().any(|n| n == out),
+                "bids_outputs references '{out}', not in output_names {names:?}"
+            );
+        }
     }
 
     #[test]

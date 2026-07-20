@@ -286,6 +286,14 @@ pub trait Model: Send + Sync {
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         vec![]
     }
+    /// BIDS output-map declarations: pairs of (an entry in [`Model::output_names`],
+    /// its qMRLab-convention BIDS map suffix, e.g. `("T1", "T1map")`). Invariant:
+    /// only real quantitative maps are listed here — diagnostics (residuals,
+    /// scenario indices, …) are omitted, and every left element must be a
+    /// genuine `output_names()` entry. Empty means "no declared BIDS outputs".
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str)> {
+        vec![]
+    }
 }
 
 #[cfg(test)]
@@ -441,6 +449,14 @@ mod tests {
         assert!(m.protocol_schema().is_empty());
         let dyn_m: &dyn Model = &m;
         assert!(dyn_m.protocol_schema().is_empty());
+    }
+
+    #[test]
+    fn bids_outputs_defaults_to_empty_and_stays_object_safe() {
+        let m = NoSchemaModel;
+        assert!(m.bids_outputs().is_empty());
+        let dyn_m: &dyn Model = &m;
+        assert!(dyn_m.bids_outputs().is_empty());
     }
 
     #[test]
