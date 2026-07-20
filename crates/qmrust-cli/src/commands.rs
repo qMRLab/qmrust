@@ -311,6 +311,11 @@ fn load_collection(
         out.index_axis_mut(ndarray::Axis(3), t).assign(slice);
     }
 
+    // An empty schema must yield an empty `Protocol` (zero volumes), NOT one
+    // with N empty per-volume maps: `build_volume_ids` treats a volume count
+    // matching the data as authoritative identities, so N empty rows would
+    // suppress the model's canonical `rows` fallback and break identity
+    // matching. This branch is load-bearing for correctness, not an optimization.
     let proto = if schema.is_empty() {
         Protocol::default()
     } else {
