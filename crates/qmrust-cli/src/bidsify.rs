@@ -388,8 +388,8 @@ fn write_dataset_description(out: &Path) -> Result<()> {
 /// Ensure the dataset root's `.bidsignore` contains a `*QMTSPGR*` line:
 /// `QMTSPGR` is a non-official BIDS suffix, so the raw dataset ignores it for
 /// generic validators (rust-bids's own discovery exempts registered model
-/// suffixes regardless of `.bidsignore` — see the rust-bids config/table
-/// plan tasks). Creates the file if missing; never duplicates the line.
+/// suffixes regardless of `.bidsignore`). Creates the file if missing; never
+/// duplicates the line.
 fn write_bidsignore(out: &Path) -> Result<()> {
     let path = out.join(".bidsignore");
     let line = "*QMTSPGR*";
@@ -444,7 +444,7 @@ mod tests {
         dir
     }
 
-    /// Step 1 (TDD): byte-identical round-trip. Every voxel written by the
+    /// Byte-identical round-trip. Every voxel written by the
     /// volume-writer must read back exactly equal to the source array — no
     /// rescale, no precision loss.
     #[test]
@@ -501,8 +501,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Step 2/3: structure test — the IRT1 tree is produced from an
-    /// in-memory Array4 + TI fixture (no .mat writer exists, per the plan).
+    /// Structure test — the IRT1 tree is produced from an
+    /// in-memory Array4 + TI fixture (no .mat writer exists).
     /// `bidsify_ir` itself is unit-agnostic (it writes whatever `ti`/`tr` it's
     /// given verbatim); the fixture uses BIDS-native seconds — matching what
     /// `run_bidsify` now feeds it after converting a `.mat`'s ms TI vector —
@@ -587,7 +587,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Step 3: byte-identical + structure test for QMTSPGR. Uses the same
+    /// Byte-identical + structure test for QMTSPGR. Uses the same
     /// `write_inv_volume` writer as IR (already proven byte-identical above,
     /// including the non-square/shape-swap guard), so this test's job is to
     /// pin the QMTSPGR-specific pieces: flip/mt filename derivation, the
