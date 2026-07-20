@@ -1201,7 +1201,7 @@ mod tests {
         }
     }
 
-    /// End-to-end validation (Task 5): the BIDS fit path (`bidsify` +
+    /// End-to-end validation: the BIDS fit path (`bidsify` +
     /// `run_fit_bids`) must reproduce the `.mat` fit path (`run_fit
     /// --mat-data`) exactly, since `bidsify` writes byte-identical voxel data
     /// (see `bidsify.rs`'s round-trip tests). Needs a *real* qMRLab OSF IR
@@ -1320,7 +1320,7 @@ mod tests {
         );
     }
 
-    /// End-to-end validation (Task 5): the QMTSPGR BIDS fit path (bidsify
+    /// End-to-end validation: the QMTSPGR BIDS fit path (bidsify
     /// plus run_fit_bids) must reproduce the .mat fit path (run_fit against
     /// mat_data) exactly, mirroring `bids_fit_matches_mat_fit` above for qMT.
     /// `run_fit_bids` doesn't yet resolve BIDS aux maps (see its doc
