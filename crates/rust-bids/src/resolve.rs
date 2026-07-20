@@ -199,6 +199,41 @@ mod tests {
     }
 
     #[test]
+    fn resolves_sequential_qmtspgr_ordered_by_mt_then_flip() {
+        // 2 flip x 5 mt = 10 volumes; canonical order is mt outer, flip inner:
+        // flip-1_mt-1, flip-2_mt-1, flip-1_mt-2, flip-2_mt-2, ...
+        let mut fs = MemFs::new();
+        for mt in 1..=5 {
+            for flip in 1..=2 {
+                fs = fs
+                    .touch(&format!(
+                        "sub-02/anat/sub-02_flip-{flip}_mt-{mt}_QMTSPGR.nii.gz"
+                    ))
+                    .with(
+                        &format!("sub-02/anat/sub-02_flip-{flip}_mt-{mt}_QMTSPGR.json"),
+                        b"{}".to_vec(),
+                    );
+            }
+        }
+        let cols = collections_for(&fs, &default_config(), "QMTSPGR").unwrap();
+        assert_eq!(cols.len(), 1);
+        let GroupedData::Sequential(v) = &cols[0].data else {
+            panic!("expected sequential data")
+        };
+        assert_eq!(v.len(), 10);
+        let expected: Vec<(u32, u32)> = (1..=5)
+            .flat_map(|mt| (1..=2).map(move |f| (mt, f)))
+            .collect();
+        for (vol, (mt, flip)) in v.iter().zip(expected) {
+            assert!(
+                vol.nii.contains(&format!("flip-{flip}_mt-{mt}_QMTSPGR")),
+                "expected flip-{flip}_mt-{mt} at this position, got {}",
+                vol.nii
+            );
+        }
+    }
+
+    #[test]
     fn resolves_named_mts_groups() {
         let fs = MemFs::new()
             .touch("sub-01/anat/sub-01_flip-1_mt-off_MTS.nii.gz")

@@ -76,7 +76,17 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
 
     let mut all = Vec::new();
     walk(fs, "", &mut all)?;
-    let ignored = |p: &str| ignore.iter().any(|frag| p.contains(frag.as_str()));
+    // A path whose filename parses to a *registered model suffix* is exempt
+    // from `.bidsignore`: custom (non-standard-BIDS) suffixes like QMTSPGR are
+    // deliberately `.bidsignore`'d so generic BIDS validators don't choke on
+    // them, but they must still be discoverable by qmrust itself.
+    let is_registered_suffix = |p: &str| {
+        let file = p.rsplit('/').next().unwrap_or(p);
+        parse_filename(file)
+            .is_some_and(|parsed| qmrust_core::registry::by_bids_suffix(&parsed.suffix).is_some())
+    };
+    let ignored =
+        |p: &str| !is_registered_suffix(p) && ignore.iter().any(|frag| p.contains(frag.as_str()));
 
     // Index sidecars by directory-qualified stem for pairing, so a raw file
     // never pairs with a same-named sidecar living under a different
@@ -162,5 +172,29 @@ mod tests {
         let rows = parse_to_table(&fs).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].suffix, "IRT1");
+    }
+
+    #[test]
+    fn bidsignore_exempts_registered_model_suffixes() {
+        // QMTSPGR is a registered model suffix (qmrust_core::registry), so a
+        // `.bidsignore` line targeting it must NOT hide it from discovery —
+        // only unrelated, non-registered ignored paths stay excluded.
+        let fs = MemFs::new()
+            .touch("sub-02/anat/sub-02_flip-1_mt-1_QMTSPGR.nii.gz")
+            .with(
+                "sub-02/anat/sub-02_flip-1_mt-1_QMTSPGR.json",
+                b"{}".to_vec(),
+            )
+            // Not a registered suffix ("NOTREG" isn't in qmrust_core::registry)
+            // and IS covered by a `.bidsignore` line — must stay excluded.
+            .touch("derivatives/tool/sub-02/anat/sub-02_NOTREG.nii.gz")
+            .with(".bidsignore", b"*QMTSPGR*\nderivatives/*".to_vec());
+        let rows = parse_to_table(&fs).unwrap();
+        assert_eq!(rows.len(), 1, "only the QMTSPGR volume should surface");
+        assert_eq!(rows[0].suffix, "QMTSPGR");
+        assert!(
+            rows[0].sidecar_path.is_some(),
+            "sidecar must also be exempted so pairing still works"
+        );
     }
 }

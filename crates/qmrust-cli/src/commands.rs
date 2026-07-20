@@ -1083,10 +1083,10 @@ mod tests {
     }
 
     /// A qmt_spgr-targeted dataset must exit non-zero, not silently report
-    /// success having fit zero subjects. qmt_spgr's BIDS suffix is
-    /// `QMTSPGR`, which has no `rust-bids` set definition yet (that's a
-    /// separate, later increment), so resolution bails before any collection
-    /// is even grouped.
+    /// success having fit zero subjects. `QMTSPGR` now has a `rust-bids`
+    /// sequential set definition, so this 3-volume dataset resolves into a
+    /// real collection — but it doesn't carry the model's expected 10-row
+    /// series protocol, so fitting itself must bail (not silently skip).
     #[test]
     fn run_fit_bids_bails_when_every_collection_is_skipped() {
         let tmp = TempDir::new("fit-bids-all-named");
@@ -1113,14 +1113,12 @@ mod tests {
 
         let out_dir = tmp.0.join("out");
         let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
-            Ok(()) => {
-                panic!("a QMTSPGR dataset must bail, not exit Ok, until a set definition exists")
-            }
+            Ok(()) => panic!("a protocol-mismatched QMTSPGR dataset must bail, not exit Ok"),
             Err(e) => e,
         };
         assert!(
-            err.to_string().contains("no set definition named QMTSPGR"),
-            "expected the missing-set-definition bail message, got: {err}"
+            err.to_string().contains("3 volumes") && err.to_string().contains("10 rows"),
+            "expected a volumes-vs-protocol-rows mismatch bail message, got: {err}"
         );
     }
 

@@ -125,6 +125,9 @@ loop_over: [subject, session, run, task]
 IRT1:
   sequential_set:
     by: [inversion]
+QMTSPGR:
+  sequential_set:
+    by: [mtransfer, flip]
 MTS:
   named_set:
     PDw:
@@ -164,5 +167,16 @@ mod tests {
             panic!("IRT1 should be sequential");
         };
         assert_eq!(irt1.by, vec!["inversion"]);
+    }
+
+    #[test]
+    fn parses_sequential_qmtspgr() {
+        // mt outer, flip inner: matches qMRLab's flip-1_mt-1, flip-2_mt-1,
+        // flip-1_mt-2… canonical ordering.
+        let cfg = default_config();
+        let SetDef::Sequential(qmt) = &cfg.sets["QMTSPGR"] else {
+            panic!("QMTSPGR should be sequential");
+        };
+        assert_eq!(qmt.by, vec!["mtransfer", "flip"]);
     }
 }
