@@ -181,6 +181,15 @@ struct InputData {
     ti_override: Option<Vec<f64>>,
 }
 
+/// qMRLab `.mat` inversion times are in milliseconds; `qmrust-core` is
+/// BIDS-native seconds (see CLAUDE.md "Units — BIDS-native"). This is the
+/// ms -> s conversion boundary for `.mat`-supplied TI: everything downstream
+/// (`ti_override`, the resolved `Protocol`, and the fitted model) must see
+/// seconds, never ms.
+pub(crate) fn mat_ti_to_seconds(ti: Option<Vec<f64>>) -> Option<Vec<f64>> {
+    ti.map(|ti| ti.iter().map(|t| t / 1000.0).collect())
+}
+
 fn load_input(
     data_path: Option<&PathBuf>,
     mat_path: Option<&PathBuf>,
@@ -225,7 +234,7 @@ fn load_input(
                 data: mat.ir_data,
                 mask,
                 nifti_header: None,
-                ti_override: mat.ti,
+                ti_override: mat_ti_to_seconds(mat.ti),
             })
         }
         (None, None) => bail!("Must provide either --data (NIfTI) or --mat-data (.mat)"),
@@ -795,6 +804,31 @@ mod tests {
         a + b * (-ti / t1).exp()
     }
 
+    /// A `.mat`-shaped ms TI vector (qMRLab convention) must reach the
+    /// fitting core as seconds — the ms -> s boundary conversion invariant
+    /// (CLAUDE.md "Units — BIDS-native").
+    #[test]
+    fn mat_ti_to_seconds_converts_ms_to_seconds() {
+        let ti_ms = vec![350.0_f64, 500.0, 900.0, 1250.0];
+        let ti_s = mat_ti_to_seconds(Some(ti_ms)).unwrap();
+        assert_eq!(ti_s, vec![0.35, 0.5, 0.9, 1.25]);
+
+        // Feeding the converted TIs through the same `ProtocolSource::Mat`
+        // path `load_input`/`run_fit` use must yield the seconds values, not
+        // the original ms ones.
+        let proto = qmrust_core::protocol::resolve(qmrust_core::protocol::ProtocolSource::Mat {
+            inversion_times: Some(ti_s.clone()),
+        });
+        let got: Vec<f64> = proto
+            .volumes
+            .iter()
+            .map(|v| *v.get("InversionTime").unwrap())
+            .collect();
+        assert_eq!(got, ti_s);
+
+        assert!(mat_ti_to_seconds(None).is_none());
+    }
+
     #[test]
     fn load_collection_stacks_sequential_irt1_series_in_ti_order() {
         let tmp = TempDir::new("load-collection");
@@ -875,10 +909,13 @@ mod tests {
         let anat_dir = bids_dir.join("sub-01/anat");
         std::fs::create_dir_all(&anat_dir).unwrap();
 
-        let t1 = 900.0_f64;
+        // BIDS-native seconds throughout: T1 = 0.9 s, TIs 0.35..1.25 s (the
+        // same physical protocol as the pre-migration ms fixture, ÷1000 —
+        // see CLAUDE.md "Units — BIDS-native").
+        let t1 = 0.9_f64;
         let a = 500.0_f64;
         let b = -1000.0_f64;
-        let tis = [350.0_f64, 500.0, 650.0, 800.0, 950.0, 1100.0, 1250.0];
+        let tis = [0.35_f64, 0.50, 0.65, 0.80, 0.95, 1.10, 1.25];
         let header = make_minimal_header(1, 1, 1);
         for (i, ti) in tis.iter().enumerate() {
             let signal = ir_signal(*ti, t1, a, b);
@@ -892,7 +929,7 @@ mod tests {
         let config_path = tmp.0.join("ir.yaml");
         std::fs::write(
             &config_path,
-            "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800, 950, 1100, 1250]\n",
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [0.35, 0.50, 0.65, 0.80, 0.95, 1.10, 1.25]\n",
         )
         .unwrap();
 
@@ -910,7 +947,7 @@ mod tests {
         assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
         let t1_map = io::nifti::read_map_nifti(&t1_path).unwrap();
         assert!(
-            (t1_map[[0, 0, 0]] - t1).abs() < 1.0,
+            (t1_map[[0, 0, 0]] - t1).abs() < 0.001,
             "T1: {} (expected ~{})",
             t1_map[[0, 0, 0]],
             t1
@@ -1168,6 +1205,14 @@ mod tests {
     /// same byte-identical input, the fit must be exactly equal; outside it,
     /// the `.mat` path leaves `NaN` while the BIDS path may fit real values,
     /// which is a known, separately-tracked limitation, not a fit divergence.
+    ///
+    /// Both `t1_mat` and `t1_bids` below are our own two pipelines (not
+    /// qMRLab's), so they're compared directly in seconds — no unit
+    /// reconciliation needed between them. `scripts/make_bids_examples.sh`
+    /// separately prints qMRLab's `FitResults/T1.nii.gz` path for manual
+    /// comparison; that reference is in **milliseconds**, so any numeric
+    /// comparison against it must scale ours by `* 1000.0` first (our T1 is
+    /// seconds; see CLAUDE.md "Units — BIDS-native").
     #[test]
     #[ignore]
     fn bids_fit_matches_mat_fit() {

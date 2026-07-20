@@ -59,9 +59,12 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
     // in the same order as the data's 4th axis — never re-sort it. Falling
     // back to the config's `inversion_times` assumes that list is already in
     // the data's volume order (true for qMRLab's IR_demo protocol configs).
-    let ti = mat
-        .ti
-        .clone()
+    //
+    // qMRLab `.mat` TI vectors are in milliseconds, while the parsed config
+    // (and thus core) is BIDS-native seconds — convert ms -> s here, at the
+    // shell boundary, so the sidecar and the config fallback always agree on
+    // units (see CLAUDE.md "Units — BIDS-native").
+    let ti = crate::commands::mat_ti_to_seconds(mat.ti.clone())
         .unwrap_or_else(|| cfg.inversion_times.clone());
     if ti.is_empty() {
         bail!("no inversion times: absent from both the .mat file and the config");
@@ -270,16 +273,21 @@ mod tests {
 
     /// Step 2/3: structure test — the IRT1 tree is produced from an
     /// in-memory Array4 + TI fixture (no .mat writer exists, per the plan).
+    /// `bidsify_ir` itself is unit-agnostic (it writes whatever `ti`/`tr` it's
+    /// given verbatim); the fixture uses BIDS-native seconds — matching what
+    /// `run_bidsify` now feeds it after converting a `.mat`'s ms TI vector —
+    /// so the sidecar this test asserts on reads as real InversionTime/
+    /// RepetitionTime values in seconds (0.35 s / 2.5 s TR), not ms.
     #[test]
     fn bidsify_ir_writes_expected_tree() {
         let dir = tmp_dir("structure");
         let ir_data = Array4::from_shape_fn((2, 2, 1, 3), |(i, j, _k, t)| {
             (i * 10 + j) as f64 + t as f64 * 0.5
         });
-        let ti = vec![350.0, 650.0, 950.0];
+        let ti = vec![0.350, 0.650, 0.950];
         let mask = Array3::from_shape_vec((2, 2, 1), vec![true, false, true, true]).unwrap();
 
-        bidsify_ir(&ir_data, &ti, Some(&mask), "01", &dir, Some(2500.0)).unwrap();
+        bidsify_ir(&ir_data, &ti, Some(&mask), "01", &dir, Some(2.5)).unwrap();
 
         assert!(dir.join("dataset_description.json").exists());
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
@@ -294,7 +302,7 @@ mod tests {
             let json = std::fs::read_to_string(anat.join(format!("{base}.json"))).unwrap();
             let sidecar: serde_json::Value = serde_json::from_str(&json).unwrap();
             assert_eq!(sidecar["InversionTime"], t);
-            assert_eq!(sidecar["RepetitionTime"], 2500.0);
+            assert_eq!(sidecar["RepetitionTime"], 2.5);
 
             let read_back = io::nifti::read_map_nifti(&nii).unwrap();
             let expected = ir_data.index_axis(Axis(3), i);
