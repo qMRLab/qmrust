@@ -15,10 +15,12 @@ use crate::commands::make_minimal_header;
 use crate::io;
 
 /// IRT1 per-volume sidecar fields (BIDS-qMRI convention). `repetition_time`
-/// is `None` for IR — see `bidsify_ir`'s per-volume loop for why — and is
-/// skipped rather than serialized as `null`. Kept as a typed struct (not a
-/// hand-formatted string) so it stays correct as fields grow (this shape,
-/// and later QMTSPGR's much larger sidecar).
+/// comes from the IR config's `repetition_time` field (qMRLab's IR_demo
+/// protocol uses TR = 2500, in the same ms convention as `InversionTime`);
+/// it's `None`, and skipped rather than serialized as `null`, only when the
+/// config doesn't supply one. Kept as a typed struct (not a hand-formatted
+/// string) so it stays correct as fields grow (this shape, and later
+/// QMTSPGR's much larger sidecar).
 #[derive(Serialize)]
 struct IrSidecar {
     #[serde(rename = "InversionTime")]
@@ -73,7 +75,20 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
         None => mat.mask,
     };
 
-    bidsify_ir(&mat.ir_data, &ti, mask.as_ref(), &args.subject, &args.out)
+    // IR config fields are top-level in the YAML, so `_raw` (the raw parsed
+    // tree) can be re-parsed directly into `IrConfig` to pick up TR.
+    let ir_cfg: qmrust_core::models::inversion_recovery::config::IrConfig =
+        serde_yaml::from_value(_raw.clone())?;
+    let tr = ir_cfg.repetition_time;
+
+    bidsify_ir(
+        &mat.ir_data,
+        &ti,
+        mask.as_ref(),
+        &args.subject,
+        &args.out,
+        tr,
+    )
 }
 
 /// Write one inversion-recovery `.mat` dataset as a BIDS tree rooted at `out`:
@@ -88,6 +103,7 @@ pub fn bidsify_ir(
     mask: Option<&Array3<bool>>,
     subject: &str,
     out: &Path,
+    tr: Option<f64>,
 ) -> Result<()> {
     let (nx, ny, nz, n_ti) = ir_data.dim();
     if ti.len() != n_ti {
@@ -115,12 +131,14 @@ pub fn bidsify_ir(
         write_inv_volume(&vol, &header, &nii_path)?;
 
         let json_path = anat_dir.join(format!("{base}.json"));
-        // RepetitionTime is omitted: the IR config (`IrConfig`) carries no TR
-        // field and qMRLab's IR_demo .mat/config pair doesn't supply one
-        // either — only InversionTime is well-defined here.
+        // RepetitionTime comes from the config (qMRLab's IR_demo TR = 2500,
+        // in the same ms convention as InversionTime). It's recorded here per
+        // BIDS convention even though the RD-NLS fitter itself doesn't
+        // consume TR; it's omitted (not serialized as `null`) if the config
+        // doesn't supply one.
         let sidecar = IrSidecar {
             inversion_time,
-            repetition_time: None,
+            repetition_time: tr,
         };
         std::fs::write(&json_path, serde_json::to_string_pretty(&sidecar)?)?;
     }
@@ -261,7 +279,7 @@ mod tests {
         let ti = vec![350.0, 650.0, 950.0];
         let mask = Array3::from_shape_vec((2, 2, 1), vec![true, false, true, true]).unwrap();
 
-        bidsify_ir(&ir_data, &ti, Some(&mask), "01", &dir).unwrap();
+        bidsify_ir(&ir_data, &ti, Some(&mask), "01", &dir, Some(2500.0)).unwrap();
 
         assert!(dir.join("dataset_description.json").exists());
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
@@ -276,7 +294,7 @@ mod tests {
             let json = std::fs::read_to_string(anat.join(format!("{base}.json"))).unwrap();
             let sidecar: serde_json::Value = serde_json::from_str(&json).unwrap();
             assert_eq!(sidecar["InversionTime"], t);
-            assert!(sidecar.get("RepetitionTime").is_none());
+            assert_eq!(sidecar["RepetitionTime"], 2500.0);
 
             let read_back = io::nifti::read_map_nifti(&nii).unwrap();
             let expected = ir_data.index_axis(Axis(3), i);
@@ -304,11 +322,29 @@ mod tests {
         let ir_data = Array4::from_shape_fn((1, 1, 1, 3), |(_, _, _, t)| t as f64);
         let ti = vec![350.0, 650.0, 950.0];
 
-        bidsify_ir(&ir_data, &ti, None, "01", &dir).unwrap();
-        bidsify_ir(&ir_data, &ti, None, "01", &dir).unwrap();
+        bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
+        bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
 
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
         assert_eq!(participants.matches("sub-01").count(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// When the config supplies no TR, RepetitionTime must be omitted from
+    /// the sidecar rather than serialized as `null`.
+    #[test]
+    fn bidsify_ir_omits_repetition_time_when_absent() {
+        let dir = tmp_dir("no-tr");
+        let ir_data = Array4::from_shape_fn((1, 1, 1, 3), |(_, _, _, t)| t as f64);
+        let ti = vec![350.0, 650.0, 950.0];
+
+        bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
+
+        let anat = dir.join("sub-01").join("anat");
+        let json = std::fs::read_to_string(anat.join("sub-01_inv-1_IRT1.json")).unwrap();
+        let sidecar: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(sidecar.get("RepetitionTime").is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

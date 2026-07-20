@@ -14,6 +14,8 @@ pub struct IrConfig {
     pub t1_range: T1Range,
     #[serde(default)]
     pub zoom: ZoomConfig,
+    #[serde(default)]
+    pub repetition_time: Option<f64>,
 }
 
 impl IrConfig {
@@ -71,6 +73,7 @@ mod tests {
             method: None,
             t1_range: Default::default(),
             zoom: Default::default(),
+            repetition_time: None,
         };
         assert!(cfg.validate().is_err());
     }

@@ -10,6 +10,7 @@ inversion_times:
 - 1400.0
 - 1700.0
 method: magnitude
+repetition_time: 2500.0
 t1_range:
   start: 1
   stop: 5000

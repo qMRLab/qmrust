@@ -475,6 +475,7 @@ mod tests {
             method: Some(FitMethod::Complex),
             t1_range: Default::default(),
             zoom: Default::default(),
+            repetition_time: None,
         };
         let fitter = IrFitter::new(&cfg);
         let sig = fitter.forward(900.0, 500.0, -1000.0);
