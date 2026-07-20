@@ -1,7 +1,10 @@
 # CLAUDE.md
 
 Guidance for working in this repo. Read [`docs/agents/ARCHITECTURE.md`](docs/agents/ARCHITECTURE.md)
-for the full design; this file is the operational quick-reference.
+for the full design (the system map); this file is the operational quick-reference. For
+the BIDS/metadata→fit subsystem specifically — layout resolution, sidecar metadata, and
+the model input contract — read [`docs/agents/DATA-PIPELINE.md`](docs/agents/DATA-PIPELINE.md),
+the deep-dive ARCHITECTURE.md links out to.
 
 ## What this is
 
