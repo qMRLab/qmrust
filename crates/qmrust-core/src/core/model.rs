@@ -51,7 +51,7 @@ pub struct BidsSpec {
 /// Resolved acquisition protocol, in BIDS-sidecar shape: one metadata map per
 /// volume plus shared globals. An empty `Protocol` means "model, use the
 /// protocol from your own config".
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Protocol {
     pub volumes: Vec<BTreeMap<String, f64>>,
     pub global: BTreeMap<String, f64>,
@@ -216,6 +216,43 @@ pub enum VolumeId {
     Params(BTreeMap<String, f64>),
 }
 
+/// Read-only metadata view a `Source::Derived` fn reads from. Lets a model
+/// declare a derivation over sidecar-shaped metadata without core naming
+/// `rust_bids::Sidecar` (the dependency arrow points rust-bids -> core, never
+/// the reverse); `rust-bids`'s `Sidecar` implements this trait.
+pub trait Meta {
+    fn f64(&self, k: &str) -> Option<f64>;
+    fn str(&self, k: &str) -> Option<&str>;
+    fn array(&self, k: &str) -> Option<&[serde_json::Value]>;
+}
+
+/// Whether a [`ProtoParam`] is evaluated once per volume or once for the
+/// whole collection.
+pub enum Scope {
+    PerVolume,
+    Global,
+}
+
+/// Where a [`ProtoParam`]'s value comes from.
+pub enum Source {
+    /// Direct sidecar field, read by key.
+    Field(&'static str),
+    /// Computed from sidecar metadata (e.g. combining two fields). A plain fn
+    /// pointer (not a closure) keeps `Model` object-safe and dependency-free.
+    Derived(fn(&dyn Meta) -> AnyResult<f64>),
+    /// Non-BIDS fallback: read from the caller-supplied options map instead
+    /// of any sidecar.
+    Option(&'static str),
+}
+
+/// One parameter a model wants resolved from a BIDS protocol: its name in the
+/// resulting `Protocol` map, where its value comes from, and at what scope.
+pub struct ProtoParam {
+    pub name: &'static str,
+    pub source: Source,
+    pub scope: Scope,
+}
+
 /// The single surface a model contributor implements. Object-safe so the
 /// registry can hold `Box<dyn Model>`.
 pub trait Model: Send + Sync {
@@ -242,6 +279,12 @@ pub trait Model: Send + Sync {
     /// BIDS identity, if this model maps to a BIDS grouping suffix.
     fn bids(&self) -> Option<BidsSpec> {
         None
+    }
+    /// Declarative mapping from BIDS sidecar metadata (or config options) to
+    /// this model's protocol axis. Empty means "no declared mapping" — the
+    /// shell falls back to the model's own config.
+    fn protocol_schema(&self) -> Vec<ProtoParam> {
+        vec![]
     }
 }
 
@@ -361,6 +404,43 @@ mod tests {
         let err = validate_against_protocol(&kind, &proto).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("InversionTime=650"), "{msg}");
+    }
+
+    struct NoSchemaModel;
+
+    impl Model for NoSchemaModel {
+        fn param_names(&self) -> Vec<&'static str> {
+            vec![]
+        }
+        fn output_names(&self) -> Vec<String> {
+            vec![]
+        }
+        fn param_bounds(&self) -> Vec<(f64, f64)> {
+            vec![]
+        }
+        fn fixed_mask(&self) -> Vec<bool> {
+            vec![]
+        }
+        fn required_inputs(&self) -> Vec<InputSpec> {
+            vec![]
+        }
+        fn measurement(&self) -> MeasurementKind {
+            MeasurementKind::Named { roles: &[] }
+        }
+        fn forward(&self, _params: &[f64], _aux: &Aux) -> Measurement {
+            Measurement::Named(BTreeMap::new())
+        }
+        fn fit(&self, _m: &Measurement, _aux: &Aux) -> Vec<f64> {
+            vec![]
+        }
+    }
+
+    #[test]
+    fn protocol_schema_defaults_to_empty_and_stays_object_safe() {
+        let m = NoSchemaModel;
+        assert!(m.protocol_schema().is_empty());
+        let dyn_m: &dyn Model = &m;
+        assert!(dyn_m.protocol_schema().is_empty());
     }
 
     #[test]
