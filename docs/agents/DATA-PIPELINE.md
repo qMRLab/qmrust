@@ -192,6 +192,18 @@ way to arrive at a `Protocol` and an ordered volume set; a `.mat` file
 
 ---
 
+## Units
+
+`qmrust-core` is BIDS-native (SI): sidecar/config timing fields (`InversionTime`,
+`RepetitionTime`, …) and fitted time-constant maps are in seconds, offsets in Hz, field in
+tesla, `FlipAngle` in degrees per BIDS-MRI. A non-BIDS source (`.mat` via
+`ProtocolSource::Mat`) converts to these units at the shell boundary before reaching a
+model; qMRLab-reference validation reconciles the resulting ×1000 (s vs. ms) factor rather
+than expecting raw equality. See the "Units — BIDS-native (SI)" principle in
+[`CLAUDE.md`](../../CLAUDE.md) for the full rule.
+
+---
+
 ## Deferred
 
 - Fitting `Named` collections, and mapping qMT/MP2RAGE-style protocols onto

@@ -134,6 +134,16 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build -p qmrust-core --target wasm32-unknown-unknown   # core must stay wasm-clean
 ```
 
+## Units
+
+qmrust works in BIDS/SI units end to end: protocol times (`inversion_times`,
+`repetition_time` in config; `InversionTime`, `RepetitionTime` in sidecars) are in
+**seconds**, and fitted time-constant maps (e.g. IRT1's `T1map`) are in **seconds** too —
+so a fitted T1 of `0.9` means 900 ms, not 0.9 ms. This is a deliberate divergence from
+qMRLab (which uses milliseconds): a qMRLab `FitResults/T1.nii.gz` reference differs from
+qmrust's `T1map` by a factor of 1000. See the "Units — BIDS-native (SI)" principle in
+[`CLAUDE.md`](../CLAUDE.md) for the full rule.
+
 ## Next steps
 
 - Adding your own model? See [Models](models.md).

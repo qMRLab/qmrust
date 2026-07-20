@@ -60,3 +60,11 @@ same acquisition-metadata shape a model reads its protocol from — so grouped B
 feed directly into the existing fitting shell described in [Architecture](architecture.md).
 A model with no declared `protocol_schema()` resolves to an empty `Protocol`, falling
 back to reading its own `--config` as before.
+
+## Units
+
+Sidecar fields resolved through `protocol_schema()` are read as-is — qmrust expects them
+in BIDS/SI units, so an `InversionTime` sidecar value of `0.35` means 350 ms, and the
+resulting fitted map (e.g. `T1map`) is in seconds too. See the "Units — BIDS-native (SI)"
+principle in [`CLAUDE.md`](../CLAUDE.md) for the full rule and how it differs from
+qMRLab (milliseconds).

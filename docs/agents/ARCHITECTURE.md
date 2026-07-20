@@ -158,7 +158,7 @@ reason it is portable.
   measurement handed to `forward`/`fit`, read via `.role(name)` / `.series()` — never by
   position.
 - **`Sample { params, value }`** — one acquired volume's value tagged with the identity
-  row (e.g. `{"InversionTime": 500.0}`) that names it.
+  row (e.g. `{"InversionTime": 0.5}`, seconds — see [Units](#units)) that names it.
 - **`VolumeId { Role(&str), Params(BTreeMap<String, f64>) }`** — the identity the shell
   attaches to one data volume before the engine assembles it into a `Measurement`.
 
@@ -381,6 +381,14 @@ should have been all along: algorithm options and the non-BIDS fallback, not a p
 duplicate acquisition parameters that already live in JSON sidecars. See
 [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for the full mapping mechanism, the `rust-bids`
 crate, and what's deferred.
+
+---
+
+## Units
+
+qmrust is BIDS-native (SI): time in seconds, frequency in Hz, field in tesla — see the
+"Units — BIDS-native (SI)" principle in [`CLAUDE.md`](../../CLAUDE.md) for the full rule
+and the qMRLab (ms) divergence it implies. Not restated here to avoid drift.
 
 ---
 
