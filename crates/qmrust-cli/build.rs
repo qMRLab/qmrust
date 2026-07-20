@@ -34,6 +34,22 @@ fn main() {
         std::env::var("PROFILE").unwrap_or_default()
     );
 
-    println!("cargo:rerun-if-changed=../../.git/HEAD");
+    // Rebuild when the checked-out commit changes. `HEAD` moves on
+    // checkout/branch-switch; `logs/HEAD` (the reflog) moves on every commit,
+    // so watching both keeps the embedded commit hash current even when a new
+    // commit lands on the same branch. `git rev-parse --git-path` resolves the
+    // real locations (correct under worktrees and custom git dirs).
+    for path in ["HEAD", "logs/HEAD"] {
+        if let Some(resolved) = Command::new("git")
+            .args(["rev-parse", "--git-path", path])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            println!("cargo:rerun-if-changed={resolved}");
+        }
+    }
     println!("cargo:rerun-if-env-changed=TARGET");
 }

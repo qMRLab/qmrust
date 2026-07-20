@@ -578,8 +578,8 @@ fn collection_sources(c: &Collection, bids_dir: &Path) -> Vec<String> {
 /// fitted `results` into a BIDS-derivatives tree rooted at `deriv_root`:
 /// `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`
 /// plus a full provenance JSON sidecar (`prov.sidecar(units)`) next to each.
-/// Outputs `bids_outputs()` doesn't
-/// declare (diagnostics like `res`/`idx`/`kf`/`resnorm`) are never written —
+/// Outputs `bids_outputs()` doesn't declare (diagnostics like
+/// `res`/`idx`/`kf`/`resnorm`) are never written —
 /// only real BIDS maps get exported to the derivatives layout. Uses the same
 /// writer `fit_and_write`'s flat output uses (`write_map_nifti` for
 /// `.mat`-sourced data, `write_3d_nifti` otherwise), so map values are
