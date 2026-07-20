@@ -55,5 +55,42 @@ echo
 echo "To validate voxelwise agreement in-process, run the ignored integration test:"
 echo "  QMRUST_IR_MAT=$IR_MAT QMRUST_IR_MASK=$IR_MASK \\"
 echo "    cargo test -p qmrust-cli --release bids_fit_matches_mat_fit -- --ignored --nocapture"
+
+# ─── qMT-SPGR (sub-02), appended to the same ds-qmrust dataset ─────────────
+
+echo
+echo "Downloading qMRLab OSF qMT dataset..."
+curl -L --fail -o "$DATA/qmt.zip" "https://osf.io/pzqyn/download?version=2"
+unzip -o -q "$DATA/qmt.zip" -d "$DATA/qmt"
+
+QMT_MAT="$(find "$DATA/qmt" -name 'MTdata.mat' | head -1)"
+[ -n "$QMT_MAT" ] || { echo "MTdata.mat not found in qMT archive"; exit 1; }
+QMT_DIR="$(dirname "$QMT_MAT")"
+QMT_CONFIG="prots/qmt_config_ramani.yaml"
+
+echo "Converting qMT data to the same BIDS dataset at $BIDS_DIR (sub-02)..."
+"$BIN" bidsify --model qmt_spgr \
+  --mat-dir "$QMT_DIR" \
+  --config "$QMT_CONFIG" --subject 02 --out "$BIDS_DIR"
+
+echo "BIDS dataset tree (with sub-02 appended):"
+find "$BIDS_DIR" -type f | sort
+
+echo "Fitting sub-02 (QMTSPGR) via the BIDS path..."
+"$BIN" fit --bids-dir "$BIDS_DIR" --config "$QMT_CONFIG" --output-dir "$BIDS_DIR/derivatives"
+
+QMT_ANAT="$BIDS_DIR/derivatives/qmrust/sub-02/anat"
+for m in Fmap kRmap R1Fmap R1Rmap T2Fmap T2Rmap; do
+  f="$QMT_ANAT/sub-02_${m}.nii.gz"
+  test -s "$f" || { echo "MISSING or empty: $f"; exit 1; }
+done
+
+echo "Produced qMT derivative maps:"
+find "$QMT_ANAT" -name 'sub-02_*map.nii.gz' | sort
+
+echo
+echo "To validate the QMTSPGR BIDS fit against the .mat fit (both no-aux), run:"
+echo "  QMRUST_QMT_MAT=$QMT_MAT \\"
+echo "    cargo test -p qmrust-cli --release qmtspgr_bids_fit_matches_mat_fit -- --ignored --nocapture"
 echo
 echo "Upload $BIDS_DIR to OSF to publish it as the qmrust BIDS example."

@@ -1319,4 +1319,103 @@ mod tests {
              (byte-identical input must produce byte-identical fit)"
         );
     }
+
+    /// End-to-end validation (Task 5): the QMTSPGR BIDS fit path (bidsify
+    /// plus run_fit_bids) must reproduce the .mat fit path (run_fit against
+    /// mat_data) exactly, mirroring `bids_fit_matches_mat_fit` above for qMT.
+    /// `run_fit_bids` doesn't yet resolve BIDS aux maps (see its doc
+    /// comment), so this test disables aux on both sides: run_fit is called
+    /// with no r1map/b1map/b0map and no mat_dir (so no aux .mat convenience
+    /// loading either), and run_fit_bids never resolves BIDS aux at all. Both
+    /// sides therefore fit with default aux (B1=1, B0=0, no R1), making this
+    /// an apples-to-apples comparison on byte-identical input.
+    ///
+    /// Needs a *real* qMRLab OSF qMT dataset (`MTdata.mat`) supplied via an
+    /// env var — no network access here, so it's `#[ignore]`d by default.
+    /// Run explicitly with:
+    ///
+    /// ```text
+    /// QMRUST_QMT_MAT=<path>/MTdata.mat \
+    ///   cargo test -p qmrust-cli --release qmtspgr_bids_fit_matches_mat_fit -- --ignored --nocapture
+    /// ```
+    ///
+    /// `scripts/make_bids_examples.sh` fetches such a dataset from OSF.
+    #[test]
+    #[ignore]
+    fn qmtspgr_bids_fit_matches_mat_fit() {
+        let qmt_mat = PathBuf::from(
+            std::env::var("QMRUST_QMT_MAT").expect("set QMRUST_QMT_MAT=<path>/MTdata.mat"),
+        );
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..");
+        let config = repo_root.join("prots").join("qmt_config_ramani.yaml");
+
+        let tmp = TempDir::new("qmt-bids-matches-mat");
+        let out_mat = tmp.0.join("out_mat");
+        let bids_dir = tmp.0.join("ds-qmrust");
+        let deriv_dir = bids_dir.join("derivatives");
+
+        // (a) Fit via the .mat path, in-process, with NO aux (no
+        // --r1map/--b1map/--b0map, no --mat-dir so no Mask.mat/aux .mat
+        // convenience-loading either) — matching the BIDS side's no-aux fit.
+        run_fit(
+            None,
+            Some(qmt_mat.clone()),
+            config.clone(),
+            None,
+            out_mat.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("mat-path fit failed");
+        let f_mat = io::nifti::read_map_nifti(&out_mat.join("F.nii.gz")).expect("read F (mat)");
+        let kr_mat = io::nifti::read_map_nifti(&out_mat.join("kr.nii.gz")).expect("read kr (mat)");
+
+        // (b) bidsify (in-process, no mask/aux) + fit via the BIDS path.
+        crate::bidsify::run_bidsify(crate::bidsify::BidsifyArgs {
+            model: "qmt_spgr".to_string(),
+            mat_data: Some(qmt_mat),
+            mat_dir: None,
+            mask: None,
+            config: config.clone(),
+            subject: "02".to_string(),
+            out: bids_dir.clone(),
+        })
+        .expect("bidsify failed");
+        run_fit_bids(bids_dir, config, deriv_dir.clone(), None).expect("bids-path fit failed");
+
+        let anat = deriv_dir.join("qmrust").join("sub-02").join("anat");
+        let f_bids =
+            io::nifti::read_map_nifti(&anat.join("sub-02_Fmap.nii.gz")).expect("read Fmap (bids)");
+        let kr_bids = io::nifti::read_map_nifti(&anat.join("sub-02_kRmap.nii.gz"))
+            .expect("read kRmap (bids)");
+
+        assert_eq!(f_mat.dim(), f_bids.dim(), "F map shapes must match");
+        assert_eq!(kr_mat.dim(), kr_bids.dim(), "kr map shapes must match");
+
+        let mut n_voxels = 0usize;
+        let mut n_mismatch = 0usize;
+        for ((x, y, z), &a) in f_mat.indexed_iter() {
+            n_voxels += 1;
+            let b = f_bids[[x, y, z]];
+            let ar = kr_mat[[x, y, z]];
+            let br = kr_bids[[x, y, z]];
+            let f_equal = (a.is_nan() && b.is_nan()) || a == b;
+            let kr_equal = (ar.is_nan() && br.is_nan()) || ar == br;
+            if !f_equal || !kr_equal {
+                n_mismatch += 1;
+                eprintln!("  mismatch at ({x},{y},{z}): F mat={a} bids={b}, kr mat={ar} bids={br}");
+            }
+        }
+        eprintln!("voxels: {n_voxels}, mismatches: {n_mismatch}");
+        assert_eq!(
+            n_mismatch, 0,
+            "BIDS-path F/kr must exactly match .mat-path F/kr for every voxel \
+             (byte-identical input, identical no-aux fit, must produce byte-identical output)"
+        );
+    }
 }
