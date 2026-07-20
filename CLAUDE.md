@@ -108,7 +108,8 @@ so this is opt-in — a model that skips it just reads its own `--config` as bef
 `--config` for a migrated model narrows to algorithm options plus the `Source::Option`
 fallback. Use IR (`models/inversion_recovery/`) as the minimal reference — its
 `protocol_schema()` maps `InversionTime`; qMT (`models/qmt_spgr/`) shows a nested-config
-model with aux inputs (its own protocol mapping is a deferred follow-up). A model also
+model with aux inputs, whose `protocol_schema()` maps per-volume `Angle`/`Offset` under
+its custom, `.bidsignore`'d `QMTSPGR` BIDS suffix. A model also
 declares `bids_outputs() -> Vec<(&'static str, &'static str)>` — which `output_names()`
 are real quantitative maps and their BIDS-derivatives suffix (e.g. IR's `T1→T1map`) — so
 `qmrust fit --bids-dir` writes them into the `derivatives/qmrust/...` tree; see

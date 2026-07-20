@@ -56,8 +56,13 @@ fit.
   already-chosen model) parses the dataset into flat rows (`table::parse_to_table`)
   and groups them (`resolve::resolve_set`) per a declarative grouping grammar,
   `BidsConfig`: `Sequential` sets (ordered by an entity, e.g. IRT1's `inv-`
-  index), `Named` sets (fixed named slots matched by entity constraints, e.g.
-  MTS's PDw/MTw/T1w), and `Plain` sets (parse-only, not yet grouped). Grouping
+  index, or qmt_spgr's custom `QMTSPGR` suffix ordered `by: [mt, flip]`),
+  `Named` sets (fixed named slots matched by entity constraints, e.g. MTS's
+  PDw/MTw/T1w), and `Plain` sets (parse-only, not yet grouped). A registered
+  model's suffix is discovered even if `.bidsignore`'d (`QMTSPGR` is a
+  custom, non-official suffix, so its example dataset ships a `.bidsignore`
+  entry for general-purpose BIDS validators — `rust-bids`'s own discovery
+  ignores it). Grouping
   is permissive-but-loud: a missing required member drops the collection, a
   missing non-required one attaches a `Warning` to the `Collection` rather
   than panicking.
@@ -216,9 +221,6 @@ than expecting raw equality. See the "Units — BIDS-native (SI)" principle in
 - A real multi-field `Source::Derived` model (e.g. MP2RAGE) — the mechanism
   is proven today only by IR's single-field `InversionTime` schema and a
   stub `Derived` test.
-- `qmrust bidsify` covers `inversion_recovery`/IRT1 only; QMTSPGR bidsify
-  (the `flip-<i>_mt-<i>` entity mapping, aux maps, `.bidsignore`) is a
-  tracked follow-up.
 
 ---
 
@@ -257,26 +259,38 @@ The BIDS pipeline needs example datasets to fit; `bidsify`
 `.mat` test data, so that fitting the BIDS version reproduces the `.mat` fit
 exactly.
 
-- **Byte-identical is the guarantee**: each inversion volume is sliced
-  straight out of the `.mat` `Array4<f64>` and written as `f64`/datatype-64
-  NIfTI — no rescale, no dtype narrowing. `bidsify_ir` writes
+- **Byte-identical is the guarantee**: each volume is sliced straight out of
+  the `.mat` `Array4<f64>` and written as `f64`/datatype-64 NIfTI — no
+  rescale, no dtype narrowing. `bidsify --model inversion_recovery` writes
   `sub-<subject>/anat/sub-<subject>_inv-<i>_IRT1.nii.gz` (1-based `<i>`,
   matching the `.mat`'s own TI order — never re-sorted) + a
   `{InversionTime}` JSON sidecar per volume, `dataset_description.json`,
   `participants.tsv`, and (if a mask is given) a
   `derivatives/qmrust/sub-<subject>/anat/sub-<subject>_desc-brain_mask.nii.gz`.
+- `bidsify --model qmt_spgr` writes the custom `QMTSPGR` suffix instead:
+  `sub-<subject>/anat/sub-<subject>_flip-<f>_mt-<m>_QMTSPGR.nii.gz`, where
+  `flip-<f>`/`mt-<m>` are 1-based, first-seen-order indices over the
+  protocol's unique Angle/Offset values (cosmetic — the fit reads identity
+  from the sidecar, not the filename), plus an `{Angle, Offset,
+  RepetitionTime, MTPulseDuration}` sidecar per volume and a root
+  `.bidsignore` (`*QMTSPGR*`, deduplicated across repeat runs). Any aux maps
+  present (`R1map`/`B1map`/`B0map`/`Mask`) are written byte-identical under
+  `derivatives/qmrust/sub-<subject>/anat/` as `_R1map`/`_TB1map`/`_B0map`/
+  `_desc-brain_mask`.
 - **How it's validated**: a unit test round-trips an in-memory `Array4`
-  through the volume writer and asserts every voxel reads back `==` the
-  source (not approximate) — this is what proves no rescale/precision loss.
-  End to end, `scripts/make_bids_examples.sh` fetches qMRLab's OSF IR
-  dataset, runs `bidsify`, fits the result via `qmrust fit --bids-dir`, and
-  an `#[ignore]`d integration test (`bids_fit_matches_mat_fit` in
-  `commands.rs`) asserts the BIDS-path `T1map` is voxel-**equal** to fitting
-  the same `.mat` directly (inside the `.mat`'s mask — outside it, the BIDS
-  path currently fits extra nonzero voxels the mat path leaves `NaN`, per
-  the aux/mask-resolution gap above) and, separately, within the OSF
-  integration job's existing tolerance of qMRLab's own
-  `FitResults/T1.nii.gz`.
-- Only `inversion_recovery`/IRT1 is supported (`bail!`s otherwise); QMTSPGR
-  bidsify is deferred (see above) — its `flip-<i>_mt-<i>` entity mapping and
-  aux-map derivatives are fiddlier and tracked separately.
+  through each model's volume writer and asserts every voxel reads back `==`
+  the source (not approximate) — this is what proves no rescale/precision
+  loss; a separate structure test pins qmt_spgr's flip/mt filename derivation
+  and sidecar fields. End to end, `scripts/make_bids_examples.sh` fetches
+  qMRLab's OSF IR and qMT datasets, runs `bidsify` for both models into the
+  same example dataset (sub-01 IRT1, sub-02 QMTSPGR), and fits each via
+  `qmrust fit --bids-dir`. Two `#[ignore]`d integration tests
+  (`bids_fit_matches_mat_fit`, `qmtspgr_bids_fit_matches_mat_fit` in
+  `commands.rs`) assert each BIDS-path fit is voxel-**equal** to fitting the
+  same `.mat` directly (inside the `.mat`'s mask for IRT1 — outside it, the
+  BIDS path currently fits extra nonzero voxels the mat path leaves `NaN`,
+  per the aux/mask-resolution gap above; the qMT comparison is both no-aux)
+  and, for IRT1, within the OSF integration job's existing tolerance of
+  qMRLab's own `FitResults/T1.nii.gz`.
+- `bidsify` supports exactly `inversion_recovery` and `qmt_spgr`
+  (`bail!`s otherwise).

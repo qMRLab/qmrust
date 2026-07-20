@@ -97,13 +97,53 @@ cargo run -p qmrust-cli -- bidsify \
 This writes `ds-qmrust/sub-01/anat/sub-01_inv-<i>_IRT1.nii.gz` (+
 `{InversionTime}` sidecars), `dataset_description.json`, `participants.tsv`,
 and the mask under `ds-qmrust/derivatives/qmrust/sub-01/anat/
-sub-01_desc-brain_mask.nii.gz`. Only `inversion_recovery`/IRT1 is supported
-today; QMTSPGR bidsify is a tracked follow-up.
+sub-01_desc-brain_mask.nii.gz`.
 
-`scripts/make_bids_examples.sh` automates this end to end: it fetches
-qMRLab's OSF IR demo dataset, runs `bidsify`, then fits the resulting BIDS
-dataset with `qmrust fit --bids-dir` and confirms the result is voxel-identical
-to fitting the original `.mat` (in-mask) and within qMRLab's own reference
+`bidsify` also supports `qmt_spgr`, whose BIDS identity is the custom,
+non-official suffix `QMTSPGR` (see [BIDS](bids.md)). Point it at a directory
+of qMRLab's qMT `.mat` files instead of a single file, and append it as a
+second subject in the same dataset:
+
+```bash
+cargo run -p qmrust-cli -- bidsify \
+  --model qmt_spgr \
+  --mat-dir <dir-with-MTdata/R1map/B1map/B0map/Mask.mat> \
+  --config prots/qmt_config_ramani.yaml \
+  --subject 02 --out ds-qmrust
+```
+
+This writes `ds-qmrust/sub-02/anat/sub-02_flip-<f>_mt-<m>_QMTSPGR.nii.gz` for
+each of the 10 MT-weighted volumes (2 flip angles × 5 offsets), each with a
+sidecar carrying the acquisition metadata the fit reads back by identity:
+
+```json
+{"Angle": 142.0, "Offset": 443.0, "RepetitionTime": 0.03, "MTPulseDuration": 0.008}
+```
+
+and a root `.bidsignore` containing `*QMTSPGR*` (so general BIDS validators
+skip the non-official suffix; qmrust's own layout resolver discovers it
+regardless — see [BIDS](bids.md)). Any aux maps present in `--mat-dir`
+(`R1map`/`B1map`/`B0map`/`Mask`) are written byte-identical under
+`ds-qmrust/derivatives/qmrust/sub-02/anat/`.
+
+Fitting the resulting `QMTSPGR` collection the same way as IRT1:
+
+```bash
+cargo run -p qmrust-cli -- fit \
+  --bids-dir ds-qmrust \
+  --config prots/qmt_config_ramani.yaml \
+  --output-dir ds-qmrust/derivatives
+```
+
+writes the six qMT maps qmt_spgr declares via `bids_outputs()` —
+`sub-02_Fmap.nii.gz`, `_kRmap`, `_R1Fmap`, `_R1Rmap`, `_T2Fmap`, `_T2Rmap` —
+under `ds-qmrust/derivatives/qmrust/sub-02/anat/`.
+
+`scripts/make_bids_examples.sh` automates both examples end to end: it
+fetches qMRLab's OSF IR and qMT demo datasets, runs `bidsify` for each into
+the same `ds-qmrust` (sub-01 IRT1, sub-02 QMTSPGR), fits both via
+`qmrust fit --bids-dir`, and confirms the IRT1 result is voxel-identical to
+fitting the original `.mat` (in-mask) and within qMRLab's own reference
 tolerance (`FitResults/T1.nii.gz`). The generated dataset itself is not
 committed (large data stays out of the repo); re-run the script to regenerate
 it.

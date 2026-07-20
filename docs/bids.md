@@ -34,9 +34,22 @@ A `BidsConfig` has a `loop_over` (which entities define one "unit", e.g.
   IRT1's inversion-recovery series ordered `by: [inversion]`.
 
 Today the grouping config is a **bundled default** (`default_config()`,
-covering `IRT1` and `MTS`) plus a programmatic `parse_config(yaml: &str)` for
-supplying your own. A discoverable, on-disk `rust-bids.yaml` convention is
-planned but not yet implemented.
+covering `IRT1`, `MTS`, and `QMTSPGR`) plus a programmatic `parse_config(yaml:
+&str)` for supplying your own. A discoverable, on-disk `rust-bids.yaml`
+convention is planned but not yet implemented.
+
+`QMTSPGR` (qMT-SPGR) is a **custom, non-official** BIDS suffix — it isn't
+part of the BIDS-MRI spec, so a `QMTSPGR` dataset ships a root `.bidsignore`
+containing `*QMTSPGR*` to keep general-purpose BIDS validators quiet. Layout
+resolution discovers it anyway: a path whose suffix matches a *registered*
+model (`qmrust_core::registry::by_bids_suffix`) is never dropped by
+`.bidsignore`, only genuinely unrelated ignored paths are. It's grouped as a
+`sequential_set` ordered `by: [mt, flip]` — the 2 flip angles × 5 offsets
+qMRLab's `qmt_spgr_batch` convention produces
+(`sub-<subject>_flip-<f>_mt-<m>_QMTSPGR.nii.gz`) — but that ordering is
+cosmetic: `qmt_spgr` reads each volume's identity from its sidecar's
+`Angle`/`Offset` fields (see below), so a fit is correct regardless of file
+order.
 
 ## The I/O seam
 
@@ -59,7 +72,10 @@ resolve_protocol` evaluates that schema against each volume's `Sidecar` (and the
 same acquisition-metadata shape a model reads its protocol from — so grouped BIDS volumes
 feed directly into the existing fitting shell described in [Architecture](architecture.md).
 A model with no declared `protocol_schema()` resolves to an empty `Protocol`, falling
-back to reading its own `--config` as before.
+back to reading its own `--config` as before. `qmt_spgr` declares `Angle` and `Offset`
+(both `PerVolume`, read straight off each `QMTSPGR` volume's sidecar), mirroring IR's
+`InversionTime` — the fit matches samples to the model's canonical rows by these values,
+not by file order.
 
 ## Units
 
