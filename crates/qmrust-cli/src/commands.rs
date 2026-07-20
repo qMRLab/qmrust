@@ -1086,7 +1086,12 @@ mod tests {
     /// success having fit zero subjects. `QMTSPGR` now has a `rust-bids`
     /// sequential set definition, so this 3-volume dataset resolves into a
     /// real collection — but it doesn't carry the model's expected 10-row
-    /// series protocol, so fitting itself must bail (not silently skip).
+    /// series protocol, so fitting itself must bail (not silently skip). Now
+    /// that qmt_spgr declares a `protocol_schema()`, the mismatch is caught
+    /// earlier, by `validate_against_protocol` inside the model's `build`
+    /// (wrapped in a "protocol inconsistent" context) rather than later by
+    /// `build_volume_ids` — check the full error chain (`{:?}`), not just the
+    /// outer `Display` message, for the underlying counts.
     #[test]
     fn run_fit_bids_bails_when_every_collection_is_skipped() {
         let tmp = TempDir::new("fit-bids-all-named");
@@ -1096,12 +1101,23 @@ mod tests {
 
         let header = make_minimal_header(1, 1, 1);
         let data = Array3::from_elem((1, 1, 1), 1.0_f64);
-        for fname in [
-            "sub-01_flip-1_mt-off_QMTSPGR.nii.gz",
-            "sub-01_flip-1_mt-on_QMTSPGR.nii.gz",
-            "sub-01_flip-2_mt-off_QMTSPGR.nii.gz",
+        // Give each volume a valid Angle/Offset sidecar (qmt_spgr now declares
+        // a `protocol_schema()`, so `resolve_protocol` reads these) but only 3
+        // of the model's 10 expected mtdata rows, so the mismatch is caught by
+        // `validate_against_protocol`'s count check, not by a missing-field error.
+        for (fname, angle, offset) in [
+            ("sub-01_flip-1_mt-off_QMTSPGR.nii.gz", 142.0, 443.0),
+            ("sub-01_flip-1_mt-on_QMTSPGR.nii.gz", 426.0, 443.0),
+            ("sub-01_flip-2_mt-off_QMTSPGR.nii.gz", 142.0, 1088.0),
         ] {
-            io::nifti::write_3d_nifti(&data, &header, &anat_dir.join(fname)).unwrap();
+            let path = anat_dir.join(fname);
+            io::nifti::write_3d_nifti(&data, &header, &path).unwrap();
+            let json_path = anat_dir.join(fname.replace(".nii.gz", ".json"));
+            std::fs::write(
+                &json_path,
+                format!(r#"{{"Angle": {angle}, "Offset": {offset}}}"#),
+            )
+            .unwrap();
         }
 
         let config_path = tmp.0.join("qmt.yaml");
@@ -1116,9 +1132,10 @@ mod tests {
             Ok(()) => panic!("a protocol-mismatched QMTSPGR dataset must bail, not exit Ok"),
             Err(e) => e,
         };
+        let chain = format!("{err:?}");
         assert!(
-            err.to_string().contains("3 volumes") && err.to_string().contains("10 rows"),
-            "expected a volumes-vs-protocol-rows mismatch bail message, got: {err}"
+            chain.contains("expected 10 volumes") && chain.contains("supplies 3"),
+            "expected a volumes-vs-protocol-rows mismatch bail message, got: {chain}"
         );
     }
 

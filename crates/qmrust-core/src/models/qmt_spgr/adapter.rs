@@ -2,7 +2,7 @@
 
 use crate::core::model::{
     validate_against_protocol, Aux, BidsMap, BidsSpec, EntityRole, FitStrategy, InputSpec,
-    Measurement, MeasurementKind, Model, Protocol, Sample,
+    Measurement, MeasurementKind, Model, ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::qmt_spgr::config::QmtSpgrConfig;
 use crate::models::qmt_spgr::QmtSpgrFitter;
@@ -155,6 +155,22 @@ impl Model for QmtModel {
             suffix: "QMTSPGR",
             entities: QMT_ENTITIES,
         })
+    }
+    fn protocol_schema(&self) -> Vec<ProtoParam> {
+        // Matches the "Angle"/"Offset" keys `qmt_rows`/`forward`/`fit` use, so
+        // a BIDS-resolved protocol is matched by identity, never by position.
+        vec![
+            ProtoParam {
+                name: "Angle",
+                source: Source::Field("Angle"),
+                scope: Scope::PerVolume,
+            },
+            ProtoParam {
+                name: "Offset",
+                source: Source::Field("Offset"),
+                scope: Scope::PerVolume,
+            },
+        ]
     }
     fn bids_outputs(&self) -> Vec<(&'static str, &'static str)> {
         // Per qMRLab QMTSPGR convention; `kf` (derived kr*F) and `resnorm`
