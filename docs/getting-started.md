@@ -66,6 +66,13 @@ BIDS-fittable yet; use `--mat-dir`/`--data` with explicit `--r1map`/`--b1map`/
 `--b0map` for those. See [BIDS](bids.md) for how `rust-bids` resolves the
 dataset layout.
 
+Notice `--config` above still points at `irt1_config.yaml`, but in a BIDS fit
+it no longer needs to carry the inversion times — the model declares which
+acquisition parameters it needs from the JSON sidecars, so `--config` is just
+algorithm options (fit bounds, etc.). See
+[From sidecar metadata to `Protocol`](bids.md#from-sidecar-metadata-to-protocol)
+for how that mapping works.
+
 ## Run a simulation
 
 `qmrust sim` generates a forward signal from ground-truth parameters,

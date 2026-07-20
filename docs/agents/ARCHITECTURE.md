@@ -96,10 +96,13 @@ folded into `qmrust-core` because it is generalizable beyond this workspace. Two
 mismatches (`Warning`s attached to the `Collection`, not panics). The `fs::DatasetFs`
 trait is the I/O seam: it takes the place of `std::fs` so the same resolver runs against
 a native filesystem walker or a browser-side (e.g. Tauri/JS) directory listing without
-change. Downstream, `protocol::protocol_for` turns a `Collection` into a
-`qmrust_core::Protocol`, and the grouped volumes/`VolumeRef`s feed the fitting shell —
-this crate is the intended BIDS front door for both the CLI and a future Tauri app,
-independent of the `qmrust-core` purity rule (it is not part of core).
+change. `sidecar::sidecar_for` builds one image's full `Sidecar` — a merged JSON view
+along the BIDS inheritance chain (dataset root → `sub-` → `[ses-]` → datatype directory),
+co-located sidecar winning ties. Downstream, `protocol::resolve_protocol` evaluates a
+model's declared `protocol_schema()` (a `Vec<ProtoParam>`) against each volume's
+`Sidecar` to produce a `qmrust_core::Protocol`; the grouped volumes/`VolumeRef`s feed the
+fitting shell — this crate is the intended BIDS front door for both the CLI and a future
+Tauri app, independent of the `qmrust-core` purity rule (it is not part of core).
 
 ---
 
@@ -125,6 +128,8 @@ pub trait Model: Send + Sync {
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;         // identity-keyed measurement → outputs
 
     fn bids(&self) -> Option<BidsSpec> { None }   // BIDS grouping suffix + entity map
+
+    fn protocol_schema(&self) -> Vec<ProtoParam> { vec![] }   // sidecar/config → Protocol mapping
 }
 ```
 
@@ -148,8 +153,20 @@ reason it is portable.
 - **`Protocol { volumes, global }`** — a BIDS-sidecar-shaped acquisition protocol (one
   metadata map per volume + shared globals). Empty means "model, read your protocol from
   your own config." Produced by `ProtocolSource` (a model's own YAML config, or a `.mat`
-  override); BIDS-sidecar protocols are produced separately by `rust-bids`'
-  `protocol_for`.
+  override), or — for a BIDS fit — by `rust-bids`' `resolve_protocol`, which evaluates the
+  model's `protocol_schema()` against each volume's `Sidecar`.
+- **`ProtoParam { name, source, scope }` / `Source { Field, Derived, Option }` /
+  `Scope { PerVolume, Global }`** — a model's declarative mapping from BIDS metadata (or
+  config) onto one protocol parameter: `Field(key)` reads it straight off the sidecar,
+  `Derived(fn(&dyn Meta) -> Result<f64>)` computes it from several sidecar fields (a
+  pure, image-scoped fn pointer — not a closure, so `Model` stays object-safe), and
+  `Option(key)` is the non-BIDS fallback read from `--config` options instead of any
+  sidecar. `Scope` says whether a param is resolved once per volume or once for the whole
+  collection. `protocol_schema()` defaults to `vec![]` — additive, no behaviour change for
+  a model that hasn't declared one.
+- **`Meta`** — the read-only metadata view a `Source::Derived` fn reads through
+  (`f64`/`str`/`array` by key). Lives in core so `Derived` can be written without core
+  depending on `rust-bids`; `rust-bids`' `Sidecar` implements it.
 - **`BidsSpec { suffix, entities }`** — the model's BIDS identity (e.g. `IRT1`, `MTS`).
 - **`MeasurementKind { Named { roles }, Series { rows } }`** — a model's declared
   measurement shape: a fixed set of role-labeled volumes, or a variable-length series
@@ -218,7 +235,9 @@ in this path — a reordered volume list produces the same `Measurement` and the
 
 ```
 qmrust fit --bids-dir <dir> ─► StdFs (native DatasetFs) ─► rust_bids::collections_for
-   for each Collection: load_collection ─► ordered 4-D volumes + Protocol (rust_bids::protocol_for)
+   for each Collection: load_collection ─► ordered 4-D volumes + Protocol
+       (rust_bids::resolve_protocol evaluates model.protocol_schema() against each
+        volume's inheritance-merged Sidecar; --config supplies Source::Option fallbacks)
    build_volume_ids(model.measurement(), protocol) ─► engine::run ─► FitResults
    io::nifti writes output_dir/<subject>[/<session>]/<map>.nii.gz
 ```
@@ -226,11 +245,14 @@ qmrust fit --bids-dir <dir> ─► StdFs (native DatasetFs) ─► rust_bids::co
 `run_fit_bids` groups the dataset per the registry's `bids_suffix` and fits each resolved
 collection through the same order-free `build_volume_ids` → `engine::run` path as the
 file-based flow above — a BIDS collection is just another way to arrive at a `Protocol`
-and an ordered volume set. v1 scope: `Sequential` collections (e.g. IRT1) and models with
-no required aux input; a model that declares required aux is rejected up front (loud
-error, not a silent skip). `Named` collections (e.g. MTS) are logged and skipped for now.
-Deferred to a follow-up: fitting `Named` collections, and resolving BIDS-side auxiliary
-maps (B1/B0/R1) so aux-dependent models can fit straight from a BIDS dataset.
+and an ordered volume set. A model with an empty `protocol_schema()` (not yet migrated)
+resolves to an empty `Protocol`, falling back to its own `--config` unchanged. v1 scope:
+`Sequential` collections (e.g. IRT1) and models with no required aux input; a model that
+declares required aux is rejected up front (loud error, not a silent skip). `Named`
+collections (e.g. MTS) are logged and skipped for now. Deferred to a follow-up: fitting
+`Named` collections (and mapping qMT/MP2RAGE-style protocols onto them), and resolving
+BIDS-side auxiliary maps (B1/B0/R1) so aux-dependent models can fit straight from a BIDS
+dataset.
 
 ### Simulate (CLI / core)
 
@@ -298,6 +320,10 @@ fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
     self.fitter.fit_voxel(&Array1::from_vec(signal))
 }
 fn bids(&self) -> Option<BidsSpec> { Some(BidsSpec { suffix: "IRT1", entities: IR_ENTITIES }) }
+fn protocol_schema(&self) -> Vec<ProtoParam> {
+    // InversionTime comes straight off each volume's sidecar, one per volume.
+    vec![ProtoParam { name: "InversionTime", source: Source::Field("InversionTime"), scope: Scope::PerVolume }]
+}
 
 // the registry builder: parse this model's config, apply any protocol override, validate, box it
 pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
@@ -367,13 +393,27 @@ comes from.
 ## BIDS-first design
 
 qMRI-BIDS is treated as an **imperative-shell concern**, so it never touches the pure
-core. A model declares its BIDS identity (`bids()` → suffix + entities) and its inputs'
-BIDS locators (`InputSpec.bids`); the shell uses those to locate a file collection and
-read acquisition metadata from JSON sidecars into a `Protocol`, which is handed to the
-model's `build`. The model's `forward`/`fit` still only see ordered params + `Aux`. The
-seams (`BidsSpec`, `Protocol`, `ProtocolSource`) are in place, and the sidecar reader now
-exists as the `rust-bids` crate — flat-table parse → declarative-grammar grouping →
-sidecar-to-`Protocol` bridge (see the `rust-bids` subsection above).
+core. A model declares its BIDS identity (`bids()` → suffix + entities), its inputs'
+BIDS locators (`InputSpec.bids`), and — the metadata-mapping piece — its
+`protocol_schema()`: a `Vec<ProtoParam>` saying, per protocol parameter, whether the
+value is a direct sidecar `Field`, something `Derived` from several sidecar fields, or a
+non-BIDS `Option` read from `--config`. The shell locates a file collection, builds each
+image's full inheritance-merged `Sidecar` (`rust-bids::sidecar_for`), and evaluates the
+schema over it (`rust-bids::resolve_protocol`) into a `Protocol`, which is handed to the
+model's `build`. Because a `Derived` source is a plain `fn(&dyn Meta) -> Result<f64>`
+rather than a closure, evaluation is a pure, image-scoped computation — it only ever sees
+one image's metadata, never cross-image state — and `Model` stays object-safe. Under this
+mapping, `--config` narrows to what it should have been all along: algorithm options
+(fit bounds, solver settings, …) plus the non-BIDS fallback for parameters a sidecar
+doesn't carry; acquisition parameters that live in JSON sidecars no longer need to be
+duplicated into YAML. The model's `forward`/`fit` still only see ordered params + `Aux`.
+The seams (`BidsSpec`, `Protocol`, `ProtocolSource`) are in place, and the sidecar reader
+now exists as the `rust-bids` crate — flat-table parse → declarative-grammar grouping →
+`Sidecar`/`protocol_schema` evaluation → `Protocol` bridge (see the `rust-bids`
+subsection above). Deferred: applying `protocol_schema` to qMT's offset/power protocol
+and to a `Named` collection fit, and a real multi-field `Derived` model (e.g. MP2RAGE);
+the mapping mechanism itself is proven today by IR's `InversionTime` schema and by a
+stub `Derived` test.
 
 ---
 

@@ -45,9 +45,18 @@ All filesystem access goes through the `fs::DatasetFs` trait rather than
 filesystem walker in the CLI today, and — unchanged — against a browser-side
 (e.g. Tauri/JS) directory listing in the future, alongside `qmrust-wasm`.
 
-## From `Collection` to `Protocol`
+## From sidecar metadata to `Protocol`
 
-`protocol::protocol_for` turns a resolved `Collection` into a
-`qmrust_core::Protocol` (the same acquisition-metadata shape a model reads its
-protocol from), so grouped BIDS volumes can feed directly into the existing
-fitting shell described in [Architecture](architecture.md).
+Each image's full metadata is captured as a `Sidecar` (`sidecar::sidecar_for`): the
+co-located JSON merged with any inherited parent-level JSON along the BIDS directory
+chain (dataset root → `sub-` → `[ses-]` → datatype directory), with the co-located file
+winning ties. A model declares which sidecar fields feed its protocol via
+`protocol_schema() -> Vec<ProtoParam>` — each parameter is either a direct sidecar
+`Field(key)`, a value `Derived` from several sidecar fields by a pure, image-scoped
+function, or a non-BIDS `Option(key)` read from `--config` instead. `protocol::
+resolve_protocol` evaluates that schema against each volume's `Sidecar` (and the
+`--config` options, for any `Option` fallback) to build a `qmrust_core::Protocol` — the
+same acquisition-metadata shape a model reads its protocol from — so grouped BIDS volumes
+feed directly into the existing fitting shell described in [Architecture](architecture.md).
+A model with no declared `protocol_schema()` resolves to an empty `Protocol`, falling
+back to reading its own `--config` as before.

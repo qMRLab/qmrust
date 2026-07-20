@@ -71,9 +71,18 @@ own canonical per-volume identity rows), and `forward`/`fit` read the identity-k
 — never by position. The engine assembles that keyed `Measurement` from the shell's
 per-volume `VolumeId`s; `build` validates the supplied `Protocol` against the model's own
 declared measurement (`validate_against_protocol`), failing loudly at build rather than
-per-voxel. Use IR (`models/inversion_recovery/`) as the minimal reference; qMT
-(`models/qmt_spgr/`) shows a
-nested-config model with aux inputs.
+per-voxel. If the model's protocol (e.g. `InversionTime`) can be read from a BIDS JSON
+sidecar, declare it via `protocol_schema() -> Vec<ProtoParam>` — `Source::Field(key)` for
+a value read straight off the sidecar, `Source::Derived(fn(&dyn Meta) -> Result<f64>)`
+for one computed from several sidecar fields (a pure, image-scoped fn, not a closure), or
+`Source::Option(key)` for a non-BIDS fallback read from `--config`. The shell
+(`rust-bids::resolve_protocol`) evaluates the schema against each image's
+inheritance-merged `Sidecar` into the `Protocol`; `protocol_schema()` defaults to `vec![]`
+so this is opt-in — a model that skips it just reads its own `--config` as before, and
+`--config` for a migrated model narrows to algorithm options plus the `Source::Option`
+fallback. Use IR (`models/inversion_recovery/`) as the minimal reference — its
+`protocol_schema()` maps `InversionTime`; qMT (`models/qmt_spgr/`) shows a nested-config
+model with aux inputs (its own protocol mapping is a deferred follow-up).
 
 ## Invariants to respect
 
