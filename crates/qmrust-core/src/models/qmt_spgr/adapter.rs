@@ -39,7 +39,8 @@ fn qmt_rows(protocol: &[[f64; 2]]) -> Vec<BTreeMap<String, f64>> {
         .collect()
 }
 
-const QMT_ENTITIES: &[EntityRole] = &[EntityRole::Mt, EntityRole::Flip];
+// Order matches the qMRLab QMTSPGR filename convention: flip-<i>_mt-<i>.
+const QMT_ENTITIES: &[EntityRole] = &[EntityRole::Flip, EntityRole::Mt];
 
 impl Model for QmtModel {
     fn param_names(&self) -> Vec<&'static str> {
@@ -151,7 +152,7 @@ impl Model for QmtModel {
     }
     fn bids(&self) -> Option<BidsSpec> {
         Some(BidsSpec {
-            suffix: "MTS",
+            suffix: "QMTSPGR",
             entities: QMT_ENTITIES,
         })
     }
@@ -280,8 +281,8 @@ mod tests {
     }
 
     #[test]
-    fn declares_bids_mts() {
+    fn declares_bids_qmtspgr() {
         let m = build(&qmt_value(), &Protocol::default()).unwrap();
-        assert_eq!(m.bids().unwrap().suffix, "MTS");
+        assert_eq!(m.bids().unwrap().suffix, "QMTSPGR");
     }
 }

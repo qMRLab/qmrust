@@ -264,7 +264,7 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 /// triple the engine needs: the volumes stacked in the collection's order as
 /// `[nx,ny,nz,nt]`, the per-volume sidecar `Protocol` (resolved against
 /// `schema`), and the first volume's header for output geometry. `Named`
-/// collections (e.g. qMT-style MTS sets) are a later increment — reordering
+/// collections (e.g. MTsat-style MTS sets) are a later increment — reordering
 /// them to a model's `required` axis order is not yet implemented, so they
 /// bail loudly rather than silently mis-assign volumes.
 ///
@@ -681,7 +681,7 @@ pub fn run_fit_bids(
         };
 
         // Only the expected, structural case is a skip: `Named` collections
-        // (e.g. qMT/MTS-style sets) aren't reorderable to a model's axis order
+        // (e.g. MTsat-style MTS sets) aren't reorderable to a model's axis order
         // yet (see `load_collection`). Anything else `load_collection` (or the
         // model build / run_model_fit / write_derivatives below) reports — a
         // corrupt NIfTI, a spatial-dims mismatch, a broken sidecar — is a real
@@ -1082,9 +1082,11 @@ mod tests {
         );
     }
 
-    /// An all-skipped dataset (every resolved collection is `Named`, e.g. an
-    /// MTS/qmt_spgr set — not yet BIDS-fittable) must exit non-zero, not
-    /// silently report success having fit zero subjects.
+    /// A qmt_spgr-targeted dataset must exit non-zero, not silently report
+    /// success having fit zero subjects. qmt_spgr's BIDS suffix is
+    /// `QMTSPGR`, which has no `rust-bids` set definition yet (that's a
+    /// separate, later increment), so resolution bails before any collection
+    /// is even grouped.
     #[test]
     fn run_fit_bids_bails_when_every_collection_is_skipped() {
         let tmp = TempDir::new("fit-bids-all-named");
@@ -1095,9 +1097,9 @@ mod tests {
         let header = make_minimal_header(1, 1, 1);
         let data = Array3::from_elem((1, 1, 1), 1.0_f64);
         for fname in [
-            "sub-01_flip-1_mt-off_MTS.nii.gz",
-            "sub-01_flip-1_mt-on_MTS.nii.gz",
-            "sub-01_flip-2_mt-off_MTS.nii.gz",
+            "sub-01_flip-1_mt-off_QMTSPGR.nii.gz",
+            "sub-01_flip-1_mt-on_QMTSPGR.nii.gz",
+            "sub-01_flip-2_mt-off_QMTSPGR.nii.gz",
         ] {
             io::nifti::write_3d_nifti(&data, &header, &anat_dir.join(fname)).unwrap();
         }
@@ -1111,12 +1113,14 @@ mod tests {
 
         let out_dir = tmp.0.join("out");
         let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
-            Ok(()) => panic!("an all-Named/all-skipped dataset must bail, not exit Ok"),
+            Ok(()) => {
+                panic!("a QMTSPGR dataset must bail, not exit Ok, until a set definition exists")
+            }
             Err(e) => e,
         };
         assert!(
-            err.to_string().contains("no MTS collections were fit"),
-            "expected the all-skipped bail message, got: {err}"
+            err.to_string().contains("no set definition named QMTSPGR"),
+            "expected the missing-set-definition bail message, got: {err}"
         );
     }
 

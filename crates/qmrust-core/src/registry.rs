@@ -23,7 +23,7 @@ pub fn all() -> &'static [ModelEntry] {
         },
         ModelEntry {
             name: "qmt_spgr",
-            bids_suffix: "MTS",
+            bids_suffix: "QMTSPGR",
             build: models::qmt_spgr::build,
         },
     ]
@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn lookup_by_bids_suffix() {
         assert_eq!(by_bids_suffix("IRT1").unwrap().name, "inversion_recovery");
-        assert_eq!(by_bids_suffix("MTS").unwrap().name, "qmt_spgr");
+        assert_eq!(by_bids_suffix("QMTSPGR").unwrap().name, "qmt_spgr");
     }
 
     #[test]
