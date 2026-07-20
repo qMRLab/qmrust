@@ -10,6 +10,7 @@ pub mod fs;
 pub mod protocol;
 pub mod resolve;
 pub mod scan;
+pub mod sidecar;
 pub mod table;
 
 pub use collection::{Collection, GroupedData, VolumeRef, Warning};
@@ -18,4 +19,5 @@ pub use fs::{DatasetFs, Entry};
 pub use protocol::protocol_for;
 pub use resolve::{collections_for, resolve_set};
 pub use scan::scan_dataset;
+pub use sidecar::{sidecar_for, Sidecar};
 pub use table::{parse_to_table, BidsRow};
