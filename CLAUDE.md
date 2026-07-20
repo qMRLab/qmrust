@@ -55,6 +55,29 @@ asides, no task/plan references. Write for whoever reads this line a year from n
 the *what* and the *why it must be so*, not the story of how it got written. If a comment would
 only make sense to someone who watched it being written, delete it.
 
+## Units — BIDS-native (SI), not qMRLab's
+
+qmrust works natively in **BIDS/SI units end to end — no internal unit conversion** (no
+ms↔s round-tripping). Time (`RepetitionTime`, `EchoTime`, `InversionTime`, and any fitted
+time constant such as T1/T2) is in **seconds**; frequency in **Hz**; magnetic field in
+**tesla**; angle in **radians** in general, *except* BIDS-MRI metadata fields the spec
+defines otherwise — notably **`FlipAngle` in degrees**. Reference:
+https://bids-specification.readthedocs.io/en/stable/appendices/units.html (SI) plus the
+BIDS-MRI common-metadata field definitions.
+
+This is a deliberate divergence from qMRLab (milliseconds/degrees). The consequences are
+intentional, not bugs:
+- Config protocol values, JSON sidecars, and output maps are all in BIDS units (e.g.
+  `InversionTime: 0.35`, a T1 map whose values are seconds).
+- Fitted maps therefore differ from qMRLab's `FitResults` by the unit factor (qMRLab T1 in
+  ms = qmrust T1 in s × 1000). Validation against qMRLab references must **reconcile the
+  unit**, never expect raw equality.
+- Raw signal/voxel **data** is unitless and stays byte-identical to source; only quantitative
+  parameters carry units.
+
+Convert non-BIDS sources (e.g. a qMRLab `.mat` in ms) to BIDS units **at the shell boundary**
+(during `bidsify` / `.mat` load), so `qmrust-core` only ever sees BIDS units.
+
 ## Adding a model (the common task)
 
 1. New dir `crates/qmrust-core/src/models/<name>/`: `config.rs` (a `serde` struct +
