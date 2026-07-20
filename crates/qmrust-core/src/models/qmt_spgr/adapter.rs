@@ -179,16 +179,16 @@ impl Model for QmtModel {
             },
         ]
     }
-    fn bids_outputs(&self) -> Vec<(&'static str, &'static str)> {
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
         // Per qMRLab QMTSPGR convention; `kf` (derived kr*F) and `resnorm`
         // (diagnostic) are omitted.
         vec![
-            ("F", "Fmap"),
-            ("kr", "kRmap"),
-            ("R1f", "R1Fmap"),
-            ("R1r", "R1Rmap"),
-            ("T2f", "T2Fmap"),
-            ("T2r", "T2Rmap"),
+            ("F", "Fmap", ""),
+            ("kr", "kRmap", "1/s"),
+            ("R1f", "R1Fmap", "1/s"),
+            ("R1r", "R1Rmap", "1/s"),
+            ("T2f", "T2Fmap", "s"),
+            ("T2r", "T2Rmap", "s"),
         ]
     }
 }
@@ -295,7 +295,7 @@ mod tests {
     fn bids_outputs_reference_real_output_names() {
         let m = build(&qmt_value(), &Protocol::default()).unwrap();
         let names = m.output_names();
-        for (out, _suffix) in m.bids_outputs() {
+        for (out, _suffix, _units) in m.bids_outputs() {
             assert!(
                 names.iter().any(|n| n == out),
                 "bids_outputs references '{out}', not in output_names {names:?}"

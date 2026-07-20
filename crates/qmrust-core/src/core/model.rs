@@ -286,12 +286,14 @@ pub trait Model: Send + Sync {
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         vec![]
     }
-    /// BIDS output-map declarations: pairs of (an entry in [`Model::output_names`],
-    /// its qMRLab-convention BIDS map suffix, e.g. `("T1", "T1map")`). Invariant:
+    /// BIDS output-map declarations: triples of (an entry in
+    /// [`Model::output_names`], its qMRLab-convention BIDS map suffix, and the
+    /// map's physical unit as a BIDS/SI string, e.g. `("T1", "T1map", "s")`;
+    /// unitless quantities (e.g. a bound-pool fraction) use `""`. Invariant:
     /// only real quantitative maps are listed here — diagnostics (residuals,
-    /// scenario indices, …) are omitted, and every left element must be a
+    /// scenario indices, …) are omitted, and every first element must be a
     /// genuine `output_names()` entry. Empty means "no declared BIDS outputs".
-    fn bids_outputs(&self) -> Vec<(&'static str, &'static str)> {
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
         vec![]
     }
 }

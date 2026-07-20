@@ -114,14 +114,14 @@ impl Model for IrModel {
             scope: Scope::PerVolume,
         }]
     }
-    fn bids_outputs(&self) -> Vec<(&'static str, &'static str)> {
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
         // Only `T1` is a genuine qMRLab-convention quantitative map here: `a`
         // and `b` are the fit's offset/amplitude coefficients, not R1map or
         // M0map values (M0map would require a method-specific combination of
         // `a`/`b` qMRLab doesn't expose as a standalone output either), and
         // `res`/`idx` are diagnostics. Do not add R1map/M0map until the model
         // actually produces them.
-        vec![("T1", "T1map")]
+        vec![("T1", "T1map", "s")]
     }
 }
 
@@ -257,7 +257,7 @@ mod tests {
     fn bids_outputs_reference_real_output_names() {
         let m = build(&ir_value(), &Protocol::default()).unwrap();
         let names = m.output_names();
-        for (out, _suffix) in m.bids_outputs() {
+        for (out, _suffix, _units) in m.bids_outputs() {
             assert!(
                 names.iter().any(|n| n == out),
                 "bids_outputs references '{out}', not in output_names {names:?}"

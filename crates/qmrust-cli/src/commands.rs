@@ -532,10 +532,53 @@ fn fit_and_write(
     Ok(())
 }
 
+/// Compact JSON view of a resolved `Protocol`, faithful to what the fit
+/// actually used: per-volume params grouped into arrays keyed by param name
+/// (e.g. `"InversionTime": [0.35, 0.5, ...]`, one entry per volume, in
+/// acquisition order) plus any collection-wide scalars from `proto.global`.
+fn protocol_to_json(proto: &Protocol) -> serde_json::Value {
+    let mut by_param: std::collections::BTreeMap<&str, Vec<f64>> =
+        std::collections::BTreeMap::new();
+    for volume in &proto.volumes {
+        for (key, value) in volume {
+            by_param.entry(key.as_str()).or_default().push(*value);
+        }
+    }
+    let mut out = serde_json::Map::new();
+    for (key, values) in by_param {
+        out.insert(key.to_string(), serde_json::json!(values));
+    }
+    for (key, value) in &proto.global {
+        out.insert(key.clone(), serde_json::json!(value));
+    }
+    serde_json::Value::Object(out)
+}
+
+/// The input volumes a collection's fit read from, as dataset-relative BIDS
+/// URIs (`bids::<path relative to the dataset root>`). `VolumeRef.nii` is
+/// already dataset-relative under `StdFs`; the `bids_dir` strip is a
+/// defensive fallback for an absolute path.
+fn collection_sources(c: &Collection, bids_dir: &Path) -> Vec<String> {
+    let volumes: Vec<&str> = match &c.data {
+        GroupedData::Sequential(v) => v.iter().map(|r| r.nii.as_str()).collect(),
+        GroupedData::Named(m) => m.values().map(|r| r.nii.as_str()).collect(),
+    };
+    volumes
+        .into_iter()
+        .map(|nii| {
+            let rel = Path::new(nii)
+                .strip_prefix(bids_dir)
+                .unwrap_or(Path::new(nii));
+            format!("bids::{}", rel.display())
+        })
+        .collect()
+}
+
 /// Write `model`'s declared BIDS output maps (`Model::bids_outputs()`) from a
 /// fitted `results` into a BIDS-derivatives tree rooted at `deriv_root`:
 /// `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`
-/// plus a minimal JSON sidecar next to each. Outputs `bids_outputs()` doesn't
+/// plus a full provenance JSON sidecar (`prov.sidecar(units)`) next to each.
+/// Outputs `bids_outputs()` doesn't
 /// declare (diagnostics like `res`/`idx`/`kf`/`resnorm`) are never written —
 /// only real BIDS maps get exported to the derivatives layout. Uses the same
 /// writer `fit_and_write`'s flat output uses (`write_map_nifti` for
@@ -543,6 +586,10 @@ fn fit_and_write(
 /// byte-identical between the flat and derivatives layouts. Also ensures a
 /// `deriv_root/qmrust/dataset_description.json` exists (created once, never
 /// overwritten on subsequent subjects/sessions).
+// One parameter per independent piece of write context (map data, model,
+// BIDS entities, output root, header/source-format, provenance) — a params
+// struct would just relocate the same fields without reducing them.
+#[allow(clippy::too_many_arguments)]
 fn write_derivatives(
     results: &qmrust_core::fitting::FitResults,
     model: &dyn Model,
@@ -551,15 +598,19 @@ fn write_derivatives(
     deriv_root: &Path,
     header: &NiftiHeader,
     from_mat: bool,
+    prov: &crate::provenance::FitProvenance,
 ) -> Result<()> {
     let qmrust_root = deriv_root.join("qmrust");
     std::fs::create_dir_all(&qmrust_root)?;
     let dd_path = qmrust_root.join("dataset_description.json");
     if !dd_path.exists() {
-        std::fs::write(
-            &dd_path,
-            r#"{"Name":"qmrust derivatives","BIDSVersion":"1.8.0","GeneratedBy":[{"Name":"qmrust"}],"DatasetType":"derivative"}"#,
-        )?;
+        let dd = serde_json::json!({
+            "Name": "qmrust derivatives",
+            "BIDSVersion": "1.8.0",
+            "GeneratedBy": [crate::provenance::generated_by()],
+            "DatasetType": "derivative",
+        });
+        std::fs::write(&dd_path, serde_json::to_string_pretty(&dd)?)?;
     }
 
     let subject_dir = match session {
@@ -574,7 +625,7 @@ fn write_derivatives(
         None => subject.to_string(),
     };
 
-    for (output_name, suffix) in model.bids_outputs() {
+    for (output_name, suffix, units) in model.bids_outputs() {
         let Some(map) = results.get(output_name) else {
             continue;
         };
@@ -586,7 +637,10 @@ fn write_derivatives(
             io::nifti::write_3d_nifti(map, header, &nii_path)?;
         }
         let json_path = anat_dir.join(format!("{base}.json"));
-        std::fs::write(&json_path, r#"{"GeneratedBy":[{"Name":"qmrust"}]}"#)?;
+        std::fs::write(
+            &json_path,
+            serde_json::to_string_pretty(&prov.sidecar(units))?,
+        )?;
     }
     Ok(())
 }
@@ -706,7 +760,22 @@ pub fn run_fit_bids(
         let (nx, ny, nz, _) = data.dim();
         let header = header.unwrap_or_else(|| make_minimal_header(nx, ny, nz));
 
+        let executed_at_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let fit_started = std::time::Instant::now();
         let results = run_model_fit(model.as_ref(), &data, &proto, None, &AuxMaps::empty())?;
+        let duration_s = fit_started.elapsed().as_secs_f64();
+
+        let prov = crate::provenance::FitProvenance {
+            model: cfg.model.clone(),
+            config_json: serde_json::to_value(&raw)?,
+            protocol_json: protocol_to_json(&proto),
+            sources: collection_sources(c, &bids_dir),
+            executed_at_unix,
+            duration_s,
+        };
         // `output_dir` is treated as the derivatives root: BIDS output lands
         // at `output_dir/qmrust/<subject>[/<session>]/anat/...` (see
         // `write_derivatives`), not the flat layout `run_fit` uses.
@@ -718,6 +787,7 @@ pub fn run_fit_bids(
             &output_dir,
             &header,
             from_mat,
+            &prov,
         )?;
         fit_count += 1;
     }
@@ -994,6 +1064,14 @@ mod tests {
         results.insert("res".to_string(), Array3::from_elem((1, 1, 1), 0.001));
 
         let header = make_minimal_header(1, 1, 1);
+        let prov = crate::provenance::FitProvenance {
+            model: "inversion_recovery".to_string(),
+            config_json: serde_json::to_value(&raw).unwrap(),
+            protocol_json: serde_json::json!({"InversionTime": [0.35, 0.5, 0.65, 0.8]}),
+            sources: vec!["bids::sub-01/anat/sub-01_inv-1_IRT1.nii.gz".to_string()],
+            executed_at_unix: 1_600_000_000,
+            duration_s: 0.5,
+        };
         write_derivatives(
             &results,
             model.as_ref(),
@@ -1002,16 +1080,23 @@ mod tests {
             &deriv_root,
             &header,
             true,
+            &prov,
         )
         .unwrap();
 
         let anat_dir = deriv_root.join("qmrust").join("sub-01").join("anat");
         let t1_path = anat_dir.join("sub-01_T1map.nii.gz");
         assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
+        let sidecar_path = anat_dir.join("sub-01_T1map.json");
         assert!(
-            anat_dir.join("sub-01_T1map.json").exists(),
+            sidecar_path.exists(),
             "expected a JSON sidecar next to the T1 map"
         );
+        let sidecar: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&sidecar_path).unwrap()).unwrap();
+        assert_eq!(sidecar["GeneratedBy"][0]["Name"], "qmrust");
+        assert_eq!(sidecar["Model"], "inversion_recovery");
+        assert_eq!(sidecar["Units"], "s");
         assert!(
             !anat_dir.join("sub-01_res.nii.gz").exists(),
             "the undeclared diagnostic 'res' output must not be written"

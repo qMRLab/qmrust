@@ -229,28 +229,38 @@ than expecting raw equality. See the "Units — BIDS-native (SI)" principle in
 Resolution (above) is how a dataset becomes a fit; this section is how a fit
 becomes a dataset again, in BIDS-derivatives form.
 
-- **`Model::bids_outputs() -> Vec<(&'static str, &'static str)>`** declares
-  which of a model's `output_names()` are genuine quantitative maps worth
-  exporting in qMRLab's BIDS-derivatives naming, and what suffix each gets.
-  Diagnostics (`res`, `idx`, `resnorm`, …) are omitted — only real maps are
-  listed. IR declares `[("T1", "T1map")]` (its `a`/`b` fit coefficients
-  aren't standalone qMRLab maps, so they're left out; `R1map`/`M0map` would
-  need the model to produce them directly, which it doesn't yet). qMT
-  declares `[("F","Fmap"), ("kr","kRmap"), ("R1f","R1Fmap"),
-  ("R1r","R1Rmap"), ("T2f","T2Fmap"), ("T2r","T2Rmap")]`. Default is `vec![]`
-  — additive, no behaviour change for a model that hasn't declared one.
+- **`Model::bids_outputs() -> Vec<(&'static str, &'static str, &'static str)>`**
+  declares which of a model's `output_names()` are genuine quantitative maps
+  worth exporting in qMRLab's BIDS-derivatives naming, what suffix each gets,
+  and each map's physical unit as a BIDS/SI string (`""` for a unitless
+  quantity). Diagnostics (`res`, `idx`, `resnorm`, …) are omitted — only real
+  maps are listed. IR declares `[("T1", "T1map", "s")]` (its `a`/`b` fit
+  coefficients aren't standalone qMRLab maps, so they're left out;
+  `R1map`/`M0map` would need the model to produce them directly, which it
+  doesn't yet). qMT declares `[("F","Fmap",""), ("kr","kRmap","1/s"),
+  ("R1f","R1Fmap","1/s"), ("R1r","R1Rmap","1/s"), ("T2f","T2Fmap","s"),
+  ("T2r","T2Rmap","s")]`. Default is `vec![]` — additive, no behaviour
+  change for a model that hasn't declared one.
 - **`write_derivatives`** (`qmrust-cli/src/commands.rs`), used by
-  `run_fit_bids`, writes each declared `(output, suffix)` pair present in a
-  fit's `FitResults` to
+  `run_fit_bids`, writes each declared `(output, suffix, units)` triple
+  present in a fit's `FitResults` to
   `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`,
-  plus a minimal JSON sidecar (`{"GeneratedBy":[{"Name":"qmrust"}]}`), and
-  ensures one `deriv_root/qmrust/dataset_description.json`
-  (`DatasetType: derivative`). It reuses the same NIfTI writer flat,
-  non-BIDS output uses (`write_map_nifti` for `.mat`-sourced data,
-  `write_3d_nifti` otherwise), so map values are identical between the flat
-  and derivatives layouts — only the path and file naming differ. Plain
+  plus a full provenance JSON sidecar (`crate::provenance::FitProvenance`,
+  `qmrust-cli/src/provenance.rs`) carrying: software + build environment
+  (version, commit, rustc, target, build profile, OS/arch), the exact input
+  volumes fit from (`Sources`, as dataset-relative `bids::<path>` URIs), the
+  model name, the full resolved config (`Parameters`), the resolved
+  `Protocol` actually used (per-volume params grouped into arrays, plus any
+  global scalars), that map's `Units` (from `bids_outputs()`), a UTC
+  ISO-8601 `DateExecuted`, and `FitDurationSeconds`. It also ensures one
+  `deriv_root/qmrust/dataset_description.json` (`DatasetType: derivative`),
+  whose own `GeneratedBy` carries the same software/commit identity. It
+  reuses the same NIfTI writer flat, non-BIDS output uses
+  (`write_map_nifti` for `.mat`-sourced data, `write_3d_nifti` otherwise),
+  so map values are identical between the flat and derivatives layouts —
+  only the path, file naming, and sidecar content differ. Plain
   `qmrust fit --output-dir` (no `--bids-dir`) keeps its existing flat
-  `output_dir/<map>.nii.gz` layout unchanged.
+  `output_dir/<map>.nii.gz` layout, with no sidecar, unchanged.
 
 ## 7. `qmrust bidsify` — `.mat` → byte-identical BIDS (input provenance)
 

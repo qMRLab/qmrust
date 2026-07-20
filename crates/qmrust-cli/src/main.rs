@@ -10,6 +10,7 @@ mod bidsify;
 mod commands;
 mod io;
 mod progress;
+mod provenance;
 
 #[derive(Parser)]
 #[command(name = "qmrust", version, about = "Quantitative MRI fitting in Rust")]
