@@ -162,24 +162,28 @@ pub struct Vocabulary {
 }
 
 impl Vocabulary {
-    /// Canonical BIDS built-ins only — no custom extensions.
+    /// The built-in vocabulary qmrust knows with no dataset config: canonical
+    /// BIDS terms plus every registered model's BIDS suffix. Registered models
+    /// are a compile-time fact (not configuration), so their suffixes — e.g.
+    /// the custom `QMTSPGR` — are known and `.bidsignore`-exempt by default;
+    /// `from_config` only layers a *dataset's* own declared customs on top.
     pub fn bids() -> Self {
-        Vocabulary {
+        let mut vocab = Vocabulary {
             suffixes: CANONICAL_SUFFIXES.iter().copied().collect(),
             datatypes: CANONICAL_DATATYPES.iter().copied().collect(),
             custom_entities: BTreeMap::new(),
             custom_suffixes: BTreeSet::new(),
-        }
-    }
-
-    /// The canonical vocabulary, extended with every registered model's BIDS
-    /// suffix (so a model is known with no config) plus this dataset's own
-    /// `custom_entities`/`custom_suffixes`.
-    pub fn from_config(cfg: &BidsConfig) -> Self {
-        let mut vocab = Self::bids();
+        };
         for entry in qmrust_core::registry::all() {
             vocab.custom_suffixes.insert(entry.bids_suffix.to_string());
         }
+        vocab
+    }
+
+    /// The built-in vocabulary extended with this dataset's declared
+    /// `custom_entities`/`custom_suffixes`.
+    pub fn from_config(cfg: &BidsConfig) -> Self {
+        let mut vocab = Self::bids();
         for CustomEntity { key, name } in &cfg.custom_entities {
             vocab.custom_entities.insert(key.clone(), name.clone());
         }
@@ -223,22 +227,26 @@ mod tests {
     use crate::config::default_config;
 
     #[test]
-    fn bids_vocabulary_knows_canonical_terms() {
+    fn bids_vocabulary_knows_canonical_and_registered_terms() {
         let v = Vocabulary::bids();
         assert!(v.is_known_suffix("T1map"));
         assert!(v.is_known_suffix("IRT1"));
-        assert!(!v.is_known_suffix("QMTSPGR"));
+        // A canonical suffix is known but not "custom".
+        assert!(!v.is_custom_suffix("T1map"));
+        // Registered model suffixes are built in (compile-time), so known and
+        // custom (hence `.bidsignore`-exempt) with no config.
+        assert!(v.is_known_suffix("QMTSPGR"));
+        assert!(v.is_custom_suffix("QMTSPGR"));
         assert!(v.is_datatype("anat"));
         assert!(v.is_datatype("fmap"));
         assert!(!v.is_datatype("notadatatype"));
     }
 
     #[test]
-    fn from_config_auto_feeds_registered_model_suffixes() {
+    fn from_config_folds_registered_and_declared_customs() {
         let v = Vocabulary::from_config(&default_config());
         assert!(v.is_known_suffix("QMTSPGR"));
         assert!(v.is_custom_suffix("QMTSPGR"));
-        // A canonical suffix is known, but not "custom".
         assert!(!v.is_custom_suffix("T1map"));
     }
 

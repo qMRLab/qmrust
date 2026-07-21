@@ -53,6 +53,24 @@ fn is_image(name: &str) -> bool {
     IMAGE_EXTS.iter().any(|e| name.ends_with(e))
 }
 
+/// Match a `.bidsignore` glob against a path. `*` is a wildcard for any run of
+/// characters; the pattern's literal segments (split on `*`) must appear in
+/// order within the path, so a `*`-free pattern reduces to a substring test.
+/// Minimal by design — only `*` is supported, not `?` or `[…]`.
+fn bidsignore_match(pattern: &str, path: &str) -> bool {
+    let mut cursor = 0;
+    for seg in pattern.split('*') {
+        if seg.is_empty() {
+            continue;
+        }
+        match path[cursor..].find(seg) {
+            Some(pos) => cursor += pos + seg.len(),
+            None => return false,
+        }
+    }
+    true
+}
+
 /// Recursively collect every file path under `dir`.
 fn walk<F: DatasetFs>(fs: &F, dir: &str, out: &mut Vec<String>) -> Result<()> {
     for e in fs.list(dir)? {
@@ -83,14 +101,14 @@ fn datatype_of(path: &str, vocab: &Vocabulary) -> Option<String> {
 }
 
 pub fn parse_to_table<F: DatasetFs>(fs: &F, vocab: &Vocabulary) -> Result<Vec<BidsRow>> {
-    // .bidsignore: newline-separated substrings (minimal glob: `*` = any).
-    // Only a *trailing* `*` is stripped; leading-wildcard lines like `*.log`
-    // are left as-is (and thus effectively inert against the `contains`
-    // check below) — this matches the brief's minimal-glob scope.
+    // .bidsignore: newline-separated gitignore-style globs matched by
+    // `bidsignore_match` — `*` is a wildcard for any run of characters, so
+    // `*QMTSPGR*` matches any path containing "QMTSPGR" and a `*`-free line is
+    // a substring test.
     let ignore: Vec<String> = match fs.read(".bidsignore") {
         Ok(bytes) => String::from_utf8_lossy(&bytes)
             .lines()
-            .map(|l| l.trim().trim_end_matches('*').to_string())
+            .map(|l| l.trim().to_string())
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect(),
         Err(_) => Vec::new(),
@@ -108,7 +126,7 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F, vocab: &Vocabulary) -> Result<Vec<Bi
         parse_filename(file).is_some_and(|parsed| vocab.is_custom_suffix(&parsed.suffix))
     };
     let ignored =
-        |p: &str| !is_custom_suffix(p) && ignore.iter().any(|frag| p.contains(frag.as_str()));
+        |p: &str| !is_custom_suffix(p) && ignore.iter().any(|pat| bidsignore_match(pat, p));
 
     // Index sidecars by directory-qualified stem for pairing, so a raw file
     // never pairs with a same-named sidecar living under a different
@@ -259,6 +277,33 @@ mod tests {
             rows[0].sidecar_path.is_some(),
             "sidecar must also be exempted so pairing still works"
         );
+    }
+
+    #[test]
+    fn bidsignore_match_globs_wildcards_and_substrings() {
+        // Leading/trailing `*` — the QMTSPGR case that a trailing-only strip
+        // would miss.
+        assert!(bidsignore_match(
+            "*QMTSPGR*",
+            "sub-02/anat/sub-02_flip-1_mt-1_QMTSPGR.nii.gz"
+        ));
+        // Interior `*` anchors segments in order.
+        assert!(bidsignore_match(
+            "derivatives/*",
+            "derivatives/tool/sub-01/anat/sub-01_T1map.nii.gz"
+        ));
+        assert!(bidsignore_match("*.log", "code/run.log"));
+        // A `*`-free pattern is a plain substring test.
+        assert!(bidsignore_match("code/x.log", "a/code/x.log"));
+        // Non-matches.
+        assert!(!bidsignore_match(
+            "*QMTSPGR*",
+            "sub-01/anat/sub-01_T1w.nii.gz"
+        ));
+        assert!(!bidsignore_match(
+            "derivatives/*",
+            "sub-01/anat/sub-01_T1w.nii.gz"
+        ));
     }
 
     #[test]
