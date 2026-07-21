@@ -22,7 +22,10 @@ a browser (WebAssembly).
 - `crates/rust-bids` — **wasm-clean, standalone qMRI-BIDS layout resolver**: flat-table
   parse → declarative grouping (`BidsConfig`) → `Collection`, with all I/O behind the
   `DatasetFs` trait; bridges a collection's sidecars to `qmrust_core::Protocol`. A consumer
-  of core, not part of it (and generalizable beyond this workspace).
+  of core, not part of it (and generalizable beyond this workspace). The flat-table parse
+  reads against a `Vocabulary` of canonical BIDS entities/suffixes/datatypes; non-standard
+  entities/suffixes are declared via `BidsConfig.custom_entities`/`custom_suffixes`, and
+  every registered model's BIDS suffix is auto-known with no config (`Vocabulary::from_config`).
 
 ## The one rule that must never break
 

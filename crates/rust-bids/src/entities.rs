@@ -11,16 +11,46 @@ pub struct ParsedName {
     pub extension: String,
 }
 
-/// The single source of truth for BIDS entity short↔full aliases: `(short, full)`.
-/// Entities not listed here (run, task, flip, echo, part, ...) are already the
-/// same in both forms.
+/// The single source of truth for BIDS entity short↔full aliases: `(short, full)`,
+/// transcribed verbatim from the canonical BIDS entity table (all 35 defined
+/// entity keys, including the ones where short and full forms coincide, so the
+/// set of *known* entity keys is complete).
 pub(crate) const ENTITY_ALIASES: &[(&str, &str)] = &[
     ("sub", "subject"),
+    ("tpl", "template"),
     ("ses", "session"),
+    ("cohort", "cohort"),
+    ("sample", "sample"),
+    ("task", "task"),
+    ("tracksys", "tracksys"),
     ("acq", "acquisition"),
+    ("nuc", "nucleus"),
+    ("voi", "volume"),
+    ("ce", "ceagent"),
+    ("trc", "tracer"),
+    ("stain", "stain"),
+    ("rec", "reconstruction"),
+    ("dir", "direction"),
+    ("run", "run"),
+    ("mod", "modality"),
+    ("echo", "echo"),
+    ("flip", "flip"),
     ("inv", "inversion"),
     ("mt", "mtransfer"),
-    ("dir", "direction"),
+    ("part", "part"),
+    ("proc", "processing"),
+    ("hemi", "hemisphere"),
+    ("space", "space"),
+    ("split", "split"),
+    ("recording", "recording"),
+    ("chunk", "chunk"),
+    ("atlas", "atlas"),
+    ("seg", "segmentation"),
+    ("scale", "scale"),
+    ("res", "resolution"),
+    ("den", "density"),
+    ("label", "label"),
+    ("desc", "description"),
 ];
 
 /// Map a BIDS short entity key to its full name (identity if not aliased).
@@ -90,6 +120,14 @@ mod tests {
         assert_eq!(p.suffix, "MTS");
         assert_eq!(p.entities.get("flip").unwrap(), "1");
         assert_eq!(p.entities.get("mtransfer").unwrap(), "off");
+    }
+
+    #[test]
+    fn normalizes_newly_covered_entity_keys() {
+        assert_eq!(full_key("ce"), "ceagent");
+        assert_eq!(full_key("rec"), "reconstruction");
+        assert_eq!(full_key("desc"), "description");
+        assert_eq!(full_key("res"), "resolution");
     }
 
     #[test]

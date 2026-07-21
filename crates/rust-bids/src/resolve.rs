@@ -5,6 +5,7 @@ use crate::collection::{Collection, GroupedData, VolumeRef, Warning};
 use crate::config::{BidsConfig, SetDef};
 use crate::fs::DatasetFs;
 use crate::table::{parse_to_table, BidsRow};
+use crate::vocab::Vocabulary;
 use anyhow::{anyhow, Result};
 use std::collections::BTreeMap;
 
@@ -173,7 +174,8 @@ pub fn collections_for<F: DatasetFs>(
     cfg: &BidsConfig,
     suffix: &str,
 ) -> Result<Vec<Collection>> {
-    let table = parse_to_table(fs)?;
+    let vocab = Vocabulary::from_config(cfg);
+    let table = parse_to_table(fs, &vocab)?;
     resolve_set(&table, cfg, suffix)
 }
 

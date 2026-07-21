@@ -3,6 +3,7 @@
 
 use crate::entities::parse_filename;
 use crate::fs::DatasetFs;
+use crate::vocab::Vocabulary;
 use anyhow::Result;
 use std::collections::BTreeMap;
 
@@ -69,14 +70,19 @@ fn walk<F: DatasetFs>(fs: &F, dir: &str, out: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
-/// The datatype directory is the immediate parent folder (anat/fmap/dwi/...).
-fn datatype_of(path: &str) -> Option<String> {
+/// The datatype directory is the immediate parent folder (anat/fmap/dwi/...),
+/// but only counts as a datatype when it's one of the 16 canonical BIDS
+/// datatype names — a file directly under a non-datatype folder has no
+/// datatype.
+fn datatype_of(path: &str, vocab: &Vocabulary) -> Option<String> {
     let mut segs: Vec<&str> = path.split('/').collect();
     segs.pop(); // filename
-    segs.pop().map(|s| s.to_string())
+    segs.pop()
+        .filter(|parent| vocab.is_datatype(parent))
+        .map(|s| s.to_string())
 }
 
-pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
+pub fn parse_to_table<F: DatasetFs>(fs: &F, vocab: &Vocabulary) -> Result<Vec<BidsRow>> {
     // .bidsignore: newline-separated substrings (minimal glob: `*` = any).
     // Only a *trailing* `*` is stripped; leading-wildcard lines like `*.log`
     // are left as-is (and thus effectively inert against the `contains`
@@ -92,17 +98,17 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
 
     let mut all = Vec::new();
     walk(fs, "", &mut all)?;
-    // A path whose filename parses to a *registered model suffix* is exempt
-    // from `.bidsignore`: custom (non-standard-BIDS) suffixes like QMTSPGR are
-    // deliberately `.bidsignore`'d so generic BIDS validators don't choke on
-    // them, but they must still be discoverable by qmrust itself.
-    let is_registered_suffix = |p: &str| {
+    // A path whose filename parses to a *custom* suffix (registered model or
+    // config-declared) is exempt from `.bidsignore`: custom (non-standard-BIDS)
+    // suffixes like QMTSPGR are deliberately `.bidsignore`'d so generic BIDS
+    // validators don't choke on them, but they must still be discoverable by
+    // qmrust itself. Canonical BIDS suffixes are never force-exempted.
+    let is_custom_suffix = |p: &str| {
         let file = p.rsplit('/').next().unwrap_or(p);
-        parse_filename(file)
-            .is_some_and(|parsed| qmrust_core::registry::by_bids_suffix(&parsed.suffix).is_some())
+        parse_filename(file).is_some_and(|parsed| vocab.is_custom_suffix(&parsed.suffix))
     };
     let ignored =
-        |p: &str| !is_registered_suffix(p) && ignore.iter().any(|frag| p.contains(frag.as_str()));
+        |p: &str| !is_custom_suffix(p) && ignore.iter().any(|frag| p.contains(frag.as_str()));
 
     // Index sidecars by directory-qualified stem for pairing, so a raw file
     // never pairs with a same-named sidecar living under a different
@@ -119,13 +125,20 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
         let Some(parsed) = parse_filename(file) else {
             continue;
         };
+        // Canonical entity keys are already normalized by `parse_filename`;
+        // this catches config-declared custom entity keys it left untouched.
+        let entities: BTreeMap<String, String> = parsed
+            .entities
+            .into_iter()
+            .map(|(k, v)| (vocab.normalize_entity_key(&k), v))
+            .collect();
         rows.push(BidsRow {
             path: path.clone(),
             derivatives: derivatives_of(path),
-            datatype: datatype_of(path),
+            datatype: datatype_of(path, vocab),
             suffix: parsed.suffix,
             extension: parsed.extension,
-            entities: parsed.entities,
+            entities,
             sidecar_path: json_by_stem.get(path_stem(path)).map(|p| (*p).clone()),
         });
     }
@@ -182,7 +195,7 @@ mod tests {
                     format!("{{\"InversionTime\": {}}}", i * 100),
                 );
         }
-        let rows = parse_to_table(&fs).unwrap();
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|r| r.suffix == "IRT1"));
         assert!(rows.iter().all(|r| r.sidecar_path.is_some()));
@@ -205,7 +218,7 @@ mod tests {
                 "derivatives/toolX/sub-01/anat/sub-01_inv-01_IRT1.json",
                 b"{\"InversionTime\": 999}".to_vec(),
             );
-        let rows = parse_to_table(&fs).unwrap();
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(
             rows[0].sidecar_path.as_deref(),
@@ -219,7 +232,7 @@ mod tests {
             .touch("sub-01/anat/sub-01_inv-01_IRT1.nii.gz")
             .touch("derivatives/tool/sub-01/anat/sub-01_T1map.nii.gz")
             .with(".bidsignore", b"derivatives/*".to_vec());
-        let rows = parse_to_table(&fs).unwrap();
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].suffix, "IRT1");
     }
@@ -239,7 +252,7 @@ mod tests {
             // and IS covered by a `.bidsignore` line — must stay excluded.
             .touch("derivatives/tool/sub-02/anat/sub-02_NOTREG.nii.gz")
             .with(".bidsignore", b"*QMTSPGR*\nderivatives/*".to_vec());
-        let rows = parse_to_table(&fs).unwrap();
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
         assert_eq!(rows.len(), 1, "only the QMTSPGR volume should surface");
         assert_eq!(rows[0].suffix, "QMTSPGR");
         assert!(
@@ -256,7 +269,7 @@ mod tests {
             .touch("derivatives/preprocessed/sub-02/fmap/sub-02_B0map.nii.gz")
             .touch("derivatives/preprocessed/sub-02/anat/sub-02_R1map.nii.gz")
             .with(".bidsignore", b"*QMTSPGR*".to_vec());
-        let rows = parse_to_table(&fs).unwrap();
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
 
         let by_suffix = |s: &str| rows.iter().find(|r| r.suffix == s).unwrap();
         // Raw acquisition: no pipeline.
@@ -277,7 +290,7 @@ mod tests {
             .touch("derivatives/preprocessed/sub-02/ses-1/fmap/sub-02_ses-1_run-1_TB1map.nii.gz")
             .touch("derivatives/preprocessed/sub-02/ses-2/fmap/sub-02_ses-2_run-1_TB1map.nii.gz")
             .with(".bidsignore", b"*QMTSPGR*".to_vec());
-        let rows = parse_to_table(&fs).unwrap();
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
 
         // Identity that spans several entities plus a structural column pins
         // exactly one file — the ses-1 B1 map, not the ses-2 one.
@@ -303,5 +316,53 @@ mod tests {
         // No constraints → everything; a missing-column constraint → nothing.
         assert_eq!(table_filter(&rows, &[]).len(), rows.len());
         assert!(table_filter(&rows, &[("subject", "99")]).is_empty());
+    }
+
+    #[test]
+    fn config_custom_suffix_is_discoverable_despite_bidsignore() {
+        let cfg = crate::config::parse_config(
+            r#"
+loop_over: [subject, session, run, task]
+custom_suffixes: [MYSUFFIX]
+"#,
+        )
+        .unwrap();
+        let vocab = Vocabulary::from_config(&cfg);
+        let fs = MemFs::new()
+            .touch("sub-01/anat/sub-01_MYSUFFIX.nii.gz")
+            .with(".bidsignore", b"*MYSUFFIX*".to_vec());
+        let rows = parse_to_table(&fs, &vocab).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].suffix, "MYSUFFIX");
+    }
+
+    #[test]
+    fn custom_entity_key_is_normalized_to_its_declared_name() {
+        let cfg = crate::config::parse_config(
+            r#"
+loop_over: [subject, session, run, task]
+custom_entities:
+  - key: myent
+    name: myentity
+"#,
+        )
+        .unwrap();
+        let vocab = Vocabulary::from_config(&cfg);
+        let fs = MemFs::new().touch("sub-01/anat/sub-01_myent-3_T1w.nii.gz");
+        let rows = parse_to_table(&fs, &vocab).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].entities.get("myentity").map(String::as_str),
+            Some("3")
+        );
+        assert!(!rows[0].entities.contains_key("myent"));
+    }
+
+    #[test]
+    fn file_under_non_datatype_dir_has_no_datatype() {
+        let fs = MemFs::new().touch("sub-01/notadatatype/sub-01_T1w.nii.gz");
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].datatype, None);
     }
 }

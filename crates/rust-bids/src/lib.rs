@@ -12,12 +12,14 @@ pub mod resolve;
 pub mod scan;
 pub mod sidecar;
 pub mod table;
+pub mod vocab;
 
 pub use collection::{Collection, GroupedData, VolumeRef, Warning};
-pub use config::{default_config, parse_config, BidsConfig, SetDef};
+pub use config::{default_config, parse_config, BidsConfig, CustomEntity, SetDef};
 pub use fs::{DatasetFs, Entry};
 pub use protocol::resolve_protocol;
 pub use resolve::{collections_for, resolve_set};
 pub use scan::scan_dataset;
 pub use sidecar::{sidecar_for, Sidecar};
 pub use table::{parse_to_table, row_column, table_filter, BidsRow};
+pub use vocab::Vocabulary;

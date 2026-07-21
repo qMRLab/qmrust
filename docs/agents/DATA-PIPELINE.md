@@ -53,8 +53,9 @@ fit.
   multi-model "what can I fit in this dataset" entry point (e.g. for a future
   dataset browser).
 - **`collections_for(fs, cfg, suffix)`** (used by `run_fit_bids` for a single,
-  already-chosen model) parses the dataset into flat rows (`table::parse_to_table`)
-  and groups them (`resolve::resolve_set`) per a declarative grouping grammar,
+  already-chosen model) builds a `Vocabulary` from `cfg` (`Vocabulary::from_config`)
+  and parses the dataset into flat rows (`table::parse_to_table(fs, &vocab)`),
+  then groups them (`resolve::resolve_set`) per a declarative grouping grammar,
   `BidsConfig`: `Sequential` sets (ordered by an entity, e.g. IRT1's `inv-`
   index, or qmt_spgr's custom `QMTSPGR` suffix ordered `by: [mt, flip]`),
   `Named` sets (fixed named slots matched by entity constraints, e.g. MTS's
@@ -66,6 +67,20 @@ fit.
   is permissive-but-loud: a missing required member drops the collection, a
   missing non-required one attaches a `Warning` to the `Collection` rather
   than panicking.
+- **`vocab::Vocabulary`** is the known-terms vocabulary `parse_to_table` reads
+  the file tree against: canonical BIDS entities (`entities::ENTITY_ALIASES`,
+  35 pairs), suffixes (~130), and datatypes (16), transcribed verbatim from
+  the BIDS specification, plus configurable extensions. `Vocabulary::bids()`
+  is canonical-only; `Vocabulary::from_config(cfg)` additionally folds in
+  every `qmrust_core::registry::all()` entry's `bids_suffix` (so a registered
+  model, e.g. `QMTSPGR`, is known with **no** config) and `cfg`'s own
+  `custom_entities` (short key → full name) / `custom_suffixes`. A suffix the
+  vocabulary doesn't recognize is still included in the table — never
+  dropped — but `run_fit_bids` warns about it (permissive-but-loud, matching
+  the grouping philosophy above); a file's `datatype` is `None` unless its
+  parent directory is one of the 16 canonical datatype names; and only a
+  *custom* suffix (registered or config-declared) is exempted from
+  `.bidsignore` — canonical BIDS suffixes still respect it.
 - **`Collection` / `GroupedData`** — the resolved output: subject/session/
   run/task identity plus `GroupedData::Sequential(Vec<VolumeRef>)` or
   `GroupedData::Named(BTreeMap<String, VolumeRef>)`, each `VolumeRef` pairing

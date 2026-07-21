@@ -5,6 +5,7 @@ use rust_bids::config::default_config;
 use rust_bids::fs::MemFs;
 use rust_bids::resolve::resolve_set;
 use rust_bids::table::parse_to_table;
+use rust_bids::vocab::Vocabulary;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -42,7 +43,7 @@ fn assert_matches_golden(dir: &str, suffix: &str) {
         }
         let golden: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         let memfs = memfs_from_golden(&golden);
-        let table = parse_to_table(&memfs).unwrap();
+        let table = parse_to_table(&memfs, &Vocabulary::from_config(&default_config())).unwrap();
         let cols = resolve_set(&table, &default_config(), suffix).unwrap();
 
         // The golden file is one loop_over unit; find our matching collection.

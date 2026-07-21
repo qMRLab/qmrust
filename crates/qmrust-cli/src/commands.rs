@@ -695,11 +695,20 @@ pub fn run_fit_bids(
         root: bids_dir.clone(),
     };
     let bids_cfg = rust_bids::default_config();
+    let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
     let suffix = entry.bids_suffix;
     // The flat file table spans the whole dataset — raw tree and every
     // `derivatives/` pipeline — and is the single source from which each
     // collection's auxiliary inputs (B1/B0/R1, mask) are located by suffix.
-    let table = rust_bids::parse_to_table(&fs)?;
+    let table = rust_bids::parse_to_table(&fs, &vocab)?;
+    for unknown in table
+        .iter()
+        .map(|r| r.suffix.as_str())
+        .filter(|s| !vocab.is_known_suffix(s))
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        eprintln!("warning (vocabulary): unrecognized suffix '{unknown}' — not a canonical BIDS suffix, registered model, or declared custom suffix");
+    }
     let collections = rust_bids::collections_for(&fs, &bids_cfg, suffix)?;
 
     if collections.is_empty() {
