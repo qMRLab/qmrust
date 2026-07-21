@@ -223,12 +223,12 @@ way to arrive at a `Protocol` and an ordered volume set; a `.mat` file
 - **CLI, `qmrust fit --bids-dir <dir>`** — today's feeder. Builds a native
   `StdFs`, groups the dataset via `rust_bids::collections_for` keyed on the
   chosen model's registry `bids_suffix`, and for each collection calls
-  `load_collection` (reads the NIfTI volumes + calls `resolve_protocol`) then
-  `fit_and_write` (`build_volume_ids` → `engine::run` → NIfTI output). v1
-  scope: `Sequential` collections and models with no *required* aux input —
-  a model that declares required aux is rejected up front with a clear
-  error, not a silent skip; `Named` collections are logged and skipped for
-  now (`commands.rs::run_fit_bids`/`load_collection`).
+  `load_collection` (reads the NIfTI volumes + calls `resolve_protocol`),
+  `resolve_aux_and_mask` (§1) to fill any `required_inputs()` and the
+  configured mask, then `fit_and_write` (`build_volume_ids` → `engine::run` →
+  NIfTI output). v1 scope: `Sequential` collections only — `Named`
+  collections are logged and skipped for now (`commands.rs::run_fit_bids`/
+  `load_collection`).
 - **Browser/Tauri (future)** — same `DatasetFs` seam, a different
   implementation backed by JS directory listings instead of `std::fs`; no
   change to `rust-bids`'s resolution or protocol logic.
@@ -257,11 +257,6 @@ than expecting raw equality. See the "Units — BIDS-native (SI)" principle in
 
 - Fitting `Named` collections, and mapping qMT/MP2RAGE-style protocols onto
   them (today only `Sequential` collections drive a real fit).
-- Resolving BIDS-side auxiliary maps (B1/B0/R1) so aux-dependent models can
-  fit straight from a BIDS dataset (`run_fit_bids` currently rejects any
-  model with a required aux input, and doesn't yet resolve a BIDS mask
-  either — it fits every nonzero voxel rather than a `derivatives/`-supplied
-  mask region).
 - A real multi-field `Source::Derived` model (e.g. MP2RAGE) — the mechanism
   is proven today only by IR's single-field `InversionTime` schema and a
   stub `Derived` test.
