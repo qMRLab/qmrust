@@ -11,11 +11,27 @@ const IMAGE_EXTS: [&str; 2] = [".nii", ".nii.gz"];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BidsRow {
     pub path: String,
+    /// The derivatives pipeline this file belongs to (the first path segment
+    /// after `derivatives/`), or `None` for a file in the raw tree. Lets a
+    /// query select "everything for subject X, raw or derivative" and know
+    /// which pipeline each row came from.
+    pub derivatives: Option<String>,
     pub datatype: Option<String>,
     pub suffix: String,
     pub extension: String,
     pub entities: BTreeMap<String, String>,
     pub sidecar_path: Option<String>,
+}
+
+/// The derivatives pipeline name for a path: the segment immediately after a
+/// `derivatives/` segment (`derivatives/<pipeline>/...`), or `None` when the
+/// path is not under a `derivatives/` tree.
+fn derivatives_of(path: &str) -> Option<String> {
+    let segs: Vec<&str> = path.split('/').collect();
+    segs.iter()
+        .position(|&s| s == "derivatives")
+        .and_then(|i| segs.get(i + 1))
+        .map(|s| s.to_string())
 }
 
 /// Directory-qualified stem: the full path with its known extension removed
@@ -105,6 +121,7 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
         };
         rows.push(BidsRow {
             path: path.clone(),
+            derivatives: derivatives_of(path),
             datatype: datatype_of(path),
             suffix: parsed.suffix,
             extension: parsed.extension,
@@ -196,5 +213,27 @@ mod tests {
             rows[0].sidecar_path.is_some(),
             "sidecar must also be exempted so pairing still works"
         );
+    }
+
+    #[test]
+    fn derivatives_column_records_pipeline_and_is_none_for_raw() {
+        let fs = MemFs::new()
+            .touch("sub-02/anat/sub-02_flip-1_mt-1_QMTSPGR.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/fmap/sub-02_TB1map.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/fmap/sub-02_B0map.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/anat/sub-02_R1map.nii.gz")
+            .with(".bidsignore", b"*QMTSPGR*".to_vec());
+        let rows = parse_to_table(&fs).unwrap();
+
+        let by_suffix = |s: &str| rows.iter().find(|r| r.suffix == s).unwrap();
+        // Raw acquisition: no pipeline.
+        assert_eq!(by_suffix("QMTSPGR").derivatives, None);
+        // Every preprocessed input carries the pipeline name, so a subject
+        // query can locate aux maps across the raw/derivative boundary.
+        for suffix in ["TB1map", "B0map", "R1map"] {
+            let row = by_suffix(suffix);
+            assert_eq!(row.derivatives.as_deref(), Some("preprocessed"));
+            assert_eq!(row.entities.get("subject").map(String::as_str), Some("02"));
+        }
     }
 }
