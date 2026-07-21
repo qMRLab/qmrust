@@ -7,11 +7,13 @@ use crate::models;
 use anyhow::Result;
 
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
+pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
 
 pub struct ModelEntry {
     pub name: &'static str,
     pub bids_suffix: &'static str,
     pub build: Builder,
+    pub describe: Describer,
 }
 
 pub fn all() -> &'static [ModelEntry] {
@@ -20,11 +22,13 @@ pub fn all() -> &'static [ModelEntry] {
             name: "inversion_recovery",
             bids_suffix: "IRT1",
             build: models::inversion_recovery::build,
+            describe: models::inversion_recovery::describe,
         },
         ModelEntry {
             name: "qmt_spgr",
             bids_suffix: "QMTSPGR",
             build: models::qmt_spgr::build,
+            describe: models::qmt_spgr::describe,
         },
     ]
 }

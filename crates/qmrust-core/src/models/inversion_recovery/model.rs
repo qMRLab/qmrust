@@ -125,10 +125,21 @@ impl Model for IrModel {
     }
 }
 
-/// Registry builder: parse `IrConfig` from the raw YAML tree, apply any
-/// protocol override (e.g. `.mat` TI values), validate, and box the model.
+/// Parse the config and run config-intrinsic validation, without composing or
+/// validating a protocol. Used to read the model's structural declarations
+/// (`protocol_schema`, `bids_outputs`, `required_inputs`) before a protocol
+/// exists. Not fit-ready.
+pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+    let cfg: IrConfig = serde_yaml::from_value(v.clone())?;
+    cfg.validate_options()?;
+    Ok(Box::new(IrModel::new(cfg)))
+}
+
+/// Registry builder: parse config, apply any protocol override (BIDS sidecars
+/// or `.mat` TIs), validate the finalized protocol, and box a fit-ready model.
 pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
     let mut cfg: IrConfig = serde_yaml::from_value(v.clone())?;
+    cfg.validate_options()?;
     if !proto.volumes.is_empty() {
         let tis: Vec<f64> = proto
             .volumes
@@ -139,7 +150,7 @@ pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> 
             cfg.inversion_times = tis;
         }
     }
-    cfg.validate()?;
+    cfg.validate_protocol()?;
     let model = IrModel::new(cfg);
     validate_against_protocol(&model.measurement(), proto)
         .context("inversion_recovery: protocol inconsistent with model's measurement")?;
@@ -273,5 +284,22 @@ mod tests {
         assert_eq!(schema[0].name, "InversionTime");
         assert!(matches!(schema[0].source, Source::Field("InversionTime")));
         assert!(matches!(schema[0].scope, Scope::PerVolume));
+    }
+
+    #[test]
+    fn describe_succeeds_without_inversion_times_and_exposes_schema() {
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: inversion_recovery\nmethod: magnitude\n").unwrap();
+        let m = super::describe(&v).unwrap(); // no inversion_times → still OK
+        assert_eq!(m.protocol_schema()[0].name, "InversionTime");
+    }
+
+    #[test]
+    fn build_still_requires_three_times_when_protocol_empty() {
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: inversion_recovery\nmethod: magnitude\ninversion_times: [0.35, 0.50]\n",
+        )
+        .unwrap();
+        assert!(super::build(&v, &Protocol::default()).is_err()); // only 2 TIs, no sidecars
     }
 }

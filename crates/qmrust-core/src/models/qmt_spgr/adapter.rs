@@ -209,6 +209,12 @@ pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> 
     Ok(Box::new(model))
 }
 
+/// qMT reads its acquisition protocol from `--config`, so describing it is the
+/// same as building against an empty protocol.
+pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+    build(v, &Protocol::default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

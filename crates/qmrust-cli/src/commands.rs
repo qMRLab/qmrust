@@ -102,7 +102,8 @@ pub fn run_dump_config(config_path: PathBuf) -> Result<()> {
             // rather than echoing the raw file verbatim.
             let mut ir: qmrust_core::models::inversion_recovery::config::IrConfig =
                 serde_yaml::from_value(raw.clone())?;
-            ir.validate()?;
+            ir.validate_options()?;
+            ir.validate_protocol()?;
             println!("model: inversion_recovery");
             print!("{}", serde_yaml::to_string(&ir)?);
         }
