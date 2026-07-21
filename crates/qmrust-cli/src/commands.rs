@@ -1204,29 +1204,35 @@ mod tests {
         );
     }
 
-    /// A `--grouping` manifest overriding the built-in default is honored:
-    /// the same synthetic IRT1 dataset still resolves into one collection
-    /// and fits to the known T1, proving `run_fit_bids` loads and applies
-    /// the custom manifest rather than always falling back to
-    /// `rust_bids::default_config()`.
+    /// A `--grouping` manifest overriding the built-in default is actually
+    /// threaded into collection resolution — not read and then ignored in
+    /// favor of `rust_bids::default_config()`. Proven by contrast: the same
+    /// synthetic IRT1 dataset that resolves and fits under the default
+    /// grouping (`run_fit_bids_recovers_t1_from_a_synthetic_dataset`) fails
+    /// to resolve any `IRT1` collection under a custom manifest that omits
+    /// the `IRT1` set entirely. A regression that silently discarded the
+    /// custom grouping and fell back to the default would still resolve and
+    /// fit here, so this would catch it where the old (grouping-content-
+    /// insensitive) version of this test could not.
     #[test]
-    fn run_fit_bids_accepts_custom_grouping_file() {
+    fn run_fit_bids_custom_grouping_changes_resolution() {
         let (bids_dir, config_path, out_dir, tmp) = synthetic_ir_dataset();
         let grouping = tmp.0.join("grouping.yaml");
-        std::fs::write(
-            &grouping,
-            "loop_over: [sub, ses, run, task]\nIRT1:\n  sequential_set:\n    by: [inv]\n",
-        )
-        .unwrap();
+        // No `IRT1` set declared, so the config's inversion_recovery model
+        // must find zero matching collections under this grouping.
+        std::fs::write(&grouping, "loop_over: [sub, ses, run, task]\n").unwrap();
 
-        run_fit_bids(bids_dir, config_path, out_dir.clone(), None, Some(grouping)).unwrap();
-
-        let t1_path = out_dir
-            .join("qmrust")
-            .join("sub-01")
-            .join("anat")
-            .join("sub-01_T1map.nii.gz");
-        assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None, Some(grouping)) {
+            Ok(()) => panic!(
+                "a grouping manifest without an IRT1 set must fail to resolve any \
+                 collections, not silently succeed via the default grouping"
+            ),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("no set definition named IRT1"),
+            "expected a missing-IRT1-set error, got: {err}"
+        );
     }
 
     /// `write_derivatives` in isolation: given a fitted `FitResults` with a
