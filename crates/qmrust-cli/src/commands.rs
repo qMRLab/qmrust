@@ -680,10 +680,9 @@ pub fn run_fit_bids(
         )
     })?;
 
-    // Probe the model's shape (declared aux, series identity keys) against an
-    // empty protocol — these are structural and don't depend on any one
-    // collection's resolved sidecar values.
-    let probe = (entry.build)(&raw, &Protocol::default())?;
+    // Read the model's structural declarations (protocol schema, declared aux)
+    // before composing any collection's protocol from its sidecars.
+    let probe = (entry.describe)(&raw)?;
     // Declarative BIDS metadata -> protocol mapping. Empty for a model that
     // declares no `protocol_schema()`; `load_collection` then resolves into an
     // empty `Protocol` and the model reads its protocol from `--config`.
@@ -1202,6 +1201,35 @@ mod tests {
         assert!(
             dataset_description.exists(),
             "expected qmrust/dataset_description.json to exist"
+        );
+    }
+
+    /// A `--config` YAML that omits `inversion_times` entirely still fits:
+    /// the BIDS shell reads the model's structural declarations via
+    /// `entry.describe` (not a `build` against an empty `Protocol`, which
+    /// would bail on the missing inversion times), then resolves
+    /// `InversionTime` per volume from the sidecars via `protocol_schema()`.
+    #[test]
+    fn run_fit_bids_omits_inversion_times_uses_sidecars() {
+        let t1 = 0.9_f64;
+        let (bids_dir, _config_path, out_dir, tmp) = synthetic_ir_dataset();
+        let config_path = tmp.0.join("ir_no_tis.yaml");
+        std::fs::write(&config_path, "model: inversion_recovery\nmethod: complex\n").unwrap();
+
+        run_fit_bids(bids_dir, config_path, out_dir.clone(), None, None).unwrap();
+
+        let t1_path = out_dir
+            .join("qmrust")
+            .join("sub-01")
+            .join("anat")
+            .join("sub-01_T1map.nii.gz");
+        assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
+        let t1_map = io::nifti::read_map_nifti(&t1_path).unwrap();
+        assert!(
+            (t1_map[[0, 0, 0]] - t1).abs() < 0.001,
+            "T1: {} (expected ~{})",
+            t1_map[[0, 0, 0]],
+            t1
         );
     }
 
