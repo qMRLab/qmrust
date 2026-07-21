@@ -63,6 +63,15 @@ pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result
     let mut out = Vec::new();
     for (key, members) in by_group {
         let (subject, session, run, task) = key_fields(&key, &cfg.loop_over);
+        // The full grouping identity: every present loop_over entity as a bare
+        // value. Drives auxiliary-input resolution generically (any entity the
+        // dataset groups by, not only the four named convenience fields).
+        let entities: BTreeMap<String, String> = cfg
+            .loop_over
+            .iter()
+            .zip(key.iter())
+            .filter_map(|(name, val)| val.clone().map(|v| (name.clone(), v)))
+            .collect();
         let (data, warnings) = match def {
             SetDef::Sequential(seq) => {
                 let mut sorted: Vec<&BidsRow> = members.clone();
@@ -107,6 +116,7 @@ pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result
             session,
             run,
             task,
+            entities,
             suffix: set_name.to_string(),
             data,
             warnings,
@@ -128,7 +138,7 @@ fn resolve_named(
             .filter(|r| {
                 constraints
                     .iter()
-                    .all(|(k, v)| r.entities.get(k).map(|rv| rv == v).unwrap_or(false))
+                    .all(|(k, v)| crate::table::row_column(r, k) == Some(v.as_str()))
             })
             .collect();
         match matched.as_slice() {

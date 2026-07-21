@@ -20,4 +20,4 @@ pub use protocol::resolve_protocol;
 pub use resolve::{collections_for, resolve_set};
 pub use scan::scan_dataset;
 pub use sidecar::{sidecar_for, Sidecar};
-pub use table::{aux_row, parse_to_table, BidsRow};
+pub use table::{parse_to_table, row_column, table_filter, BidsRow};

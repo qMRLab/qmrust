@@ -750,13 +750,8 @@ pub fn run_fit_bids(
         let (nx, ny, nz, _) = data.dim();
         let header = header.unwrap_or_else(|| make_minimal_header(nx, ny, nz));
 
-        let (aux, mask, aux_sources) = resolve_aux_and_mask(
-            &table,
-            model.as_ref(),
-            &c.subject,
-            c.session.as_deref(),
-            &bids_dir,
-        )?;
+        let (aux, mask, aux_sources) =
+            resolve_aux_and_mask(&table, model.as_ref(), &c.entities, &bids_dir)?;
         for src in &aux_sources {
             eprintln!("  input: {src}");
         }
@@ -808,25 +803,56 @@ pub fn run_fit_bids(
     Ok(())
 }
 
+/// Locate a single input file for a collection by matching its full grouping
+/// `identity` (every entity the dataset groups by) plus `extra` constraints
+/// (the declared BIDS suffix, and any entity the model says indexes the input)
+/// against the whole dataset `table` — raw tree and every `derivatives/`
+/// pipeline alike. `None` when nothing matches; an error when several do, so an
+/// ambiguous input is surfaced rather than silently chosen. Nothing here is
+/// model- or dataset-specific: the model supplies `extra`, the collection
+/// supplies `identity`, and `table_filter` does the rest.
+fn find_input<'a>(
+    table: &'a [rust_bids::BidsRow],
+    identity: &std::collections::BTreeMap<String, String>,
+    extra: &[(&str, &str)],
+) -> Result<Option<&'a rust_bids::BidsRow>> {
+    let mut constraints: Vec<(&str, &str)> = identity
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    constraints.extend_from_slice(extra);
+    let hits = rust_bids::table_filter(table, &constraints);
+    match hits.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(one)),
+        many => bail!(
+            "ambiguous input for {:?}: {} candidates ({})",
+            constraints,
+            many.len(),
+            many.iter()
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
 /// Resolve a model's declared BIDS auxiliary inputs and a brain mask for one
-/// collection from the dataset `table` (which spans the raw tree and every
-/// `derivatives/` pipeline). Each declared input is located by its BIDS suffix
-/// and loaded; a `required` input that is absent is a hard error, an optional
-/// one becomes a `None` entry (the model uses its default). The brain mask
-/// (BIDS suffix `mask`) is applied to the fit when present. Returns the aux
-/// bundle, the optional mask, and the dataset-relative paths of every input
-/// actually loaded (recorded in the output sidecar's provenance `Sources`).
+/// collection from the dataset `table`. Each input is located by the
+/// collection's full entity `identity` + its declared BIDS suffix (+ any
+/// `BidsMap.entity` the model declares), so it is matched on whatever entities
+/// identify the collection — subject/session/run/… alike — not a fixed pair.
+/// A `required` input that is absent is a hard error; an optional one becomes a
+/// `None` entry (the model uses its default). The brain mask (BIDS suffix
+/// `mask`) is applied when present. Returns the aux bundle, the optional mask,
+/// and the dataset-relative paths of every input loaded (for provenance
+/// `Sources`).
 fn resolve_aux_and_mask(
     table: &[rust_bids::BidsRow],
     model: &dyn Model,
-    subject: &str,
-    session: Option<&str>,
+    identity: &std::collections::BTreeMap<String, String>,
     bids_dir: &Path,
 ) -> Result<(AuxMaps, Option<Array3<bool>>, Vec<String>)> {
-    // A `Collection` carries the prefixed entity (`sub-02`), while the table's
-    // parsed entities carry the bare value (`02`) — match on the bare value.
-    let subject = subject.strip_prefix("sub-").unwrap_or(subject);
-    let session = session.map(|s| s.strip_prefix("ses-").unwrap_or(s));
     let mut maps: Vec<(String, Option<Array3<f64>>)> = Vec::new();
     let mut sources: Vec<String> = Vec::new();
     for spec in model.required_inputs() {
@@ -835,23 +861,31 @@ fn resolve_aux_and_mask(
             maps.push((spec.name.to_string(), None));
             continue;
         };
-        match rust_bids::aux_row(table, subject, session, bids.suffix)? {
+        let mut extra = vec![("suffix", bids.suffix)];
+        if let Some(entity) = bids.entity {
+            // The model declares an entity that indexes this input; match it
+            // against the identity value the collection carries for it.
+            if let Some(val) = identity.get(entity) {
+                extra.push((entity, val.as_str()));
+            }
+        }
+        match find_input(table, identity, &extra)? {
             Some(row) => {
                 let map = io::nifti::read_map_nifti(&bids_dir.join(&row.path))?;
                 maps.push((spec.name.to_string(), Some(map)));
                 sources.push(row.path.clone());
             }
             None if spec.required => bail!(
-                "required input '{}' (BIDS suffix '{}') not found for sub-{} in {:?}",
+                "required input '{}' (BIDS suffix '{}') not found for {:?} in {:?}",
                 spec.name,
                 bids.suffix,
-                subject,
+                identity,
                 bids_dir
             ),
             None => maps.push((spec.name.to_string(), None)),
         }
     }
-    let mask = match rust_bids::aux_row(table, subject, session, "mask")? {
+    let mask = match find_input(table, identity, &[("suffix", "mask")])? {
         Some(row) => {
             sources.push(row.path.clone());
             Some(io::nifti::read_mask_nifti(&bids_dir.join(&row.path))?)
@@ -1327,6 +1361,7 @@ mod tests {
             session: None,
             run: None,
             task: None,
+            entities: std::collections::BTreeMap::new(),
             suffix: "MTS".into(),
             data: GroupedData::Named(Default::default()),
             warnings: vec![],
@@ -1340,6 +1375,61 @@ mod tests {
                 .to_string()
                 .contains("named-collection fit not yet supported")),
         }
+    }
+
+    /// Input resolution is driven by a collection's *full* entity identity, not
+    /// a fixed subject/session pair: the same suffix present once per session
+    /// must resolve to the file matching the collection's own session, and an
+    /// underspecified identity that matches several files is a hard error (no
+    /// silent pick). This is what lets the backbone scale past two models —
+    /// any entity a dataset groups by participates in locating inputs.
+    #[test]
+    fn find_input_matches_full_identity_and_flags_ambiguity() {
+        use std::collections::BTreeMap;
+        let row = |path: &str, ses: &str| rust_bids::BidsRow {
+            path: path.into(),
+            derivatives: Some("preprocessed".into()),
+            datatype: Some("fmap".into()),
+            suffix: "TB1map".into(),
+            extension: ".nii.gz".into(),
+            entities: BTreeMap::from([
+                ("subject".to_string(), "01".to_string()),
+                ("session".to_string(), ses.to_string()),
+            ]),
+            sidecar_path: None,
+        };
+        let rows = vec![
+            row(
+                "derivatives/preprocessed/sub-01/ses-1/fmap/sub-01_ses-1_TB1map.nii.gz",
+                "1",
+            ),
+            row(
+                "derivatives/preprocessed/sub-01/ses-2/fmap/sub-01_ses-2_TB1map.nii.gz",
+                "2",
+            ),
+        ];
+
+        let identity = |ses: Option<&str>| {
+            let mut m = BTreeMap::from([("subject".to_string(), "01".to_string())]);
+            if let Some(s) = ses {
+                m.insert("session".to_string(), s.to_string());
+            }
+            m
+        };
+
+        // Full identity (subject + session) → the matching session's file.
+        let hit = find_input(&rows, &identity(Some("2")), &[("suffix", "TB1map")])
+            .unwrap()
+            .unwrap();
+        assert!(hit.path.contains("ses-2"));
+        // Underspecified identity (subject only) matches both → ambiguity error.
+        assert!(find_input(&rows, &identity(None), &[("suffix", "TB1map")]).is_err());
+        // No match → None (an optional input the fit does without).
+        assert!(
+            find_input(&rows, &identity(Some("9")), &[("suffix", "TB1map")])
+                .unwrap()
+                .is_none()
+        );
     }
 
     /// End-to-end validation: the BIDS fit path (`bidsify` +
