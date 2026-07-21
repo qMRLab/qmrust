@@ -315,17 +315,18 @@ exactly.
   matching the `.mat`'s own TI order — never re-sorted) + a
   `{InversionTime}` JSON sidecar per volume, `dataset_description.json`,
   `participants.tsv`, and (if a mask is given) a
-  `derivatives/qmrust/sub-<subject>/anat/sub-<subject>_desc-brain_mask.nii.gz`.
+  `derivatives/preprocessed/sub-<subject>/anat/sub-<subject>_desc-brain_mask.nii.gz`.
 - `bidsify --model qmt_spgr` writes the custom `QMTSPGR` suffix instead:
   `sub-<subject>/anat/sub-<subject>_flip-<f>_mt-<m>_QMTSPGR.nii.gz`, where
   `flip-<f>`/`mt-<m>` are 1-based, first-seen-order indices over the
   protocol's unique Angle/Offset values (cosmetic — the fit reads identity
   from the sidecar, not the filename), plus an `{Angle, Offset,
   RepetitionTime, MTPulseDuration}` sidecar per volume and a root
-  `.bidsignore` (`*QMTSPGR*`, deduplicated across repeat runs). Any aux maps
-  present (`R1map`/`B1map`/`B0map`/`Mask`) are written byte-identical under
-  `derivatives/qmrust/sub-<subject>/anat/` as `_R1map`/`_TB1map`/`_B0map`/
-  `_desc-brain_mask`.
+  `.bidsignore` (`*QMTSPGR*`, deduplicated across repeat runs). Any computed
+  inputs present are written byte-identical to a `preprocessed` derivatives
+  pipeline: B1/B0 field maps to `derivatives/preprocessed/sub-<subject>/fmap/`
+  (`_TB1map`/`_B0map`), the R1 map and brain mask to that pipeline's `anat/`
+  (`_R1map`/`_desc-brain_mask`).
 - **How it's validated**: a unit test round-trips an in-memory `Array4`
   through each model's volume writer and asserts every voxel reads back `==`
   the source (not approximate) — this is what proves no rescale/precision
@@ -336,10 +337,11 @@ exactly.
   `qmrust fit --bids-dir`. Two `#[ignore]`d integration tests
   (`bids_fit_matches_mat_fit`, `qmtspgr_bids_fit_matches_mat_fit` in
   `commands.rs`) assert each BIDS-path fit is voxel-**equal** to fitting the
-  same `.mat` directly (inside the `.mat`'s mask for IRT1 — outside it, the
-  BIDS path currently fits extra nonzero voxels the mat path leaves `NaN`,
-  per the aux/mask-resolution gap above; the qMT comparison is both no-aux)
-  and, for IRT1, within the OSF integration job's existing tolerance of
+  same `.mat` directly: for IRT1 both paths apply the same brain mask (the
+  `.mat` path via `--mask`, the BIDS path by resolving the bidsified mask via
+  the config's `mask:` block), so they agree on every masked voxel; the qMT
+  comparison disables aux on both sides so it stays apples-to-apples. For IRT1
+  the fit is also within the OSF integration job's existing tolerance of
   qMRLab's own `FitResults/T1.nii.gz`.
 - `bidsify` supports exactly `inversion_recovery` and `qmt_spgr`
   (`bail!`s otherwise).

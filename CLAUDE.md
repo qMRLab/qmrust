@@ -92,7 +92,12 @@ Convert non-BIDS sources (e.g. a qMRLab `.mat` in ms) to BIDS units **at the she
 That's it — do **not** add `match cfg.model` branches in the CLI, engine, sim, or config.
 The `Model` trait is the whole contributor surface; the registry is the whole dispatch
 point. Auxiliary inputs (B1/B0/R1, …) are *declared* via `required_inputs()`; the shell
-loads them and the model reads scalars via `aux.get("B1map")`. A model declares its
+resolves each from the dataset's flat table by the collection's full entity identity +
+the declared BIDS suffix (found in the raw tree or any `derivatives/<pipeline>/`), and the
+model reads scalars via `aux.get("B1map")`. A **mask** is never auto-guessed (a dataset can
+carry many): it is declared in `--config` under a `mask:` block — `suffix` (default `mask`)
+plus entity constraints that disambiguate which mask (`mask:\n  desc: brain`) — and an
+under-specified spec that matches several masks is a hard error, not a silent pick. A model declares its
 measurement shape via `measurement() -> MeasurementKind` (`Named { roles }` for a fixed
 set of role-labeled volumes, or `Series { rows }` for a variable-length series with its
 own canonical per-volume identity rows), and `forward`/`fit` read the identity-keyed
