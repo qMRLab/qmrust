@@ -2,6 +2,7 @@
 //! over and a set of grouping rules (plain/named/sequential) that turn matched
 //! files into `Collection`s.
 
+use crate::entities::full_key;
 use anyhow::Result;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -16,13 +17,10 @@ pub struct CustomEntity {
     pub name: String,
 }
 
+/// A set matched by suffix alone, with no grouping: its members surface as a
+/// flat sequence.
 #[derive(Debug, Clone, Deserialize)]
-pub struct PlainSet {
-    #[serde(default)]
-    pub additional_extensions: Vec<String>,
-    #[serde(default)]
-    pub include_cross_modal: Vec<String>,
-}
+pub struct PlainSet {}
 
 #[derive(Debug, Clone)]
 pub struct NamedSet {
@@ -99,7 +97,8 @@ pub fn parse_config(yaml: &str) -> Result<BidsConfig> {
     for (name, entry) in raw.sets {
         let def = if let Some(p) = entry.plain_set {
             SetDef::Plain(p)
-        } else if let Some(s) = entry.sequential_set {
+        } else if let Some(mut s) = entry.sequential_set {
+            s.by = s.by.iter().map(|e| full_key(e)).collect();
             SetDef::Sequential(s)
         } else if let Some(groups_raw) = entry.named_set {
             let mut groups = BTreeMap::new();
@@ -109,18 +108,16 @@ pub fn parse_config(yaml: &str) -> Result<BidsConfig> {
                     required = serde_yaml::from_value(gval)?;
                     continue;
                 }
-                let mut cons: EntityConstraints =
+                let cons: EntityConstraints =
                     serde_yaml::from_value::<BTreeMap<String, String>>(gval)?
                         .into_iter()
                         .filter(|(k, _)| k != "description")
+                        .map(|(k, v)| {
+                            let k = full_key(&k);
+                            let v = strip_prefix_value(&k, &v);
+                            (k, v)
+                        })
                         .collect();
-                cons = cons
-                    .into_iter()
-                    .map(|(k, v)| {
-                        let v = strip_prefix_value(&k, &v);
-                        (k, v)
-                    })
-                    .collect();
                 groups.insert(gname, cons);
             }
             SetDef::Named(NamedSet { groups, required })
@@ -130,7 +127,7 @@ pub fn parse_config(yaml: &str) -> Result<BidsConfig> {
         sets.insert(name, def);
     }
     Ok(BidsConfig {
-        loop_over: raw.loop_over,
+        loop_over: raw.loop_over.iter().map(|e| full_key(e)).collect(),
         sets,
         custom_entities: raw.custom_entities,
         custom_suffixes: raw.custom_suffixes,
@@ -140,24 +137,24 @@ pub fn parse_config(yaml: &str) -> Result<BidsConfig> {
 pub fn default_config() -> BidsConfig {
     parse_config(
         r#"
-loop_over: [subject, session, run, task]
+loop_over: [sub, ses, run, task]
 IRT1:
   sequential_set:
-    by: [inversion]
+    by: [inv]
 QMTSPGR:
   sequential_set:
-    by: [mtransfer, flip]
+    by: [mt, flip]
 MTS:
   named_set:
     PDw:
       flip: "flip-1"
-      mtransfer: "mt-off"
+      mt: "mt-off"
     MTw:
       flip: "flip-1"
-      mtransfer: "mt-on"
+      mt: "mt-on"
     T1w:
       flip: "flip-2"
-      mtransfer: "mt-off"
+      mt: "mt-off"
     required: [PDw, MTw, T1w]
 "#,
     )
@@ -186,6 +183,26 @@ mod tests {
             panic!("IRT1 should be sequential");
         };
         assert_eq!(irt1.by, vec!["inversion"]);
+    }
+
+    #[test]
+    fn entity_keys_normalize_short_and_full_to_the_same_form() {
+        // A config may name entities by their short BIDS-filename form (`mt`,
+        // `inv`, `sub`) or their full name; both normalize to the full name.
+        let short =
+            parse_config("loop_over: [sub, ses]\nS:\n  sequential_set:\n    by: [mt, inv]\n")
+                .unwrap();
+        let full = parse_config(
+            "loop_over: [subject, session]\nS:\n  sequential_set:\n    by: [mtransfer, inversion]\n",
+        )
+        .unwrap();
+        assert_eq!(short.loop_over, vec!["subject", "session"]);
+        let (SetDef::Sequential(s), SetDef::Sequential(f)) = (&short.sets["S"], &full.sets["S"])
+        else {
+            panic!("S should be sequential in both");
+        };
+        assert_eq!(s.by, vec!["mtransfer", "inversion"]);
+        assert_eq!(s.by, f.by);
     }
 
     #[test]
