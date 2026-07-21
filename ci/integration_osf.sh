@@ -28,15 +28,15 @@ IR_MASK="$(find "$DATA/ir" -name 'Mask.mat' | head -1)"
 
 echo "Running IR fit..."
 "$BIN" fit --mat-data "$IR_MAT" --mask "$IR_MASK" \
-  --config prots/irt1_config.yaml --output-dir "$DATA/out_ir"
+  --config recipes/non-bids/irt1_config.yaml --output-dir "$DATA/out_ir"
 
 echo "Running qMT Ramani fit..."
 "$BIN" fit --mat-dir "$QMT_DIR" \
-  --config prots/qmt_config_ramani.yaml --output-dir "$DATA/out_ramani"
+  --config recipes/non-bids/qmt_config_ramani.yaml --output-dir "$DATA/out_ramani"
 
 echo "Running qMT SledPikeRP fit..."
 "$BIN" fit --mat-dir "$QMT_DIR" \
-  --config prots/qmt_config_sledpikerp.yaml --output-dir "$DATA/out_srp"
+  --config recipes/non-bids/qmt_config_sledpikerp.yaml --output-dir "$DATA/out_srp"
 
 echo "Asserting outputs..."
 for f in "$DATA/out_ir/T1.nii.gz" "$DATA/out_ramani/F.nii.gz" "$DATA/out_srp/F.nii.gz"; do

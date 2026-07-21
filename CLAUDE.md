@@ -143,10 +143,11 @@ cargo build --workspace
 cargo test  --workspace
 cargo fmt --all --check                                 # CI format gate
 cargo clippy --workspace --all-targets -- -D warnings   # CI lint gate (must be clean)
-cargo run -p qmrust-cli -- fit  --mat-dir <dir> --config prots/<cfg>.yaml --output-dir <out>
-cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config prots/<cfg>.yaml --output-dir <out>  # v1: no-aux, sequential (e.g. IRT1); writes derivatives/qmrust/...
-cargo run -p qmrust-cli -- bidsify --model inversion_recovery --mat-data <IRData.mat> --mask <Mask.mat> --config prots/irt1_config.yaml --subject 01 --out <ds-root>
-cargo run -p qmrust-cli -- sim  single-voxel --config prots/<cfg>.yaml --output <out>.json
+cargo run -p qmrust-cli -- fit  --mat-dir <dir> --config recipes/non-bids/<cfg>.yaml --output-dir <out>
+cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config recipes/bids/irt1_config.yaml --output-dir <out>  # v1: no-aux, sequential (e.g. IRT1); writes derivatives/qmrust/...
+cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config recipes/bids/irt1_config.yaml --grouping <file> --output-dir <out>  # override the built-in grouping manifest
+cargo run -p qmrust-cli -- bidsify --model inversion_recovery --mat-data <IRData.mat> --mask <Mask.mat> --config recipes/non-bids/irt1_config.yaml --subject 01 --out <ds-root>
+cargo run -p qmrust-cli -- sim  single-voxel --config recipes/sim/qmt_sim_ramani.yaml --output <out>.json
 cargo build -p qmrust-core --target wasm32-unknown-unknown   # core must stay wasm-clean
 cargo build -p rust-bids   --target wasm32-unknown-unknown   # rust-bids must stay wasm-clean too
 cargo test  -p qmrust-wasm --target wasm32-unknown-unknown --no-run  # wasm bindings + browser tests must compile (CI runs them in a headless browser)
@@ -159,5 +160,5 @@ Before claiming work is done: `cargo test --workspace`, `cargo fmt --all --check
 
 - Large test data is **not** committed; CI fetches qMRLab's datasets from OSF
   (`ci/integration_osf.sh`). Locally you supply your own `--mat-dir`/`--mat-data`.
-- Config files live in `prots/`; the browser build's API + build recipe are documented in
-  `crates/qmrust-wasm/README.md`.
+- Config files live in `recipes/{bids,non-bids,sim}/` (see `recipes/README.md`); the
+  browser build's API + build recipe are documented in `crates/qmrust-wasm/README.md`.

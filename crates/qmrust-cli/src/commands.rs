@@ -1647,7 +1647,14 @@ mod tests {
         let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..");
-        let config = repo_root.join("prots").join("irt1_config.yaml");
+        let config = repo_root
+            .join("recipes")
+            .join("non-bids")
+            .join("irt1_config.yaml");
+        let bids_config = repo_root
+            .join("recipes")
+            .join("bids")
+            .join("irt1_config.yaml");
 
         let tmp = TempDir::new("bids-matches-mat");
         let out_mat = tmp.0.join("out_mat");
@@ -1685,7 +1692,7 @@ mod tests {
             out: bids_dir.clone(),
         })
         .expect("bidsify failed");
-        run_fit_bids(bids_dir, config, deriv_dir.clone(), None, None)
+        run_fit_bids(bids_dir, bids_config, deriv_dir.clone(), None, None)
             .expect("bids-path fit failed");
         let t1_bids = io::nifti::read_map_nifti(
             &deriv_dir
@@ -1753,7 +1760,10 @@ mod tests {
         let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..");
-        let config = repo_root.join("prots").join("qmt_config_ramani.yaml");
+        let config = repo_root
+            .join("recipes")
+            .join("non-bids")
+            .join("qmt_config_ramani.yaml");
 
         let tmp = TempDir::new("qmt-bids-matches-mat");
         let out_mat = tmp.0.join("out_mat");

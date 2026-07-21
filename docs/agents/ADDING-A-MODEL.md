@@ -85,14 +85,24 @@ not reintroduce it.
 
 ```rust
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
-pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder }
+pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
+pub struct ModelEntry {
+    pub name: &'static str,
+    pub bids_suffix: &'static str,
+    pub build: Builder,
+    pub describe: Describer,
+}
 pub fn all() -> &'static [ModelEntry];
 pub fn by_name(name: &str) -> Option<&'static ModelEntry>;
 pub fn by_bids_suffix(suffix: &str) -> Option<&'static ModelEntry>;
 ```
 
 `by_name`/`by_bids_suffix` are the only lookups the CLI, sim, and wasm
-bindings use.
+bindings use. `describe` is the structural-interrogation entry point — it
+builds the model from `--config` alone (no `Protocol`) so callers can read
+`protocol_schema()`/`bids_outputs()` before any data is resolved; `build`
+stays the fit-ready path that also validates the model against a real
+`Protocol`.
 
 ## Checklist
 

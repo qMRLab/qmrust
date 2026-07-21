@@ -1,0 +1,18 @@
+model: inversion_recovery
+
+# BIDS input: InversionTime and RepetitionTime are read from JSON sidecars via
+# the model's protocol_schema(), so protocol arrays are NOT listed here.
+
+# Algorithm options (always used; not BIDS metadata).
+method: magnitude
+t1_range:
+  start: 0.001
+  stop: 5.0
+  step: 0.001
+zoom:
+  iterations: 2
+  points: 21
+
+# BIDS mask selection — disambiguates which mask in the dataset to apply.
+mask:
+  desc: brain

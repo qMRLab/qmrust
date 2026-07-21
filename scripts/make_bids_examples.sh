@@ -10,7 +10,8 @@ set -euo pipefail
 
 DATA="${1:-osf-data}"
 BIN="${QMRUST_BIN:-./target/release/qmrust}"
-CONFIG="prots/irt1_config.yaml"
+CONFIG="recipes/non-bids/irt1_config.yaml"
+BIDS_CONFIG="recipes/bids/irt1_config.yaml"
 mkdir -p "$DATA"
 
 echo "Downloading qMRLab OSF IR dataset..."
@@ -37,7 +38,7 @@ find "$BIDS_DIR" -type f | sort
 echo "Fitting via the BIDS path..."
 # output-dir is the derivatives *root*: run_fit_bids appends qmrust/<subject>/anat/
 # itself, so the result lands at $BIDS_DIR/derivatives/qmrust/sub-01/anat/.
-"$BIN" fit --bids-dir "$BIDS_DIR" --config "$CONFIG" --output-dir "$BIDS_DIR/derivatives"
+"$BIN" fit --bids-dir "$BIDS_DIR" --config "$BIDS_CONFIG" --output-dir "$BIDS_DIR/derivatives"
 
 echo "Fitting via the .mat path (for comparison)..."
 "$BIN" fit --mat-data "$IR_MAT" --mask "$IR_MASK" --config "$CONFIG" --output-dir "$DATA/out_mat"
@@ -66,7 +67,7 @@ unzip -o -q "$DATA/qmt.zip" -d "$DATA/qmt"
 QMT_MAT="$(find "$DATA/qmt" -name 'MTdata.mat' | head -1)"
 [ -n "$QMT_MAT" ] || { echo "MTdata.mat not found in qMT archive"; exit 1; }
 QMT_DIR="$(dirname "$QMT_MAT")"
-QMT_CONFIG="prots/qmt_config_ramani.yaml"
+QMT_CONFIG="recipes/non-bids/qmt_config_ramani.yaml"
 
 echo "Converting qMT data to the same BIDS dataset at $BIDS_DIR (sub-02)..."
 "$BIN" bidsify --model qmt_spgr \

@@ -19,7 +19,7 @@ qmrust/                         Cargo workspace
 │   ├── qmrust-cli/    ── IMPERATIVE SHELL ─  the `qmrust` binary: files, CLI, progress
 │   ├── qmrust-wasm/   ── IMPERATIVE SHELL ─  the browser cdylib: wasm-bindgen bindings
 │   └── rust-bids/     ── SHARED ── wasm-clean qMRI-BIDS layout resolver
-├── prots/                       example protocol / sim configs (YAML)
+├── recipes/                     example `--config` manifests (bids/non-bids/sim, YAML)
 ├── docs/                        agents/ARCHITECTURE.md (this file) + MyST human-docs site
 ├── ci/integration_osf.sh        end-to-end fit against qMRLab's OSF datasets
 └── .github/workflows/           ci.yml (lint · native · wasm · integration) + docs.yml (MyST → Pages)

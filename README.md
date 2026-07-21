@@ -4,7 +4,7 @@ Native-Rust quantitative MRI fitting — a fast port of selected [qMRLab](https:
 
 **Models available**
 
-| Config (`prots/`) | Model | Fits |
+| Config (`recipes/non-bids/`) | Model | Fits |
 |---|---|---|
 | `irt1_config.yaml` | Inversion Recovery T1 (Barral RD-NLS) | T1 mapping |
 | `qmt_config_ramani.yaml` | qMT-SPGR · Ramani | F, kr, R1f, R1r, T2f, T2r |
@@ -30,7 +30,7 @@ auto-loads all five `.mat` files from a folder by name.
 ```bash
 ./target/release/qmrust fit \
   --mat-dir ~/Desktop/qmrust_test/qmt_spgr \
-  --config prots/qmt_config_sledpikerp.yaml \
+  --config recipes/non-bids/qmt_config_sledpikerp.yaml \
   --output-dir ~/Desktop/qmrust_test/qmt_spgr/FitResults_rust
 ```
 
@@ -39,7 +39,7 @@ Same inputs; just swap the config:
 ```bash
 ./target/release/qmrust fit \
   --mat-dir ~/Desktop/qmrust_test/qmt_spgr \
-  --config prots/qmt_config_ramani.yaml \
+  --config recipes/non-bids/qmt_config_ramani.yaml \
   --output-dir ./FitResults_ramani
 ```
 
@@ -48,7 +48,7 @@ Instead of `--mat-dir`, you can pass maps individually (`.mat` or NIfTI):
 ./target/release/qmrust fit \
   --mat-data MTdata.mat --mask Mask.mat \
   --r1map R1map.mat --b1map B1map.mat --b0map B0map.mat \
-  --config prots/qmt_config_sledpikerp.yaml --output-dir ./out
+  --config recipes/non-bids/qmt_config_sledpikerp.yaml --output-dir ./out
 ```
 
 **qMT outputs** (8 maps): `F`, `kr`, `R1f`, `R1r`, `T2f`, `T2r`, `kf`, `resnorm`.
@@ -58,20 +58,22 @@ Needs IR data: a 4D NIfTI, or a `.mat` containing `IRdata` (+ optional `TI`, `Ma
 ```bash
 ./target/release/qmrust fit \
   --data ir_data.nii.gz \
-  --config prots/irt1_config.yaml \
+  --config recipes/non-bids/irt1_config.yaml \
   --output-dir ./FitResults_t1
 ```
 **T1 outputs**: `T1`, `b`, `a`, `res` (+ `idx` for the magnitude method).
 
 ## Configs
 
-The files in `prots/` are **fully explicit** — every protocol, timing, pulse,
-and fitting parameter is listed, so a run is self-documenting. Edit them to
-match your acquisition (angles/offsets, timing table, bounds, etc.).
+Reusable configs live under `recipes/{bids,non-bids,sim}/` (see `recipes/README.md`
+for the split). The files in `recipes/non-bids/` are **fully explicit** — every
+protocol, timing, pulse, and fitting parameter is listed, so a run is
+self-documenting. Edit them to match your acquisition (angles/offsets, timing
+table, bounds, etc.).
 
 Print the fully-resolved config a run will use (defaults applied, validated):
 ```bash
-./target/release/qmrust dump-config --config prots/qmt_config_sledpikerp.yaml
+./target/release/qmrust dump-config --config recipes/non-bids/qmt_config_sledpikerp.yaml
 ```
 
 ## Simulation
@@ -82,13 +84,13 @@ ranges live in a `sim:` block in the same YAML.
 
 ```bash
 # forward signal only
-qmrust sim signal       --config prots/qmt_sim_ramani.yaml --output sig.json
+qmrust sim signal       --config recipes/sim/qmt_sim_ramani.yaml --output sig.json
 # one voxel, N noisy trials, fit back (+ optional SVG)
-qmrust sim single-voxel --config prots/qmt_sim_ramani.yaml --output sv.json --plot sv.svg
+qmrust sim single-voxel --config recipes/sim/qmt_sim_ramani.yaml --output sv.json --plot sv.svg
 # sweep one parameter, report bias/std
-qmrust sim sensitivity  --config prots/qmt_sim_ramani.yaml --output sens.json --plot sens.svg
+qmrust sim sensitivity  --config recipes/sim/qmt_sim_ramani.yaml --output sens.json --plot sens.svg
 # Monte-Carlo over parameter distributions
-qmrust sim montecarlo   --config prots/qmt_sim_ramani.yaml --output mc.json
+qmrust sim montecarlo   --config recipes/sim/qmt_sim_ramani.yaml --output mc.json
 ```
 
 `sim:` block fields: `params` (ground truth), `b1`/`b0`/`r1`, `noise`
@@ -120,5 +122,5 @@ output is redirected to a file.
   ill-conditioned and best compared on averages/trends, not per voxel.
 - Validate the Sf table (SledPikeRP) against qMRLab's:
   ```bash
-  ./target/release/qmrust dump-sf --config prots/qmt_config_sledpikerp.yaml --output sf.bin
+  ./target/release/qmrust dump-sf --config recipes/non-bids/qmt_config_sledpikerp.yaml --output sf.bin
   ```
