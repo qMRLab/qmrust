@@ -202,14 +202,8 @@ impl Config {
 }
 
 #[cfg(test)]
-mod qmt_tests {
+mod config_tests {
     use super::*;
-
-    // The qmt_spgr-specific assertions that used to live here (default
-    // protocol/pulse/fitting values, R1f-fixed-when-R1map-on, SledPikeRP
-    // acceptance) now live in `models::qmt_spgr::config::tests`, since
-    // `Config` no longer owns a typed `qmt_spgr` field — see that module for
-    // equivalent coverage.
 
     #[test]
     fn existing_ir_config_still_parses() {

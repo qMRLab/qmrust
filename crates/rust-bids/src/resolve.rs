@@ -94,8 +94,8 @@ pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result
             }
             SetDef::Named(named) => resolve_named(named, &members),
             SetDef::Plain(_) => {
-                // plain_set is intentionally parse-only (YAGNI): it is not yet
-                // grouped into a Collection by this resolver.
+                // A plain_set is parsed but not grouped into a Collection by
+                // this resolver; its members surface as a flat sequence.
                 (
                     GroupedData::Sequential(members.iter().map(|r| vol(r)).collect()),
                     vec![Warning {

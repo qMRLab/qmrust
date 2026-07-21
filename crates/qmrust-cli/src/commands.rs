@@ -264,9 +264,9 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 /// triple the engine needs: the volumes stacked in the collection's order as
 /// `[nx,ny,nz,nt]`, the per-volume sidecar `Protocol` (resolved against
 /// `schema`), and the first volume's header for output geometry. `Named`
-/// collections (e.g. MTsat-style MTS sets) are a later increment — reordering
-/// them to a model's `required` axis order is not yet implemented, so they
-/// bail loudly rather than silently mis-assign volumes.
+/// collections (e.g. MTsat-style MTS sets) bail loudly: reordering their
+/// role-labeled volumes to a model's `required` axis order is not implemented,
+/// and silently mis-assigning volumes would be worse than refusing.
 ///
 /// An empty `schema` (a model that hasn't declared a `protocol_schema()`)
 /// resolves to an empty `Protocol` — the model falls back to reading its own
@@ -280,7 +280,7 @@ fn load_collection(
     let vols = match &c.data {
         GroupedData::Sequential(vols) => vols,
         GroupedData::Named(_) => {
-            bail!("named-collection fit not yet supported (see fitting-integration follow-ups)")
+            bail!("named-collection fit not yet supported")
         }
     };
     if vols.is_empty() {
@@ -556,8 +556,8 @@ fn protocol_to_json(proto: &Protocol) -> serde_json::Value {
 
 /// The input volumes a collection's fit read from, as dataset-relative BIDS
 /// URIs (`bids::<path relative to the dataset root>`). `VolumeRef.nii` is
-/// already dataset-relative under `StdFs`; the `bids_dir` strip is a
-/// defensive fallback for an absolute path.
+/// already dataset-relative under `StdFs`; the `bids_dir` strip keeps the URI
+/// relative if the path is ever absolute.
 fn collection_sources(c: &Collection, bids_dir: &Path) -> Vec<String> {
     let volumes: Vec<&str> = match &c.data {
         GroupedData::Sequential(v) => v.iter().map(|r| r.nii.as_str()).collect(),
@@ -687,8 +687,8 @@ pub fn run_fit_bids(
     // hasn't migrated to `protocol_schema()` yet — `load_collection` then
     // falls back to an empty `Protocol`, matching pre-schema behaviour.
     let schema = probe.protocol_schema();
-    // No model declares a `Source::Option` param yet; wired here so a future
-    // one can read its options straight out of `--config`.
+    // `Source::Option` protocol params fall back to `--config`; the BIDS path
+    // resolves protocol from sidecars, so no options are supplied.
     let options: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
 
     let fs = StdFs {
@@ -742,7 +742,7 @@ pub fn run_fit_bids(
         // alongside it.
         if matches!(c.data, GroupedData::Named(_)) {
             eprintln!(
-                "  skipping {}: named-collection fit not yet supported (follow-up)",
+                "  skipping {}: named-collection fit not yet supported",
                 label
             );
             skipped += 1;
@@ -1456,14 +1456,12 @@ mod tests {
     ///
     /// `scripts/make_bids_examples.sh` fetches such a dataset from OSF.
     ///
-    /// `run_fit_bids` doesn't yet resolve a BIDS mask (see its doc comment —
-    /// aux-map resolution is a tracked follow-up, and mask resolution shares
-    /// that gap), so it fits every nonzero voxel while the `.mat` path only
-    /// fits the `Mask.mat` region. The two runs can therefore only agree
-    /// where the `.mat` path actually fit a voxel: inside the mask, on the
-    /// same byte-identical input, the fit must be exactly equal; outside it,
-    /// the `.mat` path leaves `NaN` while the BIDS path may fit real values,
-    /// which is a known, separately-tracked limitation, not a fit divergence.
+    /// Both paths apply the same brain mask: the `.mat` path via `--mask`, the
+    /// BIDS path by resolving the mask `bidsify` writes to
+    /// `derivatives/preprocessed/` (`run_fit_bids` resolves a declared mask by
+    /// its BIDS suffix). The two fits therefore mask identically and must be
+    /// exactly equal on every masked voxel of the same byte-identical input;
+    /// the loop below compares inside the mask (both leave it unfit outside).
     ///
     /// Both `t1_mat` and `t1_bids` below are our own two pipelines (not
     /// qMRLab's), so they're compared directly in seconds — no unit
