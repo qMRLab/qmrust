@@ -494,8 +494,7 @@ fn run_model_fit(
 
 /// Run the engine over one (data, protocol) volume and write the result maps
 /// as NIfTI into `output_dir` — the flat layout `run_fit` (NIfTI/.mat input)
-/// uses. Behaviour-preserving: unchanged since before the BIDS-derivatives
-/// output was added (the OSF integration script asserts `out_ir/T1.nii.gz`).
+/// uses (`<output_dir>/<name>.nii.gz`, e.g. `out_ir/T1.nii.gz`).
 #[allow(clippy::too_many_arguments)]
 fn fit_and_write(
     model: &dyn Model,
@@ -684,8 +683,8 @@ pub fn run_fit_bids(
     // collection's resolved sidecar values.
     let probe = (entry.build)(&raw, &Protocol::default())?;
     // Declarative BIDS metadata -> protocol mapping. Empty for a model that
-    // hasn't migrated to `protocol_schema()` yet — `load_collection` then
-    // falls back to an empty `Protocol`, matching pre-schema behaviour.
+    // declares no `protocol_schema()`; `load_collection` then resolves into an
+    // empty `Protocol` and the model reads its protocol from `--config`.
     let schema = probe.protocol_schema();
     // `Source::Option` protocol params fall back to `--config`; the BIDS path
     // resolves protocol from sidecars, so no options are supplied.
@@ -1128,9 +1127,8 @@ mod tests {
         let anat_dir = bids_dir.join("sub-01/anat");
         std::fs::create_dir_all(&anat_dir).unwrap();
 
-        // BIDS-native seconds throughout: T1 = 0.9 s, TIs 0.35..1.25 s (the
-        // same physical protocol as the pre-migration ms fixture, ÷1000 —
-        // see CLAUDE.md "Units — BIDS-native").
+        // BIDS-native seconds throughout: T1 = 0.9 s, TIs 0.35..1.25 s
+        // (see CLAUDE.md "Units — BIDS-native").
         let t1 = 0.9_f64;
         let a = 500.0_f64;
         let b = -1000.0_f64;
@@ -1317,15 +1315,12 @@ mod tests {
     }
 
     /// A qmt_spgr-targeted dataset must exit non-zero, not silently report
-    /// success having fit zero subjects. `QMTSPGR` now has a `rust-bids`
-    /// sequential set definition, so this 3-volume dataset resolves into a
-    /// real collection — but it doesn't carry the model's expected 10-row
-    /// series protocol, so fitting itself must bail (not silently skip). Now
-    /// that qmt_spgr declares a `protocol_schema()`, the mismatch is caught
-    /// earlier, by `validate_against_protocol` inside the model's `build`
-    /// (wrapped in a "protocol inconsistent" context) rather than later by
-    /// `build_volume_ids` — check the full error chain (`{:?}`), not just the
-    /// outer `Display` message, for the underlying counts.
+    /// success having fit zero subjects. `QMTSPGR` has a `rust-bids` sequential
+    /// set definition, so this 3-volume dataset resolves into a real collection
+    /// — but it doesn't carry the model's expected 10-row series protocol, so
+    /// `validate_against_protocol` inside the model's `build` bails (wrapped in
+    /// a "protocol inconsistent" context). Check the full error chain (`{:?}`),
+    /// not just the outer `Display` message, for the underlying counts.
     #[test]
     fn run_fit_bids_bails_when_every_collection_is_skipped() {
         let tmp = TempDir::new("fit-bids-all-named");
@@ -1335,10 +1330,10 @@ mod tests {
 
         let header = make_minimal_header(1, 1, 1);
         let data = Array3::from_elem((1, 1, 1), 1.0_f64);
-        // Give each volume a valid Angle/Offset sidecar (qmt_spgr now declares
-        // a `protocol_schema()`, so `resolve_protocol` reads these) but only 3
-        // of the model's 10 expected mtdata rows, so the mismatch is caught by
-        // `validate_against_protocol`'s count check, not by a missing-field error.
+        // Give each volume a valid Angle/Offset sidecar (qmt_spgr's
+        // `protocol_schema()` reads these) but only 3 of the model's 10
+        // expected mtdata rows, so the mismatch is caught by
+        // `validate_against_protocol`'s count check, not a missing-field error.
         for (fname, angle, offset) in [
             ("sub-01_flip-1_mt-off_QMTSPGR.nii.gz", 142.0, 443.0),
             ("sub-01_flip-1_mt-on_QMTSPGR.nii.gz", 426.0, 443.0),

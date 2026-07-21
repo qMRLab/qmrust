@@ -206,10 +206,8 @@ fn grid_search(
     (rho_ty_vec, best_ind)
 }
 
-// clippy: arguments mirror the distinct algorithm quantities (data/time/T1 grids,
-// exponential design matrix, precomputed reductions, best index, sample count);
-// bundling them into a struct would not simplify call sites and risks touching
-// numerics, so the signature is kept as-is.
+// Arguments are the distinct algorithm quantities: data/time/T1 grids, the
+// exponential design matrix, precomputed reductions, best index, sample count.
 #[allow(clippy::too_many_arguments)]
 fn extract_params(
     data: &Array1<f64>,

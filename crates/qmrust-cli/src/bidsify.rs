@@ -15,12 +15,9 @@ use crate::commands::make_minimal_header;
 use crate::io;
 
 /// IRT1 per-volume sidecar fields (BIDS-qMRI convention). `repetition_time`
-/// comes from the IR config's `repetition_time` field (qMRLab's IR_demo TR
-/// is 2.5 s — 2500 ms in qMRLab's ms convention, converted at the config
-/// boundary); it's `None`, and skipped rather than serialized as `null`,
-/// only when the config doesn't supply one. Kept as a typed struct (not a
-/// hand-formatted string) so it stays correct as fields grow (this shape,
-/// and later QMTSPGR's much larger sidecar).
+/// comes from the IR config's `repetition_time` field (in seconds); it's
+/// `None`, and skipped rather than serialized as `null`, only when the config
+/// doesn't supply one.
 #[derive(Serialize)]
 struct IrSidecar {
     #[serde(rename = "InversionTime")]

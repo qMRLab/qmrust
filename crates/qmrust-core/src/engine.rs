@@ -1,5 +1,5 @@
 //! The single voxel-fitting engine. Drives any `Model`, dispatching on its
-//! declared `FitStrategy`. Replaces the old `fitting::fit_volume*` pair.
+//! declared `FitStrategy`.
 
 use crate::core::model::{Aux, FitStrategy, Measurement, MeasurementKind, Model, Sample, VolumeId};
 use crate::fitting::FitResults;

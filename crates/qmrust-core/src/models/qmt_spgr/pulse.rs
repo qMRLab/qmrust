@@ -61,11 +61,11 @@ impl GaussHannPulse {
         fwhm(&xs, &ys)
     }
 
-    /// Rectangular-pulse-equivalent power over the FWHM Tau (compute_w1rp.m).
-    /// Returns (w1rp, tau). Retained as a convenience/reference API and for
-    /// tests; production callers now use `tau()` + `w1rp()` to avoid
-    /// recomputing the FWHM per angle.
-    #[allow(dead_code)]
+    /// Rectangular-pulse-equivalent power over the FWHM Tau (compute_w1rp.m),
+    /// returning (w1rp, tau) together. `tau()` + `w1rp()` compute the same
+    /// quantities without recomputing the FWHM per angle; this bundled form is
+    /// the reference oracle those two are checked against.
+    #[cfg(test)]
     pub fn w1rp_and_tau(&self, alpha_deg: f64) -> (f64, f64) {
         let amp = self.amp(alpha_deg);
         let int_omega2 = adaptive_simpson(
