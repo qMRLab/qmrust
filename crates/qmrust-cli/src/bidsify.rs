@@ -188,8 +188,8 @@ fn run_bidsify_qmt(args: BidsifyArgs) -> Result<()> {
 /// `dataset_description.json`, `participants.tsv`, one
 /// `sub-<subject>/anat/sub-<subject>_inv-<i>_IRT1.nii.gz` (+ JSON sidecar) per
 /// volume in `ir_data`'s 4th axis (1-based `<i>`, matching `ti`'s order), and
-/// — if a mask is given — a brain-mask derivative under
-/// `derivatives/qmrust/sub-<subject>/anat/`.
+/// — if a mask is given — a brain-mask derivative under the `preprocessed`
+/// pipeline (`derivatives/preprocessed/sub-<subject>/anat/`).
 pub fn bidsify_ir(
     ir_data: &Array4<f64>,
     ti: &[f64],
@@ -237,15 +237,14 @@ pub fn bidsify_ir(
     }
 
     if let Some(mask) = mask {
-        let deriv_anat = out
-            .join("derivatives")
-            .join("qmrust")
-            .join(format!("sub-{subject}"))
-            .join("anat");
-        std::fs::create_dir_all(&deriv_anat)?;
         let mask_f64 = mask.mapv(|b| if b { 1.0 } else { 0.0 });
-        let mask_path = deriv_anat.join(format!("sub-{subject}_desc-brain_mask.nii.gz"));
-        write_inv_volume(&mask_f64, &header, &mask_path)?;
+        write_preprocessed(
+            out,
+            subject,
+            &format!("sub-{subject}_desc-brain_mask.nii.gz"),
+            &mask_f64,
+            &header,
+        )?;
     }
 
     Ok(())
@@ -254,9 +253,12 @@ pub fn bidsify_ir(
 /// Write one qMT-SPGR `.mat` dataset as a BIDS tree rooted at `out`: one
 /// `sub-<subject>/anat/sub-<subject>_flip-<f>_mt-<m>_QMTSPGR.nii.gz` (+ JSON
 /// sidecar) per volume in `mt_data`'s 4th axis, plus `dataset_description.json`,
-/// `participants.tsv`, a root `.bidsignore` (QMTSPGR is a custom, non-official
-/// suffix), and — for any aux/mask maps supplied — derivatives under
-/// `derivatives/qmrust/sub-<subject>/anat/`.
+/// `participants.tsv`, and a root `.bidsignore` (QMTSPGR is a custom,
+/// non-official suffix). Supplied auxiliary maps are placed by their BIDS
+/// nature: B1/B0 are acquisition field maps → raw `sub-<subject>/fmap/`
+/// (`TB1map`, `B0map`); the R1 map and brain mask are computed inputs →
+/// the `preprocessed` derivatives pipeline
+/// (`derivatives/preprocessed/sub-<subject>/anat/`).
 ///
 /// `protocol[i]` is `[Angle (deg), Offset (Hz)]` for volume `i`, in the same
 /// order as `mt_data`'s 4th axis (never re-sorted — qMRLab's `.mat` volume
@@ -322,32 +324,30 @@ pub fn bidsify_qmt(
         std::fs::write(&json_path, serde_json::to_string_pretty(&sidecar)?)?;
     }
 
-    let have_aux = mask.is_some() || r1map.is_some() || b1map.is_some() || b0map.is_some();
-    if have_aux {
-        let deriv_anat = out
-            .join("derivatives")
-            .join("qmrust")
-            .join(format!("sub-{subject}"))
-            .join("anat");
-        std::fs::create_dir_all(&deriv_anat)?;
-
-        if let Some(mask) = mask {
-            let mask_f64 = mask.mapv(|b| if b { 1.0 } else { 0.0 });
-            let mask_path = deriv_anat.join(format!("sub-{subject}_desc-brain_mask.nii.gz"));
-            write_inv_volume(&mask_f64, &header, &mask_path)?;
-        }
-        if let Some(r1) = r1map {
-            let path = deriv_anat.join(format!("sub-{subject}_R1map.nii.gz"));
-            write_inv_volume(r1, &header, &path)?;
-        }
-        if let Some(b1) = b1map {
-            let path = deriv_anat.join(format!("sub-{subject}_TB1map.nii.gz"));
-            write_inv_volume(b1, &header, &path)?;
-        }
-        if let Some(b0) = b0map {
-            let path = deriv_anat.join(format!("sub-{subject}_B0map.nii.gz"));
-            write_inv_volume(b0, &header, &path)?;
-        }
+    if let Some(b1) = b1map {
+        write_fmap(out, subject, "TB1map", "1", b1, &header)?;
+    }
+    if let Some(b0) = b0map {
+        write_fmap(out, subject, "B0map", "Hz", b0, &header)?;
+    }
+    if let Some(r1) = r1map {
+        write_preprocessed(
+            out,
+            subject,
+            &format!("sub-{subject}_R1map.nii.gz"),
+            r1,
+            &header,
+        )?;
+    }
+    if let Some(mask) = mask {
+        let mask_f64 = mask.mapv(|b| if b { 1.0 } else { 0.0 });
+        write_preprocessed(
+            out,
+            subject,
+            &format!("sub-{subject}_desc-brain_mask.nii.gz"),
+            &mask_f64,
+            &header,
+        )?;
     }
 
     Ok(())
@@ -381,6 +381,67 @@ fn write_dataset_description(out: &Path) -> Result<()> {
             &path,
             r#"{"Name":"qmrust BIDS example","BIDSVersion":"1.8.0"}"#,
         )?;
+    }
+    Ok(())
+}
+
+/// Write an estimated field map into the raw `sub-<subject>/fmap/` directory
+/// with a minimal sidecar. `suffix` is the BIDS field-map suffix (`TB1map` for
+/// a transmit B1+ map, `B0map` for a B0 map); `units` is that map's unit
+/// (`"1"` for a dimensionless B1 ratio, `"Hz"` for B0). Field maps are raw
+/// acquisitions, so they live in the raw tree, not in derivatives.
+fn write_fmap(
+    out: &Path,
+    subject: &str,
+    suffix: &str,
+    units: &str,
+    vol: &Array3<f64>,
+    header: &NiftiHeader,
+) -> Result<()> {
+    let fmap_dir = out.join(format!("sub-{subject}")).join("fmap");
+    std::fs::create_dir_all(&fmap_dir)?;
+    let base = format!("sub-{subject}_{suffix}");
+    write_inv_volume(vol, header, &fmap_dir.join(format!("{base}.nii.gz")))?;
+    let sidecar = serde_json::json!({ "Units": units });
+    std::fs::write(
+        fmap_dir.join(format!("{base}.json")),
+        serde_json::to_string_pretty(&sidecar)?,
+    )?;
+    Ok(())
+}
+
+/// Write `vol` as `file` into the `preprocessed` derivatives pipeline
+/// (`derivatives/preprocessed/sub-<subject>/anat/`), creating that pipeline's
+/// `dataset_description.json` once. Used for computed inputs — R1 maps, brain
+/// masks — which are derivatives of prior processing, not raw acquisitions.
+fn write_preprocessed(
+    out: &Path,
+    subject: &str,
+    file: &str,
+    vol: &Array3<f64>,
+    header: &NiftiHeader,
+) -> Result<()> {
+    let pipeline = out.join("derivatives").join("preprocessed");
+    write_derivative_dataset_description(&pipeline, "preprocessed")?;
+    let anat_dir = pipeline.join(format!("sub-{subject}")).join("anat");
+    std::fs::create_dir_all(&anat_dir)?;
+    write_inv_volume(vol, header, &anat_dir.join(file))?;
+    Ok(())
+}
+
+/// Create a derivatives pipeline's `dataset_description.json` (marking it a
+/// standalone BIDS derivative dataset) if it doesn't already exist.
+fn write_derivative_dataset_description(pipeline: &Path, name: &str) -> Result<()> {
+    std::fs::create_dir_all(pipeline)?;
+    let path = pipeline.join("dataset_description.json");
+    if !path.exists() {
+        let dd = serde_json::json!({
+            "Name": name,
+            "BIDSVersion": "1.8.0",
+            "DatasetType": "derivative",
+            "GeneratedBy": [{ "Name": "qmrust bidsify" }],
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&dd)?)?;
     }
     Ok(())
 }
@@ -543,7 +604,7 @@ mod tests {
 
         let mask_path = dir
             .join("derivatives")
-            .join("qmrust")
+            .join("preprocessed")
             .join("sub-01")
             .join("anat")
             .join("sub-01_desc-brain_mask.nii.gz");
@@ -651,15 +712,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Aux/mask derivatives are only written when supplied; each present one
-    /// must round-trip byte-identically under `derivatives/qmrust/...`.
+    /// Aux maps are only written when supplied, and each lands in its
+    /// BIDS-correct location: B1/B0 field maps in the raw `sub-XX/fmap/`
+    /// directory (with a `Units` sidecar), the R1 map and brain mask in the
+    /// `preprocessed` derivatives pipeline. Each present map round-trips
+    /// byte-identically.
     #[test]
-    fn bidsify_qmt_writes_aux_derivatives_when_present() {
+    fn bidsify_qmt_places_aux_by_bids_nature() {
         let dir = tmp_dir("qmt-aux");
         let mt_data = Array4::from_shape_fn((2, 1, 1, 1), |(i, _j, _k, _t)| i as f64);
         let protocol = vec![[142.0, 443.0]];
         let mask = Array3::from_shape_vec((2, 1, 1), vec![true, false]).unwrap();
         let r1map = Array3::from_shape_vec((2, 1, 1), vec![1.1, 2.2]).unwrap();
+        let b1map = Array3::from_shape_vec((2, 1, 1), vec![0.9, 1.05]).unwrap();
+        let b0map = Array3::from_shape_vec((2, 1, 1), vec![-12.0, 7.5]).unwrap();
 
         bidsify_qmt(
             &mt_data,
@@ -668,28 +734,44 @@ mod tests {
             0.0102,
             Some(&mask),
             Some(&r1map),
-            None,
-            None,
+            Some(&b1map),
+            Some(&b0map),
             "02",
             &dir,
         )
         .unwrap();
 
-        let deriv = dir
-            .join("derivatives")
-            .join("qmrust")
-            .join("sub-02")
-            .join("anat");
-        assert!(deriv.join("sub-02_desc-brain_mask.nii.gz").exists());
-        let r1_path = deriv.join("sub-02_R1map.nii.gz");
-        assert!(r1_path.exists());
-        assert!(!deriv.join("sub-02_TB1map.nii.gz").exists());
-        assert!(!deriv.join("sub-02_B0map.nii.gz").exists());
+        // Field maps: raw fmap/ with a Units sidecar.
+        let fmap = dir.join("sub-02").join("fmap");
+        for (suffix, map, units) in [("TB1map", &b1map, "1"), ("B0map", &b0map, "Hz")] {
+            let nii = fmap.join(format!("sub-02_{suffix}.nii.gz"));
+            assert!(nii.exists(), "missing raw fmap {suffix}");
+            let sidecar: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(fmap.join(format!("sub-02_{suffix}.json"))).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(sidecar["Units"], units);
+            let read_back = io::nifti::read_map_nifti(&nii).unwrap();
+            for ((x, y, z), &v) in map.indexed_iter() {
+                assert_eq!(read_back[[x, y, z]], v);
+            }
+        }
 
+        // Computed inputs: the preprocessed derivatives pipeline (with its own
+        // dataset_description.json), NOT the qmrust output pipeline.
+        let preproc = dir.join("derivatives").join("preprocessed");
+        assert!(preproc.join("dataset_description.json").exists());
+        let preproc_anat = preproc.join("sub-02").join("anat");
+        assert!(preproc_anat.join("sub-02_desc-brain_mask.nii.gz").exists());
+        let r1_path = preproc_anat.join("sub-02_R1map.nii.gz");
+        assert!(r1_path.exists());
         let read_back = io::nifti::read_map_nifti(&r1_path).unwrap();
         for ((x, y, z), &v) in r1map.indexed_iter() {
             assert_eq!(read_back[[x, y, z]], v);
         }
+
+        // Field maps never leak into a derivatives pipeline.
+        assert!(!preproc_anat.join("sub-02_TB1map.nii.gz").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
