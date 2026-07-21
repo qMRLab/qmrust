@@ -4,6 +4,16 @@
 
 use std::collections::BTreeMap;
 
+/// Compare two BIDS entity *values*. Index entities may be zero-padded and the
+/// padding is not semantic, so compare numerically when both parse as integers;
+/// otherwise compare lexically (string labels like `off`, `brain`).
+pub(crate) fn entity_value_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    match (a.parse::<i64>(), b.parse::<i64>()) {
+        (Ok(x), Ok(y)) => x.cmp(&y),
+        _ => a.cmp(b),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedName {
     pub entities: BTreeMap<String, String>,
@@ -139,5 +149,21 @@ mod tests {
         let j = parse_filename("sub-01_inv-01_IRT1.json").unwrap();
         assert_eq!(j.suffix, "IRT1");
         assert_eq!(j.extension, ".json");
+    }
+
+    #[test]
+    fn entity_value_cmp_numeric_when_both_integers() {
+        use std::cmp::Ordering::*;
+        assert_eq!(entity_value_cmp("2", "10"), Less); // numeric, not lexical "2">"10"
+        assert_eq!(entity_value_cmp("1", "01"), Equal); // zero-padding is not semantic
+        assert_eq!(entity_value_cmp("10", "2"), Greater);
+    }
+
+    #[test]
+    fn entity_value_cmp_lexical_for_non_integers() {
+        use std::cmp::Ordering::*;
+        assert_eq!(entity_value_cmp("off", "off"), Equal);
+        assert_eq!(entity_value_cmp("off", "on"), Less);
+        assert_eq!(entity_value_cmp("1a", "1"), Greater); // non-numeric → string compare
     }
 }
