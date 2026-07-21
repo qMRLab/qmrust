@@ -51,6 +51,28 @@ cosmetic: `qmt_spgr` reads each volume's identity from its sidecar's
 `Angle`/`Offset` fields (see below), so a fit is correct regardless of file
 order.
 
+## Non-official entities and suffixes
+
+The reader parses filenames against a **vocabulary** of the canonical BIDS
+entities, suffixes, and datatypes (`rust_bids::Vocabulary`), extended with every
+registered model's own suffix (so `QMTSPGR` is known with no configuration). A
+dataset that uses non-standard terms declares them in its grouping config rather
+than relying on anything hardcoded:
+
+```yaml
+custom_suffixes: [QMTSPGR]              # discoverable + .bidsignore-exempt
+custom_entities:
+  - { key: cest, name: cestPool }       # short key -> full column name
+```
+
+An unrecognized suffix is still read into the table (nothing is silently
+dropped) but flagged with a warning. Every input a fit consumes — B1/B0/R1 maps,
+and the brain **mask** — is located from this table by the collection's identity
+plus a declared suffix (and, for the mask, entity constraints given in the
+`--config` `mask:` block, e.g. `mask: { desc: brain }`), found wherever it lives
+in the raw tree or any `derivatives/<pipeline>/`. See
+[Adding a model](models.md) for the full contributor-facing customization.
+
 ## The I/O seam
 
 All filesystem access goes through the `fs::DatasetFs` trait rather than

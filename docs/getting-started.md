@@ -96,7 +96,7 @@ cargo run -p qmrust-cli -- bidsify \
 
 This writes `ds-qmrust/sub-01/anat/sub-01_inv-<i>_IRT1.nii.gz` (+
 `{InversionTime}` sidecars), `dataset_description.json`, `participants.tsv`,
-and the mask under `ds-qmrust/derivatives/qmrust/sub-01/anat/
+and the mask under `ds-qmrust/derivatives/preprocessed/sub-01/anat/
 sub-01_desc-brain_mask.nii.gz`.
 
 `bidsify` also supports `qmt_spgr`, whose BIDS identity is the custom,
@@ -122,9 +122,11 @@ sidecar carrying the acquisition metadata the fit reads back by identity:
 
 and a root `.bidsignore` containing `*QMTSPGR*` (so general BIDS validators
 skip the non-official suffix; qmrust's own layout resolver discovers it
-regardless — see [BIDS](bids.md)). Any aux maps present in `--mat-dir`
-(`R1map`/`B1map`/`B0map`/`Mask`) are written byte-identical under
-`ds-qmrust/derivatives/qmrust/sub-02/anat/`.
+regardless — see [BIDS](bids.md)). Any computed inputs present in `--mat-dir`
+are written byte-identical to a `preprocessed` derivatives pipeline: B1/B0
+field maps under `ds-qmrust/derivatives/preprocessed/sub-02/fmap/`
+(`_TB1map`/`_B0map`), the R1 map and brain mask under that pipeline's `anat/`
+(`_R1map`/`_desc-brain_mask`).
 
 Fitting the resulting `QMTSPGR` collection the same way as IRT1:
 
