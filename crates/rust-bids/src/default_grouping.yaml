@@ -1,0 +1,22 @@
+# Default qMRI-BIDS grouping grammar, compiled into rust-bids (include_str!).
+# Entity keys accept short (mt, inv, sub) or full (mtransfer, inversion, subject)
+# form; values are bare (matching is zero-padding-insensitive for integers).
+loop_over: [sub, ses, run, task]
+IRT1:
+  sequential_set:
+    by: [inv]
+QMTSPGR:
+  sequential_set:
+    by: [mt, flip]
+MTS:
+  named_set:
+    PDw:
+      flip: "1"
+      mt: "off"
+    MTw:
+      flip: "1"
+      mt: "on"
+    T1w:
+      flip: "2"
+      mt: "off"
+    required: [PDw, MTw, T1w]

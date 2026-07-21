@@ -135,30 +135,7 @@ pub fn parse_config(yaml: &str) -> Result<BidsConfig> {
 }
 
 pub fn default_config() -> BidsConfig {
-    parse_config(
-        r#"
-loop_over: [sub, ses, run, task]
-IRT1:
-  sequential_set:
-    by: [inv]
-QMTSPGR:
-  sequential_set:
-    by: [mt, flip]
-MTS:
-  named_set:
-    PDw:
-      flip: "flip-1"
-      mt: "mt-off"
-    MTw:
-      flip: "flip-1"
-      mt: "mt-on"
-    T1w:
-      flip: "flip-2"
-      mt: "mt-off"
-    required: [PDw, MTw, T1w]
-"#,
-    )
-    .expect("bundled default config is valid")
+    parse_config(include_str!("default_grouping.yaml")).expect("bundled default config is valid")
 }
 
 #[cfg(test)]
