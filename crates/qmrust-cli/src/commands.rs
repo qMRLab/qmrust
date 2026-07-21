@@ -4,7 +4,7 @@
 //! subcommand. `main.rs` parses arguments and calls straight into here, keeping
 //! the binary thin and this logic testable as part of the library.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use ndarray::{Array3, Array4};
 use nifti::NiftiHeader;
 use owo_colors::{OwoColorize, Stream::Stderr};
@@ -657,6 +657,7 @@ pub fn run_fit_bids(
     config_path: PathBuf,
     output_dir: PathBuf,
     threads: Option<usize>,
+    grouping: Option<PathBuf>,
 ) -> Result<()> {
     if let Some(n) = threads {
         rayon::ThreadPoolBuilder::new()
@@ -693,7 +694,15 @@ pub fn run_fit_bids(
     let fs = StdFs {
         root: bids_dir.clone(),
     };
-    let bids_cfg = rust_bids::default_config();
+    let bids_cfg = match &grouping {
+        Some(path) => {
+            let yaml = std::fs::read_to_string(path)
+                .with_context(|| format!("reading grouping manifest {:?}", path))?;
+            rust_bids::parse_config(&yaml)
+                .with_context(|| format!("parsing grouping manifest {:?}", path))?
+        }
+        None => rust_bids::default_config(),
+    };
     let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
 
     // Optional `mask:` config: which mask to apply, disambiguated by entity
@@ -1120,8 +1129,12 @@ mod tests {
     /// disk (same layout `load_collection`'s test builds) fitted through
     /// `run_fit_bids`, writing `T1.nii.gz` whose single voxel recovers the
     /// known T1.
-    #[test]
-    fn run_fit_bids_recovers_t1_from_a_synthetic_dataset() {
+    ///
+    /// Builds a synthetic single-voxel IRT1 BIDS dataset (T1 = 0.9 s, 7
+    /// inversion times) plus its `--config` and an empty output dir, returning
+    /// `(bids_dir, config_path, out_dir, tmp)` — `tmp` must be kept alive for
+    /// the duration of the test (it removes the fixture tree on drop).
+    fn synthetic_ir_dataset() -> (PathBuf, PathBuf, PathBuf, TempDir) {
         let tmp = TempDir::new("fit-bids");
         let bids_dir = tmp.0.join("dataset");
         let anat_dir = bids_dir.join("sub-01/anat");
@@ -1151,7 +1164,14 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.0.join("out");
-        run_fit_bids(bids_dir, config_path, out_dir.clone(), None).unwrap();
+        (bids_dir, config_path, out_dir, tmp)
+    }
+
+    #[test]
+    fn run_fit_bids_recovers_t1_from_a_synthetic_dataset() {
+        let t1 = 0.9_f64;
+        let (bids_dir, config_path, out_dir, _tmp) = synthetic_ir_dataset();
+        run_fit_bids(bids_dir, config_path, out_dir.clone(), None, None).unwrap();
 
         // BIDS-derivatives layout: output_dir is the derivatives root, so the
         // T1 map lands at qmrust/sub-01/anat/sub-01_T1map.nii.gz (mapped from
@@ -1182,6 +1202,31 @@ mod tests {
             dataset_description.exists(),
             "expected qmrust/dataset_description.json to exist"
         );
+    }
+
+    /// A `--grouping` manifest overriding the built-in default is honored:
+    /// the same synthetic IRT1 dataset still resolves into one collection
+    /// and fits to the known T1, proving `run_fit_bids` loads and applies
+    /// the custom manifest rather than always falling back to
+    /// `rust_bids::default_config()`.
+    #[test]
+    fn run_fit_bids_accepts_custom_grouping_file() {
+        let (bids_dir, config_path, out_dir, tmp) = synthetic_ir_dataset();
+        let grouping = tmp.0.join("grouping.yaml");
+        std::fs::write(
+            &grouping,
+            "loop_over: [sub, ses, run, task]\nIRT1:\n  sequential_set:\n    by: [inv]\n",
+        )
+        .unwrap();
+
+        run_fit_bids(bids_dir, config_path, out_dir.clone(), None, Some(grouping)).unwrap();
+
+        let t1_path = out_dir
+            .join("qmrust")
+            .join("sub-01")
+            .join("anat")
+            .join("sub-01_T1map.nii.gz");
+        assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
     }
 
     /// `write_derivatives` in isolation: given a fitted `FitResults` with a
@@ -1304,7 +1349,7 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.0.join("out");
-        let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None, None) {
             Ok(()) => panic!("a spatial-dims mismatch must fail the run, not be skipped"),
             Err(e) => e,
         };
@@ -1357,7 +1402,7 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.0.join("out");
-        let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None, None) {
             Ok(()) => panic!("a protocol-mismatched QMTSPGR dataset must bail, not exit Ok"),
             Err(e) => e,
         };
@@ -1398,7 +1443,7 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.0.join("out");
-        let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None, None) {
             Ok(()) => panic!("zero matching collections must bail, not exit Ok"),
             Err(e) => e,
         };
@@ -1605,7 +1650,8 @@ mod tests {
             out: bids_dir.clone(),
         })
         .expect("bidsify failed");
-        run_fit_bids(bids_dir, config, deriv_dir.clone(), None).expect("bids-path fit failed");
+        run_fit_bids(bids_dir, config, deriv_dir.clone(), None, None)
+            .expect("bids-path fit failed");
         let t1_bids = io::nifti::read_map_nifti(
             &deriv_dir
                 .join("qmrust")
@@ -1709,7 +1755,8 @@ mod tests {
             out: bids_dir.clone(),
         })
         .expect("bidsify failed");
-        run_fit_bids(bids_dir, config, deriv_dir.clone(), None).expect("bids-path fit failed");
+        run_fit_bids(bids_dir, config, deriv_dir.clone(), None, None)
+            .expect("bids-path fit failed");
 
         let anat = deriv_dir.join("qmrust").join("sub-02").join("anat");
         let f_bids =
