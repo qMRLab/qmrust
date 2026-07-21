@@ -140,11 +140,13 @@ raw tree + every `derivatives/<pipeline>/` — into a flat table
     `.bidsignore`-exempt.
   - `custom_entities: [{ key: cest, name: cestPool }]` — non-official entity
     key → full name.
-  - Grouping: `loop_over: [subject, session, run, task]` (collection
+  - Grouping: `loop_over: [sub, ses, run, task]` (collection
     identity) plus per-suffix `sequential_set: { by: [...] }` (ordered
-    series, e.g. IRT1 `by: [inversion]`, QMTSPGR `by: [mtransfer, flip]`) or
+    series, e.g. IRT1 `by: [inv]`, QMTSPGR `by: [mt, flip]`) or
     `named_set: { <role>: {...}, required: [...] }` (fixed role slots, e.g.
-    MTS PDw/MTw/T1w).
+    MTS PDw/MTw/T1w). Entity keys accept either the short BIDS-filename form
+    (`mt`, `inv`, `sub`) or the full name (`mtransfer`, `inversion`, `subject`);
+    both normalize to the same entity.
 - **Aux + mask resolution** (`qmrust-cli::commands::resolve_aux_and_mask`): a
   fit resolves each `required_inputs()` entry from the table by the
   collection's full identity + declared suffix (+ `BidsMap.entity`), found

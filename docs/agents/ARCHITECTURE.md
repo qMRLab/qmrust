@@ -211,7 +211,7 @@ YAML config ─► config::parse_config ─► (Config, raw Value)
    registry::by_name(cfg.model).build(raw, protocol) ─► Box<dyn Model>
    shell loads model.required_inputs() as 3-D maps ─► AuxMaps
    shell labels each data volume with a VolumeId (Role or Params)
-   engine::run(model, data4d, mask, volume_ids, aux, progress) ─► FitResults (name → 3-D map)
+   engine::run(model, data4d, volume_ids, mask, aux, progress) ─► FitResults (name → 3-D map)
    io::nifti writes each map
 ```
 
@@ -339,7 +339,7 @@ locators, and reads a `Series` measurement keyed by `(Angle, Offset)` rather tha
 
 ```rust
 fn required_inputs(&self) -> Vec<InputSpec> { vec![
-    InputSpec { name: "R1map", required: false, bids: Some(BidsMap { suffix: "T1map",  entity: None }) },
+    InputSpec { name: "R1map", required: false, bids: Some(BidsMap { suffix: "R1map",  entity: None }) },
     InputSpec { name: "B1map", required: false, bids: Some(BidsMap { suffix: "TB1map", entity: None }) },
     InputSpec { name: "B0map", required: false, bids: Some(BidsMap { suffix: "B0map",  entity: None }) },
 ]}

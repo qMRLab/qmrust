@@ -95,7 +95,7 @@ A model doesn't read files or JSON; it declares what it needs, and the shell
   ```rust
   fn required_inputs(&self) -> Vec<InputSpec> {
       vec![
-          InputSpec { name: "R1map", required: false, bids: Some(BidsMap { suffix: "T1map",  entity: None }) },
+          InputSpec { name: "R1map", required: false, bids: Some(BidsMap { suffix: "R1map",  entity: None }) },
           InputSpec { name: "B1map", required: false, bids: Some(BidsMap { suffix: "TB1map", entity: None }) },
           InputSpec { name: "B0map", required: false, bids: Some(BidsMap { suffix: "B0map",  entity: None }) },
       ]
