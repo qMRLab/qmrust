@@ -2,7 +2,7 @@
 
 use crate::core::model::{
     validate_against_protocol, Aux, BidsMap, BidsSpec, EntityRole, FitStrategy, InputSpec,
-    Measurement, MeasurementKind, Model, Protocol, Sample,
+    Measurement, MeasurementKind, Model, ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::qmt_spgr::config::QmtSpgrConfig;
 use crate::models::qmt_spgr::QmtSpgrFitter;
@@ -39,7 +39,8 @@ fn qmt_rows(protocol: &[[f64; 2]]) -> Vec<BTreeMap<String, f64>> {
         .collect()
 }
 
-const QMT_ENTITIES: &[EntityRole] = &[EntityRole::Mt, EntityRole::Flip];
+// Order matches the qMRLab QMTSPGR filename convention: flip-<i>_mt-<i>.
+const QMT_ENTITIES: &[EntityRole] = &[EntityRole::Flip, EntityRole::Mt];
 
 impl Model for QmtModel {
     fn param_names(&self) -> Vec<&'static str> {
@@ -63,8 +64,15 @@ impl Model for QmtModel {
             InputSpec {
                 name: "R1map",
                 required: false,
+                // This aux is an R1 map (rate, 1/s, VFA-derived per qMRLab),
+                // not a T1 map — the honest BIDS locator is `R1map`, matching
+                // both the data's actual units and what `bidsify` writes
+                // (`sub-XX_R1map.nii.gz`). Labeling it `T1map` would be a
+                // units/semantic error that a future BIDS-aux resolver would
+                // silently fail to find (searching for a `T1map`-suffixed
+                // file that doesn't exist).
                 bids: Some(BidsMap {
-                    suffix: "T1map",
+                    suffix: "R1map",
                     entity: None,
                 }),
             },
@@ -151,9 +159,37 @@ impl Model for QmtModel {
     }
     fn bids(&self) -> Option<BidsSpec> {
         Some(BidsSpec {
-            suffix: "MTS",
+            suffix: "QMTSPGR",
             entities: QMT_ENTITIES,
         })
+    }
+    fn protocol_schema(&self) -> Vec<ProtoParam> {
+        // Matches the "Angle"/"Offset" keys `qmt_rows`/`forward`/`fit` use, so
+        // a BIDS-resolved protocol is matched by identity, never by position.
+        vec![
+            ProtoParam {
+                name: "Angle",
+                source: Source::Field("Angle"),
+                scope: Scope::PerVolume,
+            },
+            ProtoParam {
+                name: "Offset",
+                source: Source::Field("Offset"),
+                scope: Scope::PerVolume,
+            },
+        ]
+    }
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
+        // Per qMRLab QMTSPGR convention; `kf` (derived kr*F) and `resnorm`
+        // (diagnostic) are omitted.
+        vec![
+            ("F", "Fmap", ""),
+            ("kr", "kRmap", "1/s"),
+            ("R1f", "R1Fmap", "1/s"),
+            ("R1r", "R1Rmap", "1/s"),
+            ("T2f", "T2Fmap", "s"),
+            ("T2r", "T2Rmap", "s"),
+        ]
     }
 }
 
@@ -256,8 +292,20 @@ mod tests {
     }
 
     #[test]
-    fn declares_bids_mts() {
+    fn bids_outputs_reference_real_output_names() {
         let m = build(&qmt_value(), &Protocol::default()).unwrap();
-        assert_eq!(m.bids().unwrap().suffix, "MTS");
+        let names = m.output_names();
+        for (out, _suffix, _units) in m.bids_outputs() {
+            assert!(
+                names.iter().any(|n| n == out),
+                "bids_outputs references '{out}', not in output_names {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn declares_bids_qmtspgr() {
+        let m = build(&qmt_value(), &Protocol::default()).unwrap();
+        assert_eq!(m.bids().unwrap().suffix, "QMTSPGR");
     }
 }

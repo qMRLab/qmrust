@@ -138,21 +138,24 @@ fn compute_exp_and_norm(t_vec: &Array1<f64>, t1_vec: &Array1<f64>) -> (Array2<f6
     (the_exp, rho_norm_vec)
 }
 
+/// Build the RD-NLS search grid. `ti_values` and the T1 grid
+/// (`t1_start`/`t1_stop`/`t1_step`) are all in BIDS-native **seconds**; the
+/// fit is scale-consistent, so whatever unit TI and the T1 grid share is the
+/// unit the fitted T1 comes out in.
 fn build_nls_struct(
     ti_values: &[f64],
-    t1_start: u32,
-    t1_stop: u32,
-    t1_step: u32,
+    t1_start: f64,
+    t1_stop: f64,
+    t1_step: f64,
     nbr_of_zoom: usize,
     t1_len_z: usize,
 ) -> NlsStruct {
     let t_vec = Array1::from_vec(ti_values.to_vec());
     let n = t_vec.len();
-    let t1_vec = Array1::from_iter(
-        (t1_start..=t1_stop)
-            .step_by(t1_step as usize)
-            .map(|v| v as f64),
-    );
+    // Float grid (seconds): n points from t1_start to t1_stop inclusive,
+    // spaced by t1_step (rounded to the nearest integer point count).
+    let n_t1 = ((t1_stop - t1_start) / t1_step).round() as usize + 1;
+    let t1_vec = Array1::from_iter((0..n_t1).map(|i| t1_start + i as f64 * t1_step));
     let (the_exp, rho_norm_vec) = compute_exp_and_norm(&t_vec, &t1_vec);
 
     NlsStruct {
@@ -389,9 +392,10 @@ fn rd_nls_pr(data: &Array1<f64>, nls: &NlsStruct) -> FitResult {
 mod tests {
     use super::*;
 
+    /// Inversion times in seconds (BIDS-native).
     fn default_ti() -> Vec<f64> {
         vec![
-            350.0, 500.0, 650.0, 800.0, 950.0, 1100.0, 1250.0, 1400.0, 1700.0,
+            0.350, 0.500, 0.650, 0.800, 0.950, 1.100, 1.250, 1.400, 1.700,
         ]
     }
 
@@ -408,25 +412,30 @@ mod tests {
         assert!((v[2] - 3.0).abs() < 1e-12);
     }
 
+    /// Default seconds-native grid: 0.001..5.0 s in 0.001 s steps (5000 pts).
+    const T1_START: f64 = 0.001;
+    const T1_STOP: f64 = 5.0;
+    const T1_STEP: f64 = 0.001;
+
     #[test]
     fn test_build_nls_struct() {
         let ti = default_ti();
-        let nls = build_nls_struct(&ti, 1, 5000, 1, 2, 21);
+        let nls = build_nls_struct(&ti, T1_START, T1_STOP, T1_STEP, 2, 21);
         assert_eq!(nls.n, 9);
         assert_eq!(nls.t1_vec.len(), 5000);
         assert_eq!(nls.the_exp.dim(), (9, 5000));
-        let expected = (-350.0_f64 / 500.0).exp();
+        let expected = (-0.350_f64 / 0.500).exp();
         assert!((nls.the_exp[[0, 499]] - expected).abs() < 1e-12);
     }
 
     #[test]
     fn test_rd_nls_recovers_known_t1() {
         let ti = default_ti();
-        let data = ir_signal(&ti, 900.0, 500.0, -1000.0);
-        let nls = build_nls_struct(&ti, 1, 5000, 1, 2, 21);
+        let data = ir_signal(&ti, 0.9, 500.0, -1000.0);
+        let nls = build_nls_struct(&ti, T1_START, T1_STOP, T1_STEP, 2, 21);
         let r = rd_nls(&data, &nls);
 
-        assert!((r.t1 - 900.0).abs() < 1.0, "T1: {}", r.t1);
+        assert!((r.t1 - 0.9).abs() < 1e-3, "T1: {}", r.t1);
         assert!((r.a - 500.0).abs() < 1.0, "a: {}", r.a);
         assert!((r.b - -1000.0).abs() < 1.0, "b: {}", r.b);
         assert!(r.residual < 1e-6);
@@ -438,34 +447,39 @@ mod tests {
         let ti = default_ti();
         let data = Array1::from_iter(
             ti.iter()
-                .map(|&t| (500.0 + -1000.0 * (-t / 900.0).exp()).abs()),
+                .map(|&t| (500.0 + -1000.0 * (-t / 0.9).exp()).abs()),
         );
-        let nls = build_nls_struct(&ti, 1, 5000, 1, 2, 21);
+        let nls = build_nls_struct(&ti, T1_START, T1_STOP, T1_STEP, 2, 21);
         let r = rd_nls_pr(&data, &nls);
 
-        assert!((r.t1 - 900.0).abs() < 5.0, "T1: {}", r.t1);
+        assert!((r.t1 - 0.9).abs() < 5e-3, "T1: {}", r.t1);
         assert!(r.idx.is_some());
     }
 
     #[test]
     fn test_rd_nls_various_t1_values() {
         let ti = default_ti();
-        let nls = build_nls_struct(&ti, 1, 5000, 1, 2, 21);
+        let nls = build_nls_struct(&ti, T1_START, T1_STOP, T1_STEP, 2, 21);
 
-        for &true_t1 in &[200.0, 500.0, 1000.0, 2000.0, 4000.0] {
+        for &true_t1 in &[0.2, 0.5, 1.0, 2.0, 4.0] {
             let data = ir_signal(&ti, true_t1, 500.0, -1000.0);
             let r = rd_nls(&data, &nls);
-            assert!((r.t1 - true_t1).abs() < 1.0, "T1={}: got {}", true_t1, r.t1);
+            assert!(
+                (r.t1 - true_t1).abs() < 1e-3,
+                "T1={}: got {}",
+                true_t1,
+                r.t1
+            );
         }
     }
 
     #[test]
     fn test_rd_nls_no_zoom() {
         let ti = default_ti();
-        let nls = build_nls_struct(&ti, 1, 5000, 1, 1, 21);
-        let data = ir_signal(&ti, 900.0, 500.0, -1000.0);
+        let nls = build_nls_struct(&ti, T1_START, T1_STOP, T1_STEP, 1, 21);
+        let data = ir_signal(&ti, 0.9, 500.0, -1000.0);
         let r = rd_nls(&data, &nls);
-        assert!((r.t1 - 900.0).abs() < 2.0, "T1: {}", r.t1);
+        assert!((r.t1 - 0.9).abs() < 2e-3, "T1: {}", r.t1);
     }
 
     #[test]
@@ -475,11 +489,12 @@ mod tests {
             method: Some(FitMethod::Complex),
             t1_range: Default::default(),
             zoom: Default::default(),
+            repetition_time: None,
         };
         let fitter = IrFitter::new(&cfg);
-        let sig = fitter.forward(900.0, 500.0, -1000.0);
+        let sig = fitter.forward(0.9, 500.0, -1000.0);
         assert_eq!(sig.len(), default_ti().len());
         let out = fitter.fit_voxel(&Array1::from_vec(sig));
-        assert!((out[0] - 900.0).abs() < 1.0, "T1: {}", out[0]);
+        assert!((out[0] - 0.9).abs() < 1e-3, "T1: {}", out[0]);
     }
 }

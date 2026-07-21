@@ -32,13 +32,16 @@ pub fn read_4d_nifti(path: &Path) -> Result<(Array4<f64>, NiftiHeader)> {
             Ok((arr, header))
         }
         3 => {
-            // Treat 3D as 4D with z=1 by adding a dimension
-            // Actually, if it's 3D it means (x, y, n_ti) with no z slice
-            // Reshape to (x, y, 1, n_ti)
-            let dim = (shape[0], shape[1], 1, shape[2]);
-            let flat = data.into_raw_vec_and_offset().0;
-            let arr =
-                Array4::from_shape_vec(dim, flat).context("Failed to reshape 3D NIfTI to 4D")?;
+            // Treat 3D as 4D with z=1: (x, y, n_ti) with no z slice -> (x, y, 1, n_ti).
+            // `into_ndarray` returns Fortran-ordered memory (see the `nifti`
+            // crate's doc note); pulling the raw buffer and re-wrapping it
+            // with `from_shape_vec` (which assumes C order) would silently
+            // transpose non-square data. `insert_axis` adds the singleton
+            // dimension by logical index instead, so it's layout-agnostic.
+            let arr = data
+                .insert_axis(ndarray::Axis(2))
+                .into_dimensionality::<ndarray::Ix4>()
+                .map_err(|e| anyhow::anyhow!("Failed to reshape 3D NIfTI to 4D: {}", e))?;
             Ok((arr, header))
         }
         _ => bail!(
@@ -61,17 +64,13 @@ pub fn read_mask_nifti(path: &Path) -> Result<Array3<bool>> {
             Ok(arr.mapv(|v| v > 0.0))
         }
         2 => {
-            // 2D mask → (x, y, 1)
-            let dim = (shape[0], shape[1], 1);
-            let flat: Vec<bool> = data
-                .into_raw_vec_and_offset()
-                .0
-                .into_iter()
-                .map(|v| v > 0.0)
-                .collect();
-            let arr =
-                Array3::from_shape_vec(dim, flat).context("Failed to reshape 2D mask to 3D")?;
-            Ok(arr)
+            // 2D mask → (x, y, 1). See the 3D branch of `read_4d_nifti` for
+            // why `insert_axis` (not a raw-buffer `from_shape_vec`) is required.
+            let arr = data
+                .insert_axis(ndarray::Axis(2))
+                .into_dimensionality::<ndarray::Ix3>()
+                .map_err(|e| anyhow::anyhow!("Failed to reshape 2D mask to 3D: {}", e))?;
+            Ok(arr.mapv(|v| v > 0.0))
         }
         _ => bail!(
             "Expected 2D or 3D mask NIfTI, got {}D from {:?}",
@@ -97,11 +96,10 @@ pub fn read_map_nifti_with_header(path: &Path) -> Result<(Array3<f64>, NiftiHead
         3 => data
             .into_dimensionality::<ndarray::Ix3>()
             .map_err(|e| anyhow::anyhow!("Failed to reshape map to 3D: {}", e))?,
-        2 => {
-            let dim = (shape[0], shape[1], 1);
-            let flat = data.into_raw_vec_and_offset().0;
-            Array3::from_shape_vec(dim, flat).context("Failed to reshape 2D map to 3D")?
-        }
+        2 => data
+            .insert_axis(ndarray::Axis(2))
+            .into_dimensionality::<ndarray::Ix3>()
+            .map_err(|e| anyhow::anyhow!("Failed to reshape 2D map to 3D: {}", e))?,
         _ => bail!(
             "Expected 2D or 3D NIfTI map, got {}D from {:?}",
             shape.len(),

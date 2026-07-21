@@ -181,6 +181,15 @@ struct InputData {
     ti_override: Option<Vec<f64>>,
 }
 
+/// qMRLab `.mat` inversion times are in milliseconds; `qmrust-core` is
+/// BIDS-native seconds (see CLAUDE.md "Units — BIDS-native"). This is the
+/// ms -> s conversion boundary for `.mat`-supplied TI: everything downstream
+/// (`ti_override`, the resolved `Protocol`, and the fitted model) must see
+/// seconds, never ms.
+pub(crate) fn mat_ti_to_seconds(ti: Option<Vec<f64>>) -> Option<Vec<f64>> {
+    ti.map(|ti| ti.iter().map(|t| t / 1000.0).collect())
+}
+
 fn load_input(
     data_path: Option<&PathBuf>,
     mat_path: Option<&PathBuf>,
@@ -225,7 +234,7 @@ fn load_input(
                 data: mat.ir_data,
                 mask,
                 nifti_header: None,
-                ti_override: mat.ti,
+                ti_override: mat_ti_to_seconds(mat.ti),
             })
         }
         (None, None) => bail!("Must provide either --data (NIfTI) or --mat-data (.mat)"),
@@ -255,9 +264,9 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 /// triple the engine needs: the volumes stacked in the collection's order as
 /// `[nx,ny,nz,nt]`, the per-volume sidecar `Protocol` (resolved against
 /// `schema`), and the first volume's header for output geometry. `Named`
-/// collections (e.g. qMT-style MTS sets) are a later increment — reordering
-/// them to a model's `required` axis order is not yet implemented, so they
-/// bail loudly rather than silently mis-assign volumes.
+/// collections (e.g. MTsat-style MTS sets) bail loudly: reordering their
+/// role-labeled volumes to a model's `required` axis order is not implemented,
+/// and silently mis-assigning volumes would be worse than refusing.
 ///
 /// An empty `schema` (a model that hasn't declared a `protocol_schema()`)
 /// resolves to an empty `Protocol` — the model falls back to reading its own
@@ -271,7 +280,7 @@ fn load_collection(
     let vols = match &c.data {
         GroupedData::Sequential(vols) => vols,
         GroupedData::Named(_) => {
-            bail!("named-collection fit not yet supported (see fitting-integration follow-ups)")
+            bail!("named-collection fit not yet supported")
         }
     };
     if vols.is_empty() {
@@ -451,20 +460,17 @@ pub fn run_fit(
     )
 }
 
-/// Run the engine over one (data, protocol) volume and write the result maps
-/// as NIfTI into `output_dir` — the shared tail of both `run_fit` (NIfTI/.mat
-/// input) and `run_fit_bids` (one call per resolved BIDS collection).
-#[allow(clippy::too_many_arguments)]
-fn fit_and_write(
+/// Run the engine over one (data, protocol) volume, honoring the model's
+/// `FitStrategy`/measurement kind. Shared by `fit_and_write` (flat `run_fit`
+/// output) and `run_fit_bids` (BIDS-derivatives output) so both write from
+/// the identical `FitResults`.
+fn run_model_fit(
     model: &dyn Model,
     data: &Array4<f64>,
     proto: &Protocol,
     mask: Option<&Array3<bool>>,
     aux: &AuxMaps,
-    header: &NiftiHeader,
-    from_mat: bool,
-    output_dir: &Path,
-) -> Result<()> {
+) -> Result<qmrust_core::fitting::FitResults> {
     let n_volumes = data.dim().3;
     // Build the per-volume identities from the model's declared measurement
     // kind and the resolved protocol — no per-model branching. `Named` maps
@@ -483,6 +489,25 @@ fn fit_and_write(
         "{}",
         done_msg.if_supports_color(Stderr, |t| t.green().bold().to_string())
     );
+    Ok(results)
+}
+
+/// Run the engine over one (data, protocol) volume and write the result maps
+/// as NIfTI into `output_dir` — the flat layout `run_fit` (NIfTI/.mat input)
+/// uses. Behaviour-preserving: unchanged since before the BIDS-derivatives
+/// output was added (the OSF integration script asserts `out_ir/T1.nii.gz`).
+#[allow(clippy::too_many_arguments)]
+fn fit_and_write(
+    model: &dyn Model,
+    data: &Array4<f64>,
+    proto: &Protocol,
+    mask: Option<&Array3<bool>>,
+    aux: &AuxMaps,
+    header: &NiftiHeader,
+    from_mat: bool,
+    output_dir: &Path,
+) -> Result<()> {
+    let results = run_model_fit(model, data, proto, mask, aux)?;
 
     std::fs::create_dir_all(output_dir)?;
     eprintln!("Writing results to {:?}...", output_dir);
@@ -507,12 +532,127 @@ fn fit_and_write(
     Ok(())
 }
 
+/// Compact JSON view of a resolved `Protocol`, faithful to what the fit
+/// actually used: per-volume params grouped into arrays keyed by param name
+/// (e.g. `"InversionTime": [0.35, 0.5, ...]`, one entry per volume, in
+/// acquisition order) plus any collection-wide scalars from `proto.global`.
+fn protocol_to_json(proto: &Protocol) -> serde_json::Value {
+    let mut by_param: std::collections::BTreeMap<&str, Vec<f64>> =
+        std::collections::BTreeMap::new();
+    for volume in &proto.volumes {
+        for (key, value) in volume {
+            by_param.entry(key.as_str()).or_default().push(*value);
+        }
+    }
+    let mut out = serde_json::Map::new();
+    for (key, values) in by_param {
+        out.insert(key.to_string(), serde_json::json!(values));
+    }
+    for (key, value) in &proto.global {
+        out.insert(key.clone(), serde_json::json!(value));
+    }
+    serde_json::Value::Object(out)
+}
+
+/// The input volumes a collection's fit read from, as dataset-relative BIDS
+/// URIs (`bids::<path relative to the dataset root>`). `VolumeRef.nii` is
+/// already dataset-relative under `StdFs`; the `bids_dir` strip keeps the URI
+/// relative if the path is ever absolute.
+fn collection_sources(c: &Collection, bids_dir: &Path) -> Vec<String> {
+    let volumes: Vec<&str> = match &c.data {
+        GroupedData::Sequential(v) => v.iter().map(|r| r.nii.as_str()).collect(),
+        GroupedData::Named(m) => m.values().map(|r| r.nii.as_str()).collect(),
+    };
+    volumes
+        .into_iter()
+        .map(|nii| {
+            let rel = Path::new(nii)
+                .strip_prefix(bids_dir)
+                .unwrap_or(Path::new(nii));
+            format!("bids::{}", rel.display())
+        })
+        .collect()
+}
+
+/// Write `model`'s declared BIDS output maps (`Model::bids_outputs()`) from a
+/// fitted `results` into a BIDS-derivatives tree rooted at `deriv_root`:
+/// `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`
+/// plus a full provenance JSON sidecar (`prov.sidecar(units)`) next to each.
+/// Outputs `bids_outputs()` doesn't declare (diagnostics like
+/// `res`/`idx`/`kf`/`resnorm`) are never written —
+/// only real BIDS maps get exported to the derivatives layout. Uses the same
+/// writer `fit_and_write`'s flat output uses (`write_map_nifti` for
+/// `.mat`-sourced data, `write_3d_nifti` otherwise), so map values are
+/// byte-identical between the flat and derivatives layouts. Also ensures a
+/// `deriv_root/qmrust/dataset_description.json` exists (created once, never
+/// overwritten on subsequent subjects/sessions).
+// One parameter per independent piece of write context (map data, model,
+// BIDS entities, output root, header/source-format, provenance) — a params
+// struct would just relocate the same fields without reducing them.
+#[allow(clippy::too_many_arguments)]
+fn write_derivatives(
+    results: &qmrust_core::fitting::FitResults,
+    model: &dyn Model,
+    subject: &str,
+    session: Option<&str>,
+    deriv_root: &Path,
+    header: &NiftiHeader,
+    from_mat: bool,
+    prov: &crate::provenance::FitProvenance,
+) -> Result<()> {
+    let qmrust_root = deriv_root.join("qmrust");
+    std::fs::create_dir_all(&qmrust_root)?;
+    let dd_path = qmrust_root.join("dataset_description.json");
+    if !dd_path.exists() {
+        let dd = serde_json::json!({
+            "Name": "qmrust derivatives",
+            "BIDSVersion": "1.8.0",
+            "GeneratedBy": [crate::provenance::generated_by()],
+            "DatasetType": "derivative",
+        });
+        std::fs::write(&dd_path, serde_json::to_string_pretty(&dd)?)?;
+    }
+
+    let subject_dir = match session {
+        Some(ses) => qmrust_root.join(subject).join(ses),
+        None => qmrust_root.join(subject),
+    };
+    let anat_dir = subject_dir.join("anat");
+    std::fs::create_dir_all(&anat_dir)?;
+
+    let entity_stem = match session {
+        Some(ses) => format!("{subject}_{ses}"),
+        None => subject.to_string(),
+    };
+
+    for (output_name, suffix, units) in model.bids_outputs() {
+        let Some(map) = results.get(output_name) else {
+            continue;
+        };
+        let base = format!("{entity_stem}_{suffix}");
+        let nii_path = anat_dir.join(format!("{base}.nii.gz"));
+        if from_mat {
+            io::nifti::write_map_nifti(map, header, &nii_path)?;
+        } else {
+            io::nifti::write_3d_nifti(map, header, &nii_path)?;
+        }
+        let json_path = anat_dir.join(format!("{base}.json"));
+        std::fs::write(
+            &json_path,
+            serde_json::to_string_pretty(&prov.sidecar(units))?,
+        )?;
+    }
+    Ok(())
+}
+
 /// Fit every collection of a BIDS dataset matching the config's model,
 /// writing each subject's (and session's, if present) result maps under
-/// `output_dir/<subject>[/<session>]/`. v1 targets no-aux models (e.g. IRT1):
-/// BIDS-side B1/B0/R1 map resolution is a follow-up, so a model that
-/// `required`-declares any aux input is rejected up front rather than fit
-/// with a silently-missing map.
+/// `output_dir/qmrust/<subject>[/<session>]/anat/` in the BIDS-derivatives
+/// layout (see `write_derivatives`). Each model's declared auxiliary inputs
+/// (B1/B0/R1) and a brain mask are resolved from the dataset's file table by
+/// BIDS suffix — found wherever they live, raw tree or any `derivatives/`
+/// pipeline — and fed to the fit; a `required` input that is absent is a hard
+/// error, an optional one simply falls back to the model's default.
 pub fn run_fit_bids(
     bids_dir: PathBuf,
     config_path: PathBuf,
@@ -539,38 +679,53 @@ pub fn run_fit_bids(
         )
     })?;
 
-    // Probe the model's shape (required aux, series identity keys) against an
+    // Probe the model's shape (declared aux, series identity keys) against an
     // empty protocol — these are structural and don't depend on any one
     // collection's resolved sidecar values.
     let probe = (entry.build)(&raw, &Protocol::default())?;
-    let required: Vec<&'static str> = probe
-        .required_inputs()
-        .into_iter()
-        .filter(|s| s.required)
-        .map(|s| s.name)
-        .collect();
-    if !required.is_empty() {
-        bail!(
-            "qmrust fit --bids-dir does not yet resolve BIDS auxiliary maps; model '{}' \
-             requires {:?}. This is a tracked follow-up — for now, fit it via --mat-dir/--data \
-             with explicit --r1map/--b1map/--b0map.",
-            cfg.model,
-            required
-        );
-    }
     // Declarative BIDS metadata -> protocol mapping. Empty for a model that
     // hasn't migrated to `protocol_schema()` yet — `load_collection` then
     // falls back to an empty `Protocol`, matching pre-schema behaviour.
     let schema = probe.protocol_schema();
-    // No model declares a `Source::Option` param yet; wired here so a future
-    // one can read its options straight out of `--config`.
+    // `Source::Option` protocol params fall back to `--config`; the BIDS path
+    // resolves protocol from sidecars, so no options are supplied.
     let options: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
 
     let fs = StdFs {
         root: bids_dir.clone(),
     };
     let bids_cfg = rust_bids::default_config();
+    let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
+
+    // Optional `mask:` config: which mask to apply, disambiguated by entity
+    // constraints. Its entity keys are normalized (e.g. `desc` -> `description`)
+    // to match how the table stores them.
+    let mask_spec: Option<MaskSpec> = raw
+        .get("mask")
+        .map(|v| serde_yaml::from_value::<MaskSpec>(v.clone()))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid `mask:` config: {e}"))?
+        .map(|spec| MaskSpec {
+            suffix: spec.suffix,
+            entities: spec
+                .entities
+                .into_iter()
+                .map(|(k, v)| (vocab.normalize_entity_key(&k), v))
+                .collect(),
+        });
     let suffix = entry.bids_suffix;
+    // The flat file table spans the whole dataset — raw tree and every
+    // `derivatives/` pipeline — and is the single source from which each
+    // collection's auxiliary inputs (B1/B0/R1, mask) are located by suffix.
+    let table = rust_bids::parse_to_table(&fs, &vocab)?;
+    for unknown in table
+        .iter()
+        .map(|r| r.suffix.as_str())
+        .filter(|s| !vocab.is_known_suffix(s))
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        eprintln!("warning (vocabulary): unrecognized suffix '{unknown}' — not a canonical BIDS suffix, registered model, or declared custom suffix");
+    }
     let collections = rust_bids::collections_for(&fs, &bids_cfg, suffix)?;
 
     if collections.is_empty() {
@@ -596,14 +751,15 @@ pub fn run_fit_bids(
         };
 
         // Only the expected, structural case is a skip: `Named` collections
-        // (e.g. qMT/MTS-style sets) aren't reorderable to a model's axis order
+        // (e.g. MTsat-style MTS sets) aren't reorderable to a model's axis order
         // yet (see `load_collection`). Anything else `load_collection` (or the
-        // model build / fit_and_write below) reports — a corrupt NIfTI, a
-        // spatial-dims mismatch, a broken sidecar — is a real failure and must
-        // propagate loudly (`?`), never be logged-and-skipped alongside it.
+        // model build / run_model_fit / write_derivatives below) reports — a
+        // corrupt NIfTI, a spatial-dims mismatch, a broken sidecar — is a real
+        // failure and must propagate loudly (`?`), never be logged-and-skipped
+        // alongside it.
         if matches!(c.data, GroupedData::Named(_)) {
             eprintln!(
-                "  skipping {}: named-collection fit not yet supported (follow-up)",
+                "  skipping {}: named-collection fit not yet supported",
                 label
             );
             skipped += 1;
@@ -620,20 +776,47 @@ pub fn run_fit_bids(
         let (nx, ny, nz, _) = data.dim();
         let header = header.unwrap_or_else(|| make_minimal_header(nx, ny, nz));
 
-        let subject_dir = match &c.session {
-            Some(ses) => output_dir.join(&c.subject).join(ses),
-            None => output_dir.join(&c.subject),
-        };
-
-        fit_and_write(
+        let (aux, mask, aux_sources) = resolve_aux_and_mask(
+            &table,
             model.as_ref(),
-            &data,
-            &proto,
-            None,
-            &AuxMaps::empty(),
+            &c.entities,
+            mask_spec.as_ref(),
+            &bids_dir,
+        )?;
+        for src in &aux_sources {
+            eprintln!("  input: {src}");
+        }
+
+        let executed_at_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let fit_started = std::time::Instant::now();
+        let results = run_model_fit(model.as_ref(), &data, &proto, mask.as_ref(), &aux)?;
+        let duration_s = fit_started.elapsed().as_secs_f64();
+
+        let mut sources = collection_sources(c, &bids_dir);
+        sources.extend(aux_sources);
+        let prov = crate::provenance::FitProvenance {
+            model: cfg.model.clone(),
+            config_json: serde_json::to_value(&raw)?,
+            protocol_json: protocol_to_json(&proto),
+            sources,
+            executed_at_unix,
+            duration_s,
+        };
+        // `output_dir` is treated as the derivatives root: BIDS output lands
+        // at `output_dir/qmrust/<subject>[/<session>]/anat/...` (see
+        // `write_derivatives`), not the flat layout `run_fit` uses.
+        write_derivatives(
+            &results,
+            model.as_ref(),
+            &c.subject,
+            c.session.as_deref(),
+            &output_dir,
             &header,
             from_mat,
-            &subject_dir,
+            &prov,
         )?;
         fit_count += 1;
     }
@@ -651,11 +834,131 @@ pub fn run_fit_bids(
     Ok(())
 }
 
+/// Locate a single input file for a collection by matching its full grouping
+/// `identity` (every entity the dataset groups by) plus `extra` constraints
+/// (the declared BIDS suffix, and any entity the model says indexes the input)
+/// against the whole dataset `table` — raw tree and every `derivatives/`
+/// pipeline alike. `None` when nothing matches; an error when several do, so an
+/// ambiguous input is surfaced rather than silently chosen. Nothing here is
+/// model- or dataset-specific: the model supplies `extra`, the collection
+/// supplies `identity`, and `table_filter` does the rest.
+/// How to locate the brain mask for a fit, declared in `--config` under a
+/// `mask:` key. `suffix` is the BIDS suffix (default `mask`); every other field
+/// is an entity constraint (`desc: brain`) that disambiguates which mask to use
+/// when a dataset holds several. Absent `mask:` means no masking — a mask is
+/// never guessed, because a dataset can carry many (brain, tissue, lesion, …)
+/// and auto-picking one is ill-posed.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MaskSpec {
+    #[serde(default = "default_mask_suffix")]
+    suffix: String,
+    #[serde(flatten)]
+    entities: std::collections::BTreeMap<String, String>,
+}
+
+fn default_mask_suffix() -> String {
+    "mask".to_string()
+}
+
+fn find_input<'a>(
+    table: &'a [rust_bids::BidsRow],
+    identity: &std::collections::BTreeMap<String, String>,
+    extra: &[(&str, &str)],
+) -> Result<Option<&'a rust_bids::BidsRow>> {
+    let mut constraints: Vec<(&str, &str)> = identity
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    constraints.extend_from_slice(extra);
+    let hits = rust_bids::table_filter(table, &constraints);
+    match hits.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(one)),
+        many => bail!(
+            "ambiguous input for {:?}: {} candidates ({})",
+            constraints,
+            many.len(),
+            many.iter()
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+/// Resolve a model's declared BIDS auxiliary inputs and a brain mask for one
+/// collection from the dataset `table`. Each input is located by the
+/// collection's full entity `identity` + its declared BIDS suffix (+ any
+/// `BidsMap.entity` the model declares), so it is matched on whatever entities
+/// identify the collection — subject/session/run/… alike — not a fixed pair.
+/// A `required` input that is absent is a hard error; an optional one becomes a
+/// `None` entry (the model uses its default). A brain mask is applied only when
+/// `mask_spec` is given (from the config's `mask:` key): it is located by the
+/// collection identity + the spec's suffix and entity constraints, so a dataset
+/// with several masks is disambiguated by the config rather than guessed.
+/// Returns the aux bundle, the optional mask, and the dataset-relative paths of
+/// every input loaded (for provenance `Sources`).
+fn resolve_aux_and_mask(
+    table: &[rust_bids::BidsRow],
+    model: &dyn Model,
+    identity: &std::collections::BTreeMap<String, String>,
+    mask_spec: Option<&MaskSpec>,
+    bids_dir: &Path,
+) -> Result<(AuxMaps, Option<Array3<bool>>, Vec<String>)> {
+    let mut maps: Vec<(String, Option<Array3<f64>>)> = Vec::new();
+    let mut sources: Vec<String> = Vec::new();
+    for spec in model.required_inputs() {
+        let Some(bids) = spec.bids.as_ref() else {
+            // Not BIDS-locatable: leave absent for the model's own default.
+            maps.push((spec.name.to_string(), None));
+            continue;
+        };
+        let mut extra = vec![("suffix", bids.suffix)];
+        if let Some(entity) = bids.entity {
+            // The model declares an entity that indexes this input; match it
+            // against the identity value the collection carries for it.
+            if let Some(val) = identity.get(entity) {
+                extra.push((entity, val.as_str()));
+            }
+        }
+        match find_input(table, identity, &extra)? {
+            Some(row) => {
+                let map = io::nifti::read_map_nifti(&bids_dir.join(&row.path))?;
+                maps.push((spec.name.to_string(), Some(map)));
+                sources.push(row.path.clone());
+            }
+            None if spec.required => bail!(
+                "required input '{}' (BIDS suffix '{}') not found for {:?} in {:?}",
+                spec.name,
+                bids.suffix,
+                identity,
+                bids_dir
+            ),
+            None => maps.push((spec.name.to_string(), None)),
+        }
+    }
+    let mask = match mask_spec {
+        Some(spec) => {
+            let mut extra: Vec<(&str, &str)> = vec![("suffix", spec.suffix.as_str())];
+            extra.extend(spec.entities.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+            match find_input(table, identity, &extra)? {
+                Some(row) => {
+                    sources.push(row.path.clone());
+                    Some(io::nifti::read_mask_nifti(&bids_dir.join(&row.path))?)
+                }
+                None => None,
+            }
+        }
+        None => None,
+    };
+    Ok((AuxMaps::new(maps), mask, sources))
+}
+
 /// Header for outputs whose input carried no spatial reference (.mat inputs),
 /// matching qMRLab's `make_nii`/`save_nii_v2` convention so Rust maps overlay
 /// exactly on qMRLab's FitResults: no qform, an sform identity with the origin
 /// at voxel (1,1,1), and float64 datatype.
-fn make_minimal_header(nx: usize, ny: usize, nz: usize) -> NiftiHeader {
+pub(crate) fn make_minimal_header(nx: usize, ny: usize, nz: usize) -> NiftiHeader {
     let mut h = NiftiHeader::default();
     h.dim[0] = 3;
     h.dim[1] = nx as u16;
@@ -718,6 +1021,31 @@ mod tests {
     /// engine round-trips against elsewhere in the workspace.
     fn ir_signal(ti: f64, t1: f64, a: f64, b: f64) -> f64 {
         a + b * (-ti / t1).exp()
+    }
+
+    /// A `.mat`-shaped ms TI vector (qMRLab convention) must reach the
+    /// fitting core as seconds — the ms -> s boundary conversion invariant
+    /// (CLAUDE.md "Units — BIDS-native").
+    #[test]
+    fn mat_ti_to_seconds_converts_ms_to_seconds() {
+        let ti_ms = vec![350.0_f64, 500.0, 900.0, 1250.0];
+        let ti_s = mat_ti_to_seconds(Some(ti_ms)).unwrap();
+        assert_eq!(ti_s, vec![0.35, 0.5, 0.9, 1.25]);
+
+        // Feeding the converted TIs through the same `ProtocolSource::Mat`
+        // path `load_input`/`run_fit` use must yield the seconds values, not
+        // the original ms ones.
+        let proto = qmrust_core::protocol::resolve(qmrust_core::protocol::ProtocolSource::Mat {
+            inversion_times: Some(ti_s.clone()),
+        });
+        let got: Vec<f64> = proto
+            .volumes
+            .iter()
+            .map(|v| *v.get("InversionTime").unwrap())
+            .collect();
+        assert_eq!(got, ti_s);
+
+        assert!(mat_ti_to_seconds(None).is_none());
     }
 
     #[test]
@@ -800,10 +1128,13 @@ mod tests {
         let anat_dir = bids_dir.join("sub-01/anat");
         std::fs::create_dir_all(&anat_dir).unwrap();
 
-        let t1 = 900.0_f64;
+        // BIDS-native seconds throughout: T1 = 0.9 s, TIs 0.35..1.25 s (the
+        // same physical protocol as the pre-migration ms fixture, ÷1000 —
+        // see CLAUDE.md "Units — BIDS-native").
+        let t1 = 0.9_f64;
         let a = 500.0_f64;
         let b = -1000.0_f64;
-        let tis = [350.0_f64, 500.0, 650.0, 800.0, 950.0, 1100.0, 1250.0];
+        let tis = [0.35_f64, 0.50, 0.65, 0.80, 0.95, 1.10, 1.25];
         let header = make_minimal_header(1, 1, 1);
         for (i, ti) in tis.iter().enumerate() {
             let signal = ir_signal(*ti, t1, a, b);
@@ -817,21 +1148,121 @@ mod tests {
         let config_path = tmp.0.join("ir.yaml");
         std::fs::write(
             &config_path,
-            "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800, 950, 1100, 1250]\n",
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [0.35, 0.50, 0.65, 0.80, 0.95, 1.10, 1.25]\n",
         )
         .unwrap();
 
         let out_dir = tmp.0.join("out");
         run_fit_bids(bids_dir, config_path, out_dir.clone(), None).unwrap();
 
-        let t1_path = out_dir.join("sub-01").join("T1.nii.gz");
+        // BIDS-derivatives layout: output_dir is the derivatives root, so the
+        // T1 map lands at qmrust/sub-01/anat/sub-01_T1map.nii.gz (mapped from
+        // IR's `T1` output via `bids_outputs()`), not a flat `T1.nii.gz`.
+        let t1_path = out_dir
+            .join("qmrust")
+            .join("sub-01")
+            .join("anat")
+            .join("sub-01_T1map.nii.gz");
         assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
         let t1_map = io::nifti::read_map_nifti(&t1_path).unwrap();
         assert!(
-            (t1_map[[0, 0, 0]] - t1).abs() < 1.0,
+            (t1_map[[0, 0, 0]] - t1).abs() < 0.001,
             "T1: {} (expected ~{})",
             t1_map[[0, 0, 0]],
             t1
+        );
+
+        let sidecar = out_dir
+            .join("qmrust")
+            .join("sub-01")
+            .join("anat")
+            .join("sub-01_T1map.json");
+        assert!(sidecar.exists(), "expected a JSON sidecar next to the map");
+
+        let dataset_description = out_dir.join("qmrust").join("dataset_description.json");
+        assert!(
+            dataset_description.exists(),
+            "expected qmrust/dataset_description.json to exist"
+        );
+    }
+
+    /// `write_derivatives` in isolation: given a fitted `FitResults` with a
+    /// declared map (`T1`) and an undeclared diagnostic (`res`), it writes
+    /// only the declared map (as `T1map`, IR's `bids_outputs()` mapping) plus
+    /// its JSON sidecar, ensures `dataset_description.json`, and leaves `res`
+    /// out of the derivatives tree entirely.
+    #[test]
+    fn write_derivatives_writes_only_declared_bids_outputs() {
+        let tmp = TempDir::new("write-derivatives");
+        let deriv_root = tmp.0.join("derivatives");
+
+        let config_path = tmp.0.join("ir.yaml");
+        std::fs::write(
+            &config_path,
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800]\n",
+        )
+        .unwrap();
+        let (_cfg, raw) = load_config_raw(&config_path).unwrap();
+        let entry = qmrust_core::registry::by_name("inversion_recovery").unwrap();
+        let model = (entry.build)(&raw, &Protocol::default()).unwrap();
+
+        let mut results = qmrust_core::fitting::FitResults::new();
+        let t1_map = Array3::from_elem((1, 1, 1), 900.0_f64);
+        results.insert("T1".to_string(), t1_map.clone());
+        // A diagnostic output not in `bids_outputs()` — must not be written.
+        results.insert("res".to_string(), Array3::from_elem((1, 1, 1), 0.001));
+
+        let header = make_minimal_header(1, 1, 1);
+        let prov = crate::provenance::FitProvenance {
+            model: "inversion_recovery".to_string(),
+            config_json: serde_json::to_value(&raw).unwrap(),
+            protocol_json: serde_json::json!({"InversionTime": [0.35, 0.5, 0.65, 0.8]}),
+            sources: vec!["bids::sub-01/anat/sub-01_inv-1_IRT1.nii.gz".to_string()],
+            executed_at_unix: 1_600_000_000,
+            duration_s: 0.5,
+        };
+        write_derivatives(
+            &results,
+            model.as_ref(),
+            "sub-01",
+            None,
+            &deriv_root,
+            &header,
+            true,
+            &prov,
+        )
+        .unwrap();
+
+        let anat_dir = deriv_root.join("qmrust").join("sub-01").join("anat");
+        let t1_path = anat_dir.join("sub-01_T1map.nii.gz");
+        assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
+        let sidecar_path = anat_dir.join("sub-01_T1map.json");
+        assert!(
+            sidecar_path.exists(),
+            "expected a JSON sidecar next to the T1 map"
+        );
+        let sidecar: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&sidecar_path).unwrap()).unwrap();
+        assert_eq!(sidecar["GeneratedBy"][0]["Name"], "qmrust");
+        assert_eq!(sidecar["Model"], "inversion_recovery");
+        assert_eq!(sidecar["Units"], "s");
+        assert!(
+            !anat_dir.join("sub-01_res.nii.gz").exists(),
+            "the undeclared diagnostic 'res' output must not be written"
+        );
+        assert!(
+            deriv_root
+                .join("qmrust")
+                .join("dataset_description.json")
+                .exists(),
+            "expected qmrust/dataset_description.json to exist"
+        );
+
+        let read_back = io::nifti::read_map_nifti(&t1_path).unwrap();
+        assert_eq!(
+            read_back[[0, 0, 0]],
+            t1_map[[0, 0, 0]],
+            "map values must be byte-identical to the input FitResults"
         );
     }
 
@@ -885,9 +1316,16 @@ mod tests {
         );
     }
 
-    /// An all-skipped dataset (every resolved collection is `Named`, e.g. an
-    /// MTS/qmt_spgr set — not yet BIDS-fittable) must exit non-zero, not
-    /// silently report success having fit zero subjects.
+    /// A qmt_spgr-targeted dataset must exit non-zero, not silently report
+    /// success having fit zero subjects. `QMTSPGR` now has a `rust-bids`
+    /// sequential set definition, so this 3-volume dataset resolves into a
+    /// real collection — but it doesn't carry the model's expected 10-row
+    /// series protocol, so fitting itself must bail (not silently skip). Now
+    /// that qmt_spgr declares a `protocol_schema()`, the mismatch is caught
+    /// earlier, by `validate_against_protocol` inside the model's `build`
+    /// (wrapped in a "protocol inconsistent" context) rather than later by
+    /// `build_volume_ids` — check the full error chain (`{:?}`), not just the
+    /// outer `Display` message, for the underlying counts.
     #[test]
     fn run_fit_bids_bails_when_every_collection_is_skipped() {
         let tmp = TempDir::new("fit-bids-all-named");
@@ -897,12 +1335,23 @@ mod tests {
 
         let header = make_minimal_header(1, 1, 1);
         let data = Array3::from_elem((1, 1, 1), 1.0_f64);
-        for fname in [
-            "sub-01_flip-1_mt-off_MTS.nii.gz",
-            "sub-01_flip-1_mt-on_MTS.nii.gz",
-            "sub-01_flip-2_mt-off_MTS.nii.gz",
+        // Give each volume a valid Angle/Offset sidecar (qmt_spgr now declares
+        // a `protocol_schema()`, so `resolve_protocol` reads these) but only 3
+        // of the model's 10 expected mtdata rows, so the mismatch is caught by
+        // `validate_against_protocol`'s count check, not by a missing-field error.
+        for (fname, angle, offset) in [
+            ("sub-01_flip-1_mt-off_QMTSPGR.nii.gz", 142.0, 443.0),
+            ("sub-01_flip-1_mt-on_QMTSPGR.nii.gz", 426.0, 443.0),
+            ("sub-01_flip-2_mt-off_QMTSPGR.nii.gz", 142.0, 1088.0),
         ] {
-            io::nifti::write_3d_nifti(&data, &header, &anat_dir.join(fname)).unwrap();
+            let path = anat_dir.join(fname);
+            io::nifti::write_3d_nifti(&data, &header, &path).unwrap();
+            let json_path = anat_dir.join(fname.replace(".nii.gz", ".json"));
+            std::fs::write(
+                &json_path,
+                format!(r#"{{"Angle": {angle}, "Offset": {offset}}}"#),
+            )
+            .unwrap();
         }
 
         let config_path = tmp.0.join("qmt.yaml");
@@ -914,12 +1363,13 @@ mod tests {
 
         let out_dir = tmp.0.join("out");
         let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
-            Ok(()) => panic!("an all-Named/all-skipped dataset must bail, not exit Ok"),
+            Ok(()) => panic!("a protocol-mismatched QMTSPGR dataset must bail, not exit Ok"),
             Err(e) => e,
         };
+        let chain = format!("{err:?}");
         assert!(
-            err.to_string().contains("no MTS collections were fit"),
-            "expected the all-skipped bail message, got: {err}"
+            chain.contains("expected 10 volumes") && chain.contains("supplies 3"),
+            "expected a volumes-vs-protocol-rows mismatch bail message, got: {chain}"
         );
     }
 
@@ -970,6 +1420,7 @@ mod tests {
             session: None,
             run: None,
             task: None,
+            entities: std::collections::BTreeMap::new(),
             suffix: "MTS".into(),
             data: GroupedData::Named(Default::default()),
             warnings: vec![],
@@ -983,5 +1434,316 @@ mod tests {
                 .to_string()
                 .contains("named-collection fit not yet supported")),
         }
+    }
+
+    /// Input resolution is driven by a collection's *full* entity identity, not
+    /// a fixed subject/session pair: the same suffix present once per session
+    /// must resolve to the file matching the collection's own session, and an
+    /// underspecified identity that matches several files is a hard error (no
+    /// silent pick). This is what lets the backbone scale past two models —
+    /// any entity a dataset groups by participates in locating inputs.
+    #[test]
+    fn find_input_matches_full_identity_and_flags_ambiguity() {
+        use std::collections::BTreeMap;
+        let row = |path: &str, ses: &str| rust_bids::BidsRow {
+            path: path.into(),
+            derivatives: Some("preprocessed".into()),
+            datatype: Some("fmap".into()),
+            suffix: "TB1map".into(),
+            extension: ".nii.gz".into(),
+            entities: BTreeMap::from([
+                ("subject".to_string(), "01".to_string()),
+                ("session".to_string(), ses.to_string()),
+            ]),
+            sidecar_path: None,
+        };
+        let rows = vec![
+            row(
+                "derivatives/preprocessed/sub-01/ses-1/fmap/sub-01_ses-1_TB1map.nii.gz",
+                "1",
+            ),
+            row(
+                "derivatives/preprocessed/sub-01/ses-2/fmap/sub-01_ses-2_TB1map.nii.gz",
+                "2",
+            ),
+        ];
+
+        let identity = |ses: Option<&str>| {
+            let mut m = BTreeMap::from([("subject".to_string(), "01".to_string())]);
+            if let Some(s) = ses {
+                m.insert("session".to_string(), s.to_string());
+            }
+            m
+        };
+
+        // Full identity (subject + session) → the matching session's file.
+        let hit = find_input(&rows, &identity(Some("2")), &[("suffix", "TB1map")])
+            .unwrap()
+            .unwrap();
+        assert!(hit.path.contains("ses-2"));
+        // Underspecified identity (subject only) matches both → ambiguity error.
+        assert!(find_input(&rows, &identity(None), &[("suffix", "TB1map")]).is_err());
+        // No match → None (an optional input the fit does without).
+        assert!(
+            find_input(&rows, &identity(Some("9")), &[("suffix", "TB1map")])
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// A `mask:` config disambiguates which mask to use by entity constraint,
+    /// and its short entity keys must be matched against the table's full names.
+    /// A dataset holding several masks resolves to the configured one; a spec
+    /// too loose to be unique is a hard error rather than a silent pick.
+    #[test]
+    fn mask_spec_disambiguates_and_flags_ambiguity() {
+        use std::collections::BTreeMap;
+        // `desc: brain` parses (suffix defaults to `mask`); `desc` is the short
+        // key the config author writes.
+        let spec: MaskSpec = serde_yaml::from_str("desc: brain\n").unwrap();
+        assert_eq!(spec.suffix, "mask");
+        assert_eq!(spec.entities.get("desc").map(String::as_str), Some("brain"));
+
+        // Two masks for one subject; the table stores the entity as its full
+        // name `description` (as `parse_to_table` would), so the config key is
+        // normalized to match.
+        let mask_row = |desc: &str| rust_bids::BidsRow {
+            path: format!("derivatives/preprocessed/sub-01/anat/sub-01_desc-{desc}_mask.nii.gz"),
+            derivatives: Some("preprocessed".into()),
+            datatype: Some("anat".into()),
+            suffix: "mask".into(),
+            extension: ".nii.gz".into(),
+            entities: BTreeMap::from([
+                ("subject".to_string(), "01".to_string()),
+                ("description".to_string(), desc.to_string()),
+            ]),
+            sidecar_path: None,
+        };
+        let rows = vec![mask_row("brain"), mask_row("tumor")];
+        let identity = BTreeMap::from([("subject".to_string(), "01".to_string())]);
+
+        // Config `desc` -> full `description`, matching the table.
+        let extra = [("suffix", "mask"), ("description", "brain")];
+        let hit = find_input(&rows, &identity, &extra).unwrap().unwrap();
+        assert!(hit.path.contains("desc-brain"));
+
+        // Suffix alone is too loose — both masks match, so it errors.
+        assert!(find_input(&rows, &identity, &[("suffix", "mask")]).is_err());
+    }
+
+    /// End-to-end validation: the BIDS fit path (`bidsify` +
+    /// `run_fit_bids`) must reproduce the `.mat` fit path (`run_fit
+    /// --mat-data`) exactly, since `bidsify` writes byte-identical voxel data
+    /// (see `bidsify.rs`'s round-trip tests). Needs a *real* qMRLab OSF IR
+    /// dataset (`IRData.mat`/`Mask.mat`) supplied via env vars — no network
+    /// access here, so it's `#[ignore]`d by default and skipped by a plain
+    /// `cargo test`. Run explicitly with:
+    ///
+    /// ```text
+    /// QMRUST_IR_MAT=<path>/IRData.mat QMRUST_IR_MASK=<path>/Mask.mat \
+    ///   cargo test -p qmrust-cli --release bids_fit_matches_mat_fit -- --ignored --nocapture
+    /// ```
+    ///
+    /// `scripts/make_bids_examples.sh` fetches such a dataset from OSF.
+    ///
+    /// Both paths apply the same brain mask: the `.mat` path via `--mask`, the
+    /// BIDS path by resolving the mask `bidsify` writes to
+    /// `derivatives/preprocessed/` (`run_fit_bids` resolves a declared mask by
+    /// its BIDS suffix). The two fits therefore mask identically and must be
+    /// exactly equal on every masked voxel of the same byte-identical input;
+    /// the loop below compares inside the mask (both leave it unfit outside).
+    ///
+    /// Both `t1_mat` and `t1_bids` below are our own two pipelines (not
+    /// qMRLab's), so they're compared directly in seconds — no unit
+    /// reconciliation needed between them. `scripts/make_bids_examples.sh`
+    /// separately prints qMRLab's `FitResults/T1.nii.gz` path for manual
+    /// comparison; that reference is in **milliseconds**, so any numeric
+    /// comparison against it must scale ours by `* 1000.0` first (our T1 is
+    /// seconds; see CLAUDE.md "Units — BIDS-native").
+    #[test]
+    #[ignore]
+    fn bids_fit_matches_mat_fit() {
+        let ir_mat = PathBuf::from(
+            std::env::var("QMRUST_IR_MAT").expect("set QMRUST_IR_MAT=<path>/IRData.mat"),
+        );
+        let ir_mask = PathBuf::from(
+            std::env::var("QMRUST_IR_MASK").expect("set QMRUST_IR_MASK=<path>/Mask.mat"),
+        );
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..");
+        let config = repo_root.join("prots").join("irt1_config.yaml");
+
+        let tmp = TempDir::new("bids-matches-mat");
+        let out_mat = tmp.0.join("out_mat");
+        let bids_dir = tmp.0.join("ds-qmrust");
+        // `output_dir` is the *derivatives root*: `run_fit_bids`/`write_derivatives`
+        // append `qmrust/<subject>/anat/...` themselves (mirrors
+        // `scripts/make_bids_examples.sh`'s `--output-dir ds-qmrust/derivatives`).
+        let deriv_dir = bids_dir.join("derivatives");
+
+        // (a) Fit via the .mat path, in-process.
+        run_fit(
+            None,
+            Some(ir_mat.clone()),
+            config.clone(),
+            Some(ir_mask.clone()),
+            out_mat.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("mat-path fit failed");
+        let mat_mask = io::mat::read_mask_mat(&ir_mask).expect("read Mask.mat");
+        let t1_mat = io::nifti::read_map_nifti(&out_mat.join("T1.nii.gz")).expect("read T1.mat");
+
+        // (b) bidsify (in-process) + fit via the BIDS path, in-process.
+        crate::bidsify::run_bidsify(crate::bidsify::BidsifyArgs {
+            model: "inversion_recovery".to_string(),
+            mat_data: Some(ir_mat),
+            mat_dir: None,
+            mask: Some(ir_mask),
+            config: config.clone(),
+            subject: "01".to_string(),
+            out: bids_dir.clone(),
+        })
+        .expect("bidsify failed");
+        run_fit_bids(bids_dir, config, deriv_dir.clone(), None).expect("bids-path fit failed");
+        let t1_bids = io::nifti::read_map_nifti(
+            &deriv_dir
+                .join("qmrust")
+                .join("sub-01")
+                .join("anat")
+                .join("sub-01_T1map.nii.gz"),
+        )
+        .expect("read T1map (bids)");
+
+        assert_eq!(t1_mat.dim(), t1_bids.dim(), "T1 map shapes must match");
+
+        let mut n_in_mask = 0usize;
+        let mut n_mismatch = 0usize;
+        for ((x, y, z), &in_mask) in mat_mask.indexed_iter() {
+            if !in_mask {
+                continue;
+            }
+            n_in_mask += 1;
+            let a = t1_mat[[x, y, z]];
+            let b = t1_bids[[x, y, z]];
+            // Both NaN (fit failed identically on identical input) counts as
+            // agreement; otherwise require exact equality (byte-identical
+            // input -> byte-identical fit, no tolerance).
+            let equal = (a.is_nan() && b.is_nan()) || a == b;
+            if !equal {
+                n_mismatch += 1;
+                eprintln!("  mismatch at ({x},{y},{z}): mat={a} bids={b}");
+            }
+        }
+        eprintln!("in-mask voxels: {n_in_mask}, mismatches: {n_mismatch}");
+        assert_eq!(
+            n_mismatch, 0,
+            "BIDS-path T1 must exactly match .mat-path T1 for every masked voxel \
+             (byte-identical input must produce byte-identical fit)"
+        );
+    }
+
+    /// End-to-end validation: the QMTSPGR BIDS fit path (bidsify
+    /// plus run_fit_bids) must reproduce the .mat fit path (run_fit against
+    /// mat_data) exactly, mirroring `bids_fit_matches_mat_fit` above for qMT.
+    /// `run_fit_bids` doesn't yet resolve BIDS aux maps (see its doc
+    /// comment), so this test disables aux on both sides: run_fit is called
+    /// with no r1map/b1map/b0map and no mat_dir (so no aux .mat convenience
+    /// loading either), and run_fit_bids never resolves BIDS aux at all. Both
+    /// sides therefore fit with default aux (B1=1, B0=0, no R1), making this
+    /// an apples-to-apples comparison on byte-identical input.
+    ///
+    /// Needs a *real* qMRLab OSF qMT dataset (`MTdata.mat`) supplied via an
+    /// env var — no network access here, so it's `#[ignore]`d by default.
+    /// Run explicitly with:
+    ///
+    /// ```text
+    /// QMRUST_QMT_MAT=<path>/MTdata.mat \
+    ///   cargo test -p qmrust-cli --release qmtspgr_bids_fit_matches_mat_fit -- --ignored --nocapture
+    /// ```
+    ///
+    /// `scripts/make_bids_examples.sh` fetches such a dataset from OSF.
+    #[test]
+    #[ignore]
+    fn qmtspgr_bids_fit_matches_mat_fit() {
+        let qmt_mat = PathBuf::from(
+            std::env::var("QMRUST_QMT_MAT").expect("set QMRUST_QMT_MAT=<path>/MTdata.mat"),
+        );
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..");
+        let config = repo_root.join("prots").join("qmt_config_ramani.yaml");
+
+        let tmp = TempDir::new("qmt-bids-matches-mat");
+        let out_mat = tmp.0.join("out_mat");
+        let bids_dir = tmp.0.join("ds-qmrust");
+        let deriv_dir = bids_dir.join("derivatives");
+
+        // (a) Fit via the .mat path, in-process, with NO aux (no
+        // --r1map/--b1map/--b0map, no --mat-dir so no Mask.mat/aux .mat
+        // convenience-loading either) — matching the BIDS side's no-aux fit.
+        run_fit(
+            None,
+            Some(qmt_mat.clone()),
+            config.clone(),
+            None,
+            out_mat.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("mat-path fit failed");
+        let f_mat = io::nifti::read_map_nifti(&out_mat.join("F.nii.gz")).expect("read F (mat)");
+        let kr_mat = io::nifti::read_map_nifti(&out_mat.join("kr.nii.gz")).expect("read kr (mat)");
+
+        // (b) bidsify (in-process, no mask/aux) + fit via the BIDS path.
+        crate::bidsify::run_bidsify(crate::bidsify::BidsifyArgs {
+            model: "qmt_spgr".to_string(),
+            mat_data: Some(qmt_mat),
+            mat_dir: None,
+            mask: None,
+            config: config.clone(),
+            subject: "02".to_string(),
+            out: bids_dir.clone(),
+        })
+        .expect("bidsify failed");
+        run_fit_bids(bids_dir, config, deriv_dir.clone(), None).expect("bids-path fit failed");
+
+        let anat = deriv_dir.join("qmrust").join("sub-02").join("anat");
+        let f_bids =
+            io::nifti::read_map_nifti(&anat.join("sub-02_Fmap.nii.gz")).expect("read Fmap (bids)");
+        let kr_bids = io::nifti::read_map_nifti(&anat.join("sub-02_kRmap.nii.gz"))
+            .expect("read kRmap (bids)");
+
+        assert_eq!(f_mat.dim(), f_bids.dim(), "F map shapes must match");
+        assert_eq!(kr_mat.dim(), kr_bids.dim(), "kr map shapes must match");
+
+        let mut n_voxels = 0usize;
+        let mut n_mismatch = 0usize;
+        for ((x, y, z), &a) in f_mat.indexed_iter() {
+            n_voxels += 1;
+            let b = f_bids[[x, y, z]];
+            let ar = kr_mat[[x, y, z]];
+            let br = kr_bids[[x, y, z]];
+            let f_equal = (a.is_nan() && b.is_nan()) || a == b;
+            let kr_equal = (ar.is_nan() && br.is_nan()) || ar == br;
+            if !f_equal || !kr_equal {
+                n_mismatch += 1;
+                eprintln!("  mismatch at ({x},{y},{z}): F mat={a} bids={b}, kr mat={ar} bids={br}");
+            }
+        }
+        eprintln!("voxels: {n_voxels}, mismatches: {n_mismatch}");
+        assert_eq!(
+            n_mismatch, 0,
+            "BIDS-path F/kr must exactly match .mat-path F/kr for every voxel \
+             (byte-identical input, identical no-aux fit, must produce byte-identical output)"
+        );
     }
 }

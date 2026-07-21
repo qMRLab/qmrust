@@ -244,11 +244,6 @@ impl QmtSpgrConfig {
 mod tests {
     use super::*;
 
-    // Migrated from the old top-level `config::qmt_tests` (Task 9): these
-    // assertions used to run against `Config.qmt_spgr`; now that `Config` no
-    // longer owns a typed qmt_spgr field, they exercise `QmtSpgrConfig`
-    // directly.
-
     #[test]
     fn minimal_qmt_config_uses_defaults() {
         let yaml = "model: qmt_spgr\n";

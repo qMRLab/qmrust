@@ -22,7 +22,10 @@ a browser (WebAssembly).
 - `crates/rust-bids` — **wasm-clean, standalone qMRI-BIDS layout resolver**: flat-table
   parse → declarative grouping (`BidsConfig`) → `Collection`, with all I/O behind the
   `DatasetFs` trait; bridges a collection's sidecars to `qmrust_core::Protocol`. A consumer
-  of core, not part of it (and generalizable beyond this workspace).
+  of core, not part of it (and generalizable beyond this workspace). The flat-table parse
+  reads against a `Vocabulary` of canonical BIDS entities/suffixes/datatypes; non-standard
+  entities/suffixes are declared via `BidsConfig.custom_entities`/`custom_suffixes`, and
+  every registered model's BIDS suffix is auto-known with no config (`Vocabulary::from_config`).
 
 ## The one rule that must never break
 
@@ -55,6 +58,29 @@ asides, no task/plan references. Write for whoever reads this line a year from n
 the *what* and the *why it must be so*, not the story of how it got written. If a comment would
 only make sense to someone who watched it being written, delete it.
 
+## Units — BIDS-native (SI), not qMRLab's
+
+qmrust works natively in **BIDS/SI units end to end — no internal unit conversion** (no
+ms↔s round-tripping). Time (`RepetitionTime`, `EchoTime`, `InversionTime`, and any fitted
+time constant such as T1/T2) is in **seconds**; frequency in **Hz**; magnetic field in
+**tesla**; angle in **radians** in general, *except* BIDS-MRI metadata fields the spec
+defines otherwise — notably **`FlipAngle` in degrees**. Reference:
+https://bids-specification.readthedocs.io/en/stable/appendices/units.html (SI) plus the
+BIDS-MRI common-metadata field definitions.
+
+This is a deliberate divergence from qMRLab (milliseconds/degrees). The consequences are
+intentional, not bugs:
+- Config protocol values, JSON sidecars, and output maps are all in BIDS units (e.g.
+  `InversionTime: 0.35`, a T1 map whose values are seconds).
+- Fitted maps therefore differ from qMRLab's `FitResults` by the unit factor (qMRLab T1 in
+  ms = qmrust T1 in s × 1000). Validation against qMRLab references must **reconcile the
+  unit**, never expect raw equality.
+- Raw signal/voxel **data** is unitless and stays byte-identical to source; only quantitative
+  parameters carry units.
+
+Convert non-BIDS sources (e.g. a qMRLab `.mat` in ms) to BIDS units **at the shell boundary**
+(during `bidsify` / `.mat` load), so `qmrust-core` only ever sees BIDS units.
+
 ## Adding a model (the common task)
 
 1. New dir `crates/qmrust-core/src/models/<name>/`: `config.rs` (a `serde` struct +
@@ -66,7 +92,12 @@ only make sense to someone who watched it being written, delete it.
 That's it — do **not** add `match cfg.model` branches in the CLI, engine, sim, or config.
 The `Model` trait is the whole contributor surface; the registry is the whole dispatch
 point. Auxiliary inputs (B1/B0/R1, …) are *declared* via `required_inputs()`; the shell
-loads them and the model reads scalars via `aux.get("B1map")`. A model declares its
+resolves each from the dataset's flat table by the collection's full entity identity +
+the declared BIDS suffix (found in the raw tree or any `derivatives/<pipeline>/`), and the
+model reads scalars via `aux.get("B1map")`. A **mask** is never auto-guessed (a dataset can
+carry many): it is declared in `--config` under a `mask:` block — `suffix` (default `mask`)
+plus entity constraints that disambiguate which mask (`mask:\n  desc: brain`) — and an
+under-specified spec that matches several masks is a hard error, not a silent pick. A model declares its
 measurement shape via `measurement() -> MeasurementKind` (`Named { roles }` for a fixed
 set of role-labeled volumes, or `Series { rows }` for a variable-length series with its
 own canonical per-volume identity rows), and `forward`/`fit` read the identity-keyed
@@ -85,7 +116,13 @@ so this is opt-in — a model that skips it just reads its own `--config` as bef
 `--config` for a migrated model narrows to algorithm options plus the `Source::Option`
 fallback. Use IR (`models/inversion_recovery/`) as the minimal reference — its
 `protocol_schema()` maps `InversionTime`; qMT (`models/qmt_spgr/`) shows a nested-config
-model with aux inputs (its own protocol mapping is a deferred follow-up).
+model with aux inputs, whose `protocol_schema()` maps per-volume `Angle`/`Offset` under
+its custom, `.bidsignore`'d `QMTSPGR` BIDS suffix. A model also
+declares `bids_outputs() -> Vec<(&'static str, &'static str, &'static str)>` — which
+`output_names()` are real quantitative maps, their BIDS-derivatives suffix, and their
+physical unit as a BIDS/SI string (e.g. IR's `T1→T1map→"s"`; `""` for a unitless
+quantity) — so `qmrust fit --bids-dir` writes them into the `derivatives/qmrust/...`
+tree, each with a full provenance sidecar; see `docs/agents/DATA-PIPELINE.md`.
 
 ## Invariants to respect
 
@@ -107,7 +144,8 @@ cargo test  --workspace
 cargo fmt --all --check                                 # CI format gate
 cargo clippy --workspace --all-targets -- -D warnings   # CI lint gate (must be clean)
 cargo run -p qmrust-cli -- fit  --mat-dir <dir> --config prots/<cfg>.yaml --output-dir <out>
-cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config prots/<cfg>.yaml --output-dir <out>  # v1: no-aux, sequential (e.g. IRT1)
+cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config prots/<cfg>.yaml --output-dir <out>  # v1: no-aux, sequential (e.g. IRT1); writes derivatives/qmrust/...
+cargo run -p qmrust-cli -- bidsify --model inversion_recovery --mat-data <IRData.mat> --mask <Mask.mat> --config prots/irt1_config.yaml --subject 01 --out <ds-root>
 cargo run -p qmrust-cli -- sim  single-voxel --config prots/<cfg>.yaml --output <out>.json
 cargo build -p qmrust-core --target wasm32-unknown-unknown   # core must stay wasm-clean
 cargo build -p rust-bids   --target wasm32-unknown-unknown   # rust-bids must stay wasm-clean too

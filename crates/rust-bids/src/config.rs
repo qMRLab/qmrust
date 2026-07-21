@@ -8,6 +8,14 @@ use std::collections::BTreeMap;
 
 pub type EntityConstraints = BTreeMap<String, String>;
 
+/// A non-canonical entity declared by a dataset/config author: `key` is the
+/// short filename token (e.g. `myent`), `name` the full name it normalizes to.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CustomEntity {
+    pub key: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlainSet {
     #[serde(default)]
@@ -39,6 +47,11 @@ pub enum SetDef {
 pub struct BidsConfig {
     pub loop_over: Vec<String>,
     pub sets: BTreeMap<String, SetDef>,
+    /// Non-canonical entity keys this dataset uses, beyond the BIDS spec.
+    pub custom_entities: Vec<CustomEntity>,
+    /// Non-canonical suffixes this dataset uses, beyond the BIDS spec and the
+    /// registered model suffixes (which are known without any config).
+    pub custom_suffixes: Vec<String>,
 }
 
 // --- deserialization: the YAML nests the set under a `*_set` key ------------
@@ -54,6 +67,10 @@ struct RawSetEntry {
 struct RawConfig {
     #[serde(default = "default_loop_over")]
     loop_over: Vec<String>,
+    #[serde(default)]
+    custom_entities: Vec<CustomEntity>,
+    #[serde(default)]
+    custom_suffixes: Vec<String>,
     #[serde(flatten)]
     sets: BTreeMap<String, RawSetEntry>,
 }
@@ -115,6 +132,8 @@ pub fn parse_config(yaml: &str) -> Result<BidsConfig> {
     Ok(BidsConfig {
         loop_over: raw.loop_over,
         sets,
+        custom_entities: raw.custom_entities,
+        custom_suffixes: raw.custom_suffixes,
     })
 }
 
@@ -125,6 +144,9 @@ loop_over: [subject, session, run, task]
 IRT1:
   sequential_set:
     by: [inversion]
+QMTSPGR:
+  sequential_set:
+    by: [mtransfer, flip]
 MTS:
   named_set:
     PDw:
@@ -164,5 +186,41 @@ mod tests {
             panic!("IRT1 should be sequential");
         };
         assert_eq!(irt1.by, vec!["inversion"]);
+    }
+
+    #[test]
+    fn parses_custom_entities_and_suffixes() {
+        let cfg = parse_config(
+            r#"
+loop_over: [subject, session, run, task]
+custom_entities:
+  - key: myent
+    name: myentity
+custom_suffixes: [MYSUFFIX]
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.custom_entities.len(), 1);
+        assert_eq!(cfg.custom_entities[0].key, "myent");
+        assert_eq!(cfg.custom_entities[0].name, "myentity");
+        assert_eq!(cfg.custom_suffixes, vec!["MYSUFFIX".to_string()]);
+    }
+
+    #[test]
+    fn default_config_has_no_customs() {
+        let cfg = default_config();
+        assert!(cfg.custom_entities.is_empty());
+        assert!(cfg.custom_suffixes.is_empty());
+    }
+
+    #[test]
+    fn parses_sequential_qmtspgr() {
+        // mt outer, flip inner: matches qMRLab's flip-1_mt-1, flip-2_mt-1,
+        // flip-1_mt-2… canonical ordering.
+        let cfg = default_config();
+        let SetDef::Sequential(qmt) = &cfg.sets["QMTSPGR"] else {
+            panic!("QMTSPGR should be sequential");
+        };
+        assert_eq!(qmt.by, vec!["mtransfer", "flip"]);
     }
 }

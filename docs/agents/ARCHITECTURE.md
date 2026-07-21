@@ -72,7 +72,8 @@ The `qmrust` binary. Owns everything the core deliberately excludes:
 - `progress.rs` — an `indicatif` progress bar passed to the engine as a callback.
 
 Subcommands: `fit`, `sim {signal|single-voxel|sensitivity|montecarlo}`, `dump-config`,
-`dump-sf`.
+`dump-sf`, `bidsify` (qMRLab `.mat` → byte-identical BIDS dataset; see
+[`DATA-PIPELINE.md`](DATA-PIPELINE.md)).
 
 ### `qmrust-wasm` — the browser shell
 
@@ -122,6 +123,7 @@ pub trait Model: Send + Sync {
     fn bids(&self) -> Option<BidsSpec> { None }   // BIDS grouping suffix + entity map
 
     fn protocol_schema(&self) -> Vec<ProtoParam> { vec![] }   // sidecar/config → Protocol mapping
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> { vec![] }   // (output, suffix, unit)
 }
 ```
 
@@ -149,6 +151,13 @@ reason it is portable.
   `Protocol` and hands it to `build`. Full detail (including the `Source::{Field,
   Derived, Option}` variants and how `resolve_protocol` evaluates them) is in
   [`DATA-PIPELINE.md`](DATA-PIPELINE.md).
+- **`bids_outputs() -> Vec<(&'static str, &'static str, &'static str)>`** — which of a
+  model's `output_names()` are genuine quantitative maps worth exporting as BIDS
+  derivatives: a 3-tuple `(output_name, BIDS-derivatives suffix, unit)`, e.g. IR's
+  `("T1", "T1map", "s")` or qMT's `("kr", "kRmap", "1/s")` (`""` for a unitless
+  quantity). Diagnostics (residuals, indices, …) are omitted. Default `vec![]`. Used by
+  `qmrust fit --bids-dir` to write `derivatives/qmrust/...` (see
+  [`DATA-PIPELINE.md`](DATA-PIPELINE.md#6-the-output-side--bids_outputs-and-the-derivatives-layout)).
 - **`MeasurementKind { Named { roles }, Series { rows } }`** — a model's declared
   measurement shape: a fixed set of role-labeled volumes, or a variable-length series
   whose canonical per-volume identity `rows` (e.g. one `{"InversionTime": ti}` per TI) the
@@ -157,7 +166,7 @@ reason it is portable.
   measurement handed to `forward`/`fit`, read via `.role(name)` / `.series()` — never by
   position.
 - **`Sample { params, value }`** — one acquired volume's value tagged with the identity
-  row (e.g. `{"InversionTime": 500.0}`) that names it.
+  row (e.g. `{"InversionTime": 0.5}`, seconds — see [Units](#units)) that names it.
 - **`VolumeId { Role(&str), Params(BTreeMap<String, f64>) }`** — the identity the shell
   attaches to one data volume before the engine assembles it into a `Measurement`.
 
@@ -180,7 +189,7 @@ pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, p
 
 pub fn all() -> &'static [ModelEntry] { &[
     ModelEntry { name: "inversion_recovery", bids_suffix: "IRT1", build: models::inversion_recovery::build },
-    ModelEntry { name: "qmt_spgr",           bids_suffix: "MTS",  build: models::qmt_spgr::build },
+    ModelEntry { name: "qmt_spgr",           bids_suffix: "QMTSPGR", build: models::qmt_spgr::build },
 ]}
 
 pub fn by_name(name: &str) -> Option<&'static ModelEntry>;
@@ -217,15 +226,28 @@ in this path — a reordered volume list produces the same `Measurement` and the
 ```
 qmrust fit --bids-dir <dir> ─► StdFs (native DatasetFs) ─► rust_bids::collections_for
    for each Collection: resolve_protocol + load 4-D volumes
+   resolve_aux_and_mask(table, model, identity, mask_spec) ─► AuxMaps + Option<mask>
    build_volume_ids(model.measurement(), protocol) ─► engine::run ─► FitResults
    io::nifti writes output_dir/<subject>[/<session>]/<map>.nii.gz
 ```
 
 A BIDS collection is just another way to arrive at a `Protocol` and an ordered volume
 set, feeding the same order-free `build_volume_ids` → `engine::run` path as the
-file-based flow above. See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for how collections are
-resolved, how sidecars are merged, and current v1 scope/limitations (`Sequential`-only,
-no BIDS-resolved aux).
+file-based flow above. `resolve_aux_and_mask` (`qmrust-cli/src/commands.rs`) resolves
+each of the model's `required_inputs()` from the dataset's flat table by the
+collection's full identity + declared BIDS suffix — found in raw *or* any
+`derivatives/<pipeline>/` — and, separately, the brain mask declared under `--config`'s
+`mask:` key (a suffix + entity constraints, e.g. `desc: brain`); an under-specified
+`mask:` matching several files is a hard error rather than a silent pick, and no
+`mask:` block means no masking. See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for how
+collections are resolved, how sidecars are merged, and current v1 scope/limitations
+(`Sequential`-only fitting).
+
+Output is written in the BIDS-derivatives convention too — `output_dir/qmrust/<subject>
+[/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz`, per each model's declared
+`bids_outputs()` — and `qmrust bidsify` is the reverse direction, turning a qMRLab `.mat`
+dataset into a byte-identical BIDS input for this path. See [`DATA-PIPELINE.md`
+](DATA-PIPELINE.md#6-the-output-side--bids_outputs-and-the-derivatives-layout) for both.
 
 ### Simulate (CLI / core)
 
@@ -341,6 +363,10 @@ model needs a new auxiliary input, declare it in `required_inputs()` — the CLI
 map it recognises by logical name, and the shell (not the core) owns where that data
 comes from.
 
+See [`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) for a dense, checklist-first version of this
+section (exact signatures, invariants, and the verification commands), and
+[`docs/models.md`](../models.md) for the developer-facing guide.
+
 ---
 
 ## Modularity principles
@@ -365,15 +391,31 @@ comes from.
 
 ## BIDS-first design
 
+qmrust fits **BIDS or BIDS-like layouts only** — `qmrust fit --bids-dir`, or
+`--mat-dir`/`--mat-data` for qMRLab `.mat` data, converted to BIDS via `qmrust bidsify`.
 qMRI-BIDS is treated as an **imperative-shell concern**, so it never touches the pure
 core: a model only ever declares its BIDS identity and metadata mapping
 (`bids()`, `InputSpec.bids`, `protocol_schema()`); the shell (`rust-bids` + the CLI)
 resolves those declarations into a `Protocol` before calling the model's `build`, and
 `forward`/`fit` still only see ordered params + `Aux`. This makes `--config` what it
 should have been all along: algorithm options and the non-BIDS fallback, not a place to
-duplicate acquisition parameters that already live in JSON sidecars. See
-[`DATA-PIPELINE.md`](DATA-PIPELINE.md) for the full mapping mechanism, the `rust-bids`
+duplicate acquisition parameters that already live in JSON sidecars.
+
+`rust_bids::Vocabulary` is the known-terms table this resolves against: canonical BIDS
+entities/suffixes/datatypes transcribed from the spec, plus every registered model's
+`bids_suffix` at compile time (`Vocabulary::bids()` — so `QMTSPGR` is known with no
+config), plus a dataset's own declared `custom_entities`/`custom_suffixes`
+(`Vocabulary::from_config`) for non-official layout the registry doesn't already cover.
+See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for the full mapping mechanism, the `rust-bids`
 crate, and what's deferred.
+
+---
+
+## Units
+
+qmrust is BIDS-native (SI): time in seconds, frequency in Hz, field in tesla — see the
+"Units — BIDS-native (SI)" principle in [`CLAUDE.md`](../../CLAUDE.md) for the full rule
+and the qMRLab (ms) divergence it implies. Not restated here to avoid drift.
 
 ---
 

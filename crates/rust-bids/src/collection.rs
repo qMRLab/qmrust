@@ -27,6 +27,12 @@ pub struct Collection {
     pub session: Option<String>,
     pub run: Option<String>,
     pub task: Option<String>,
+    /// The collection's full grouping identity: every `loop_over` entity that
+    /// is present, as bare entity values (`{"subject": "02", "session": "1"}`).
+    /// This is what a fit matches its auxiliary inputs against, so any entity
+    /// the dataset groups by — not just subject/session/run/task — participates
+    /// in locating that collection's inputs.
+    pub entities: BTreeMap<String, String>,
     pub suffix: String,
     pub data: GroupedData,
     pub warnings: Vec<Warning>,
@@ -104,6 +110,7 @@ mod tests {
             session: None,
             run: None,
             task: None,
+            entities: BTreeMap::new(),
             suffix: "IRT1".into(),
             data: GroupedData::Sequential(vec![
                 VolumeRef {
@@ -148,6 +155,7 @@ mod tests {
             session: None,
             run: None,
             task: None,
+            entities: BTreeMap::new(),
             suffix: "MTS".into(),
             data: GroupedData::Named(groups),
             warnings: vec![],
@@ -169,6 +177,7 @@ mod tests {
             session: Some("01".into()),
             run: Some("running".into()),
             task: Some("tasker".into()),
+            entities: BTreeMap::new(),
             suffix: "T1w".into(),
             data: GroupedData::Sequential(vec![]),
             warnings: vec![],

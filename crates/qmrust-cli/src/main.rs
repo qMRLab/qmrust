@@ -6,9 +6,11 @@ use clap::{Parser, Subcommand};
 use qmrust_core::sim;
 use std::path::PathBuf;
 
+mod bidsify;
 mod commands;
 mod io;
 mod progress;
+mod provenance;
 
 #[derive(Parser)]
 #[command(name = "qmrust", version, about = "Quantitative MRI fitting in Rust")]
@@ -91,6 +93,41 @@ enum Commands {
     Sim {
         #[command(subcommand)]
         mode: SimMode,
+    },
+
+    /// Convert a qMRLab .mat dataset into a byte-identical BIDS layout
+    /// ("inversion_recovery" or "qmt_spgr").
+    Bidsify {
+        /// Model name ("inversion_recovery" or "qmt_spgr")
+        #[arg(long)]
+        model: String,
+
+        /// Path to the .mat file containing the IR/MT data (+ optional Mask/TI)
+        #[arg(long)]
+        mat_data: Option<PathBuf>,
+
+        /// Directory containing MTdata.mat + optional R1map.mat/B1map.mat/
+        /// B0map.mat/Mask.mat (qmt_spgr convenience, mirrors `fit --mat-dir`)
+        #[arg(long)]
+        mat_dir: Option<PathBuf>,
+
+        /// Path to a separate .mat mask file (overrides one embedded in mat_data
+        /// or found in --mat-dir)
+        #[arg(long)]
+        mask: Option<PathBuf>,
+
+        /// Path to the model's YAML config (for inversion_times/qmt_spgr
+        /// protocol fallback)
+        #[arg(long)]
+        config: PathBuf,
+
+        /// Subject label without the "sub-" prefix (e.g. "01")
+        #[arg(long)]
+        subject: String,
+
+        /// BIDS dataset root to create/append to
+        #[arg(long)]
+        out: PathBuf,
     },
 }
 
@@ -186,5 +223,22 @@ fn main() -> Result<()> {
             };
             sim::run_sim(name, config, output, plot)
         }
+        Commands::Bidsify {
+            model,
+            mat_data,
+            mat_dir,
+            mask,
+            config,
+            subject,
+            out,
+        } => bidsify::run_bidsify(bidsify::BidsifyArgs {
+            model,
+            mat_data,
+            mat_dir,
+            mask,
+            config,
+            subject,
+            out,
+        }),
     }
 }

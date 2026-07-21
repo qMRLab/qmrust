@@ -73,6 +73,83 @@ algorithm options (fit bounds, etc.). See
 [From sidecar metadata to `Protocol`](bids.md#from-sidecar-metadata-to-protocol)
 for how that mapping works.
 
+Fitted maps are written under `--output-dir` as a **BIDS-derivatives** tree:
+`<output-dir>/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz`
+(+ a JSON sidecar per map, and a derivatives `dataset_description.json`).
+Only the maps a model declares via `bids_outputs()` are written (e.g. IRT1's
+`T1` → `T1map`) — diagnostic outputs like `res`/`idx` are not. See
+[DATA-PIPELINE.md](agents/DATA-PIPELINE.md) for the full output contract.
+
+## Create a BIDS example from qMRLab data
+
+`qmrust bidsify` converts a qMRLab `.mat` dataset into a BIDS layout whose
+voxel data is byte-identical to the source `.mat` (no rescale, no dtype
+narrowing — every volume round-trips as `f64`):
+
+```bash
+cargo run -p qmrust-cli -- bidsify \
+  --model inversion_recovery \
+  --mat-data IRData.mat --mask Mask.mat \
+  --config prots/irt1_config.yaml \
+  --subject 01 --out ds-qmrust
+```
+
+This writes `ds-qmrust/sub-01/anat/sub-01_inv-<i>_IRT1.nii.gz` (+
+`{InversionTime}` sidecars), `dataset_description.json`, `participants.tsv`,
+and the mask under `ds-qmrust/derivatives/preprocessed/sub-01/anat/
+sub-01_desc-brain_mask.nii.gz`.
+
+`bidsify` also supports `qmt_spgr`, whose BIDS identity is the custom,
+non-official suffix `QMTSPGR` (see [BIDS](bids.md)). Point it at a directory
+of qMRLab's qMT `.mat` files instead of a single file, and append it as a
+second subject in the same dataset:
+
+```bash
+cargo run -p qmrust-cli -- bidsify \
+  --model qmt_spgr \
+  --mat-dir <dir-with-MTdata/R1map/B1map/B0map/Mask.mat> \
+  --config prots/qmt_config_ramani.yaml \
+  --subject 02 --out ds-qmrust
+```
+
+This writes `ds-qmrust/sub-02/anat/sub-02_flip-<f>_mt-<m>_QMTSPGR.nii.gz` for
+each of the 10 MT-weighted volumes (2 flip angles × 5 offsets), each with a
+sidecar carrying the acquisition metadata the fit reads back by identity:
+
+```json
+{"Angle": 142.0, "Offset": 443.0, "RepetitionTime": 0.03, "MTPulseDuration": 0.008}
+```
+
+and a root `.bidsignore` containing `*QMTSPGR*` (so general BIDS validators
+skip the non-official suffix; qmrust's own layout resolver discovers it
+regardless — see [BIDS](bids.md)). Any computed inputs present in `--mat-dir`
+are written byte-identical to a `preprocessed` derivatives pipeline: B1/B0
+field maps under `ds-qmrust/derivatives/preprocessed/sub-02/fmap/`
+(`_TB1map`/`_B0map`), the R1 map and brain mask under that pipeline's `anat/`
+(`_R1map`/`_desc-brain_mask`).
+
+Fitting the resulting `QMTSPGR` collection the same way as IRT1:
+
+```bash
+cargo run -p qmrust-cli -- fit \
+  --bids-dir ds-qmrust \
+  --config prots/qmt_config_ramani.yaml \
+  --output-dir ds-qmrust/derivatives
+```
+
+writes the six qMT maps qmt_spgr declares via `bids_outputs()` —
+`sub-02_Fmap.nii.gz`, `_kRmap`, `_R1Fmap`, `_R1Rmap`, `_T2Fmap`, `_T2Rmap` —
+under `ds-qmrust/derivatives/qmrust/sub-02/anat/`.
+
+`scripts/make_bids_examples.sh` automates both examples end to end: it
+fetches qMRLab's OSF IR and qMT demo datasets, runs `bidsify` for each into
+the same `ds-qmrust` (sub-01 IRT1, sub-02 QMTSPGR), fits both via
+`qmrust fit --bids-dir`, and confirms the IRT1 result is voxel-identical to
+fitting the original `.mat` (in-mask) and within qMRLab's own reference
+tolerance (`FitResults/T1.nii.gz`). The generated dataset itself is not
+committed (large data stays out of the repo); re-run the script to regenerate
+it.
+
 ## Run a simulation
 
 `qmrust sim` generates a forward signal from ground-truth parameters,
@@ -98,6 +175,16 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build -p qmrust-core --target wasm32-unknown-unknown   # core must stay wasm-clean
 ```
+
+## Units
+
+qmrust works in BIDS/SI units end to end: protocol times (`inversion_times`,
+`repetition_time` in config; `InversionTime`, `RepetitionTime` in sidecars) are in
+**seconds**, and fitted time-constant maps (e.g. IRT1's `T1map`) are in **seconds** too —
+so a fitted T1 of `0.9` means 900 ms, not 0.9 ms. This is a deliberate divergence from
+qMRLab (which uses milliseconds): a qMRLab `FitResults/T1.nii.gz` reference differs from
+qmrust's `T1map` by a factor of 1000. See the "Units — BIDS-native (SI)" principle in
+[`CLAUDE.md`](../CLAUDE.md) for the full rule.
 
 ## Next steps
 

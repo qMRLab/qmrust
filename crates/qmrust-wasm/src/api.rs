@@ -281,12 +281,13 @@ pub fn sim(mode: &str, cfg_yaml: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    const IR_YAML: &str = "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800, 950, 1100, 1250, 1400, 1700]\n";
+    // Inversion times in seconds (BIDS units).
+    const IR_YAML: &str = "model: inversion_recovery\nmethod: complex\ninversion_times: [0.350, 0.500, 0.650, 0.800, 0.950, 1.100, 1.250, 1.400, 1.700]\n";
 
     /// Build a clean IR volume as raw values plus their per-volume identity
     /// JSON (the `InversionTime` param rows) for `fit_volume`.
     fn ir_signal_and_ids() -> (Vec<f64>, String) {
-        let meas = forward(IR_YAML, &[900.0, 500.0, -1000.0], "").unwrap();
+        let meas = forward(IR_YAML, &[0.9, 500.0, -1000.0], "").unwrap();
         let arr: Vec<serde_json::Value> = serde_json::from_str(&meas).unwrap();
         let data: Vec<f64> = arr.iter().map(|s| s["value"].as_f64().unwrap()).collect();
         let rows: Vec<&serde_json::Value> = arr.iter().map(|s| &s["params"]).collect();
@@ -304,19 +305,19 @@ mod tests {
     #[test]
     fn forward_then_fit_voxel_roundtrips_ir() {
         // forward with known params, then fit the clean measurement back.
-        let meas = forward(IR_YAML, &[900.0, 500.0, -1000.0], "").unwrap();
+        let meas = forward(IR_YAML, &[0.9, 500.0, -1000.0], "").unwrap();
         let arr: Vec<serde_json::Value> = serde_json::from_str(&meas).unwrap();
         assert_eq!(arr.len(), 9);
         let out = fit_voxel(IR_YAML, &meas, "").unwrap();
         // output_names[0] == "T1"
-        assert!((out[0] - 900.0).abs() < 1.0, "T1: {}", out[0]);
+        assert!((out[0] - 0.9).abs() < 1e-3, "T1: {}", out[0]);
     }
 
     #[test]
     fn fit_voxel_is_order_free() {
         // Reversing the measurement's samples must not change the fitted T1:
         // the model matches by InversionTime, never by position.
-        let meas = forward(IR_YAML, &[900.0, 500.0, -1000.0], "").unwrap();
+        let meas = forward(IR_YAML, &[0.9, 500.0, -1000.0], "").unwrap();
         let mut arr: Vec<serde_json::Value> = serde_json::from_str(&meas).unwrap();
         arr.reverse();
         let reversed = serde_json::to_string(&arr).unwrap();
@@ -351,7 +352,7 @@ mod tests {
         let maps = fit_volume(IR_YAML, &sig, dims, &ids, None, &[]).unwrap();
         let t1 = maps.iter().find(|(n, _)| n == "T1").expect("T1 map");
         assert_eq!(t1.1.len(), 1);
-        assert!((t1.1[0] - 900.0).abs() < 1.0, "T1: {}", t1.1[0]);
+        assert!((t1.1[0] - 0.9).abs() < 1e-3, "T1: {}", t1.1[0]);
     }
 
     #[test]
@@ -365,7 +366,7 @@ mod tests {
         let maps = fit_volume(IR_YAML, &data, dims, &ids, Some(&mask), &[]).unwrap();
         let t1 = &maps.iter().find(|(n, _)| n == "T1").unwrap().1;
         assert_eq!(t1.len(), 2);
-        assert!((t1[0] - 900.0).abs() < 1.0);
+        assert!((t1[0] - 0.9).abs() < 1e-3);
         assert!(t1[1].is_nan(), "masked voxel should be NaN, got {}", t1[1]);
     }
 

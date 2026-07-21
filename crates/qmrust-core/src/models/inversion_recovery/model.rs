@@ -114,6 +114,15 @@ impl Model for IrModel {
             scope: Scope::PerVolume,
         }]
     }
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
+        // Only `T1` is a genuine qMRLab-convention quantitative map here: `a`
+        // and `b` are the fit's offset/amplitude coefficients, not R1map or
+        // M0map values (M0map would require a method-specific combination of
+        // `a`/`b` qMRLab doesn't expose as a standalone output either), and
+        // `res`/`idx` are diagnostics. Do not add R1map/M0map until the model
+        // actually produces them.
+        vec![("T1", "T1map", "s")]
+    }
 }
 
 /// Registry builder: parse `IrConfig` from the raw YAML tree, apply any
@@ -143,7 +152,7 @@ mod tests {
 
     fn ir_value() -> serde_yaml::Value {
         serde_yaml::from_str(
-            "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800, 950, 1100, 1250, 1400, 1700]\n",
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [0.350, 0.500, 0.650, 0.800, 0.950, 1.100, 1.250, 1.400, 1.700]\n",
         )
         .unwrap()
     }
@@ -152,11 +161,11 @@ mod tests {
     fn build_and_roundtrip_via_trait() {
         let m = build(&ir_value(), &Protocol::default()).unwrap();
         assert_eq!(m.param_names(), vec!["T1", "a", "b"]);
-        let sig = m.forward(&[900.0, 500.0, -1000.0], &Aux::new());
+        let sig = m.forward(&[0.9, 500.0, -1000.0], &Aux::new());
         assert_eq!(sig.series().len(), 9);
         let fitted = m.fit(&sig, &Aux::new());
-        // output_names[0] == "T1"
-        assert!((fitted[0] - 900.0).abs() < 1.0, "T1: {}", fitted[0]);
+        // output_names[0] == "T1" (seconds)
+        assert!((fitted[0] - 0.9).abs() < 1e-3, "T1: {}", fitted[0]);
     }
 
     #[test]
@@ -169,9 +178,9 @@ mod tests {
         // that must fail loudly at build, not per voxel.
         let proto = Protocol {
             volumes: vec![
-                BTreeMap::from([("InversionTime".to_string(), 350.0)]),
-                BTreeMap::from([("InversionTime".to_string(), 500.0)]),
-                BTreeMap::from([("InversionTime".to_string(), 650.0)]),
+                BTreeMap::from([("InversionTime".to_string(), 0.350)]),
+                BTreeMap::from([("InversionTime".to_string(), 0.500)]),
+                BTreeMap::from([("InversionTime".to_string(), 0.650)]),
                 BTreeMap::from([("SomeOtherKey".to_string(), 1.0)]),
             ],
             global: BTreeMap::new(),
@@ -190,10 +199,10 @@ mod tests {
     fn fit_assembles_by_identity_not_position() {
         // The samples are supplied in REVERSED order with distinct TIs, so a
         // positional assembly would feed the fitter a mirrored (wrong) signal
-        // and miss T1; only value-matching recovers 900. This test fails if
+        // and miss T1; only value-matching recovers 0.9. This test fails if
         // `fit` ever assembles by position.
         let m = build(&ir_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[900.0, 500.0, -1000.0], &Aux::new());
+        let sig = m.forward(&[0.9, 500.0, -1000.0], &Aux::new());
         let mut reversed: Vec<Sample> = match sig {
             Measurement::Series(ref s) => s
                 .iter()
@@ -207,8 +216,8 @@ mod tests {
         reversed.reverse();
         let a = m.fit(&sig, &Aux::new());
         let b = m.fit(&Measurement::Series(reversed), &Aux::new());
-        assert!((a[0] - 900.0).abs() < 1.0, "in-order T1: {}", a[0]);
-        assert!((b[0] - 900.0).abs() < 1.0, "reordered T1: {}", b[0]);
+        assert!((a[0] - 0.9).abs() < 1e-3, "in-order T1: {}", a[0]);
+        assert!((b[0] - 0.9).abs() < 1e-3, "reordered T1: {}", b[0]);
         assert_eq!(a[0], b[0], "T1 must be identical under reordering");
     }
 
@@ -228,13 +237,13 @@ mod tests {
     #[test]
     fn mat_protocol_overrides_tis() {
         let mut proto = Protocol::default();
-        for ti in [350.0, 500.0, 650.0] {
+        for ti in [0.350, 0.500, 0.650] {
             let mut mm = std::collections::BTreeMap::new();
             mm.insert("InversionTime".to_string(), ti);
             proto.volumes.push(mm);
         }
         let m = build(&ir_value(), &proto).unwrap();
-        let sig = m.forward(&[900.0, 500.0, -1000.0], &Aux::new());
+        let sig = m.forward(&[0.9, 500.0, -1000.0], &Aux::new());
         assert_eq!(sig.series().len(), 3);
     }
 
@@ -242,6 +251,18 @@ mod tests {
     fn declares_bids_irt1() {
         let m = build(&ir_value(), &Protocol::default()).unwrap();
         assert_eq!(m.bids().unwrap().suffix, "IRT1");
+    }
+
+    #[test]
+    fn bids_outputs_reference_real_output_names() {
+        let m = build(&ir_value(), &Protocol::default()).unwrap();
+        let names = m.output_names();
+        for (out, _suffix, _units) in m.bids_outputs() {
+            assert!(
+                names.iter().any(|n| n == out),
+                "bids_outputs references '{out}', not in output_names {names:?}"
+            );
+        }
     }
 
     #[test]

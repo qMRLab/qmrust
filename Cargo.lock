@@ -801,6 +801,7 @@ dependencies = [
  "rayon",
  "rust-bids",
  "serde",
+ "serde_json",
  "serde_yaml",
 ]
 

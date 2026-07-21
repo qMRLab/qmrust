@@ -3,6 +3,7 @@
 
 use crate::entities::parse_filename;
 use crate::fs::DatasetFs;
+use crate::vocab::Vocabulary;
 use anyhow::Result;
 use std::collections::BTreeMap;
 
@@ -11,11 +12,27 @@ const IMAGE_EXTS: [&str; 2] = [".nii", ".nii.gz"];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BidsRow {
     pub path: String,
+    /// The derivatives pipeline this file belongs to (the first path segment
+    /// after `derivatives/`), or `None` for a file in the raw tree. Lets a
+    /// query select "everything for subject X, raw or derivative" and know
+    /// which pipeline each row came from.
+    pub derivatives: Option<String>,
     pub datatype: Option<String>,
     pub suffix: String,
     pub extension: String,
     pub entities: BTreeMap<String, String>,
     pub sidecar_path: Option<String>,
+}
+
+/// The derivatives pipeline name for a path: the segment immediately after a
+/// `derivatives/` segment (`derivatives/<pipeline>/...`), or `None` when the
+/// path is not under a `derivatives/` tree.
+fn derivatives_of(path: &str) -> Option<String> {
+    let segs: Vec<&str> = path.split('/').collect();
+    segs.iter()
+        .position(|&s| s == "derivatives")
+        .and_then(|i| segs.get(i + 1))
+        .map(|s| s.to_string())
 }
 
 /// Directory-qualified stem: the full path with its known extension removed
@@ -36,6 +53,24 @@ fn is_image(name: &str) -> bool {
     IMAGE_EXTS.iter().any(|e| name.ends_with(e))
 }
 
+/// Match a `.bidsignore` glob against a path. `*` is a wildcard for any run of
+/// characters; the pattern's literal segments (split on `*`) must appear in
+/// order within the path, so a `*`-free pattern reduces to a substring test.
+/// Minimal by design — only `*` is supported, not `?` or `[…]`.
+fn bidsignore_match(pattern: &str, path: &str) -> bool {
+    let mut cursor = 0;
+    for seg in pattern.split('*') {
+        if seg.is_empty() {
+            continue;
+        }
+        match path[cursor..].find(seg) {
+            Some(pos) => cursor += pos + seg.len(),
+            None => return false,
+        }
+    }
+    true
+}
+
 /// Recursively collect every file path under `dir`.
 fn walk<F: DatasetFs>(fs: &F, dir: &str, out: &mut Vec<String>) -> Result<()> {
     for e in fs.list(dir)? {
@@ -53,22 +88,27 @@ fn walk<F: DatasetFs>(fs: &F, dir: &str, out: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
-/// The datatype directory is the immediate parent folder (anat/fmap/dwi/...).
-fn datatype_of(path: &str) -> Option<String> {
+/// The datatype directory is the immediate parent folder (anat/fmap/dwi/...),
+/// but only counts as a datatype when it's one of the 16 canonical BIDS
+/// datatype names — a file directly under a non-datatype folder has no
+/// datatype.
+fn datatype_of(path: &str, vocab: &Vocabulary) -> Option<String> {
     let mut segs: Vec<&str> = path.split('/').collect();
     segs.pop(); // filename
-    segs.pop().map(|s| s.to_string())
+    segs.pop()
+        .filter(|parent| vocab.is_datatype(parent))
+        .map(|s| s.to_string())
 }
 
-pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
-    // .bidsignore: newline-separated substrings (minimal glob: `*` = any).
-    // Only a *trailing* `*` is stripped; leading-wildcard lines like `*.log`
-    // are left as-is (and thus effectively inert against the `contains`
-    // check below) — this matches the brief's minimal-glob scope.
+pub fn parse_to_table<F: DatasetFs>(fs: &F, vocab: &Vocabulary) -> Result<Vec<BidsRow>> {
+    // .bidsignore: newline-separated gitignore-style globs matched by
+    // `bidsignore_match` — `*` is a wildcard for any run of characters, so
+    // `*QMTSPGR*` matches any path containing "QMTSPGR" and a `*`-free line is
+    // a substring test.
     let ignore: Vec<String> = match fs.read(".bidsignore") {
         Ok(bytes) => String::from_utf8_lossy(&bytes)
             .lines()
-            .map(|l| l.trim().trim_end_matches('*').to_string())
+            .map(|l| l.trim().to_string())
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect(),
         Err(_) => Vec::new(),
@@ -76,7 +116,17 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
 
     let mut all = Vec::new();
     walk(fs, "", &mut all)?;
-    let ignored = |p: &str| ignore.iter().any(|frag| p.contains(frag.as_str()));
+    // A path whose filename parses to a *custom* suffix (registered model or
+    // config-declared) is exempt from `.bidsignore`: custom (non-standard-BIDS)
+    // suffixes like QMTSPGR are deliberately `.bidsignore`'d so generic BIDS
+    // validators don't choke on them, but they must still be discoverable by
+    // qmrust itself. Canonical BIDS suffixes are never force-exempted.
+    let is_custom_suffix = |p: &str| {
+        let file = p.rsplit('/').next().unwrap_or(p);
+        parse_filename(file).is_some_and(|parsed| vocab.is_custom_suffix(&parsed.suffix))
+    };
+    let ignored =
+        |p: &str| !is_custom_suffix(p) && ignore.iter().any(|pat| bidsignore_match(pat, p));
 
     // Index sidecars by directory-qualified stem for pairing, so a raw file
     // never pairs with a same-named sidecar living under a different
@@ -93,17 +143,58 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
         let Some(parsed) = parse_filename(file) else {
             continue;
         };
+        // Canonical entity keys are already normalized by `parse_filename`;
+        // this catches config-declared custom entity keys it left untouched.
+        let entities: BTreeMap<String, String> = parsed
+            .entities
+            .into_iter()
+            .map(|(k, v)| (vocab.normalize_entity_key(&k), v))
+            .collect();
         rows.push(BidsRow {
             path: path.clone(),
-            datatype: datatype_of(path),
+            derivatives: derivatives_of(path),
+            datatype: datatype_of(path, vocab),
             suffix: parsed.suffix,
             extension: parsed.extension,
-            entities: parsed.entities,
+            entities,
             sidecar_path: json_by_stem.get(path_stem(path)).map(|p| (*p).clone()),
         });
     }
     rows.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(rows)
+}
+
+/// The value of a named column for a row, spanning both parsed entities
+/// (`subject`, `session`, `run`, …) and the structural columns (`suffix`,
+/// `datatype`, `derivatives`, `extension`, `path`). `None` when the column is
+/// absent for this row. This is the single accessor over which generic
+/// column queries are expressed, so callers never special-case entity vs.
+/// structural columns.
+pub fn row_column<'a>(row: &'a BidsRow, column: &str) -> Option<&'a str> {
+    match column {
+        "suffix" => Some(&row.suffix),
+        "extension" => Some(&row.extension),
+        "path" => Some(&row.path),
+        "datatype" => row.datatype.as_deref(),
+        "derivatives" => row.derivatives.as_deref(),
+        entity => row.entities.get(entity).map(String::as_str),
+    }
+}
+
+/// Every row satisfying all `(column, value)` constraints — the generic table
+/// query (cf. libBIDS.sh's `table_filter`). A constraint matches when the
+/// row's value for that column (see [`row_column`]) equals `value`; a row
+/// missing the column never matches. With no constraints, every row matches.
+/// This one primitive underlies both collection grouping and input resolution:
+/// nothing about it is model- or dataset-specific.
+pub fn table_filter<'a>(rows: &'a [BidsRow], constraints: &[(&str, &str)]) -> Vec<&'a BidsRow> {
+    rows.iter()
+        .filter(|r| {
+            constraints
+                .iter()
+                .all(|(col, val)| row_column(r, col) == Some(*val))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -122,7 +213,7 @@ mod tests {
                     format!("{{\"InversionTime\": {}}}", i * 100),
                 );
         }
-        let rows = parse_to_table(&fs).unwrap();
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
         assert_eq!(rows.len(), 4);
         assert!(rows.iter().all(|r| r.suffix == "IRT1"));
         assert!(rows.iter().all(|r| r.sidecar_path.is_some()));
@@ -145,7 +236,7 @@ mod tests {
                 "derivatives/toolX/sub-01/anat/sub-01_inv-01_IRT1.json",
                 b"{\"InversionTime\": 999}".to_vec(),
             );
-        let rows = parse_to_table(&fs).unwrap();
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(
             rows[0].sidecar_path.as_deref(),
@@ -159,8 +250,164 @@ mod tests {
             .touch("sub-01/anat/sub-01_inv-01_IRT1.nii.gz")
             .touch("derivatives/tool/sub-01/anat/sub-01_T1map.nii.gz")
             .with(".bidsignore", b"derivatives/*".to_vec());
-        let rows = parse_to_table(&fs).unwrap();
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].suffix, "IRT1");
+    }
+
+    #[test]
+    fn bidsignore_exempts_registered_model_suffixes() {
+        // QMTSPGR is a registered model suffix (qmrust_core::registry), so a
+        // `.bidsignore` line targeting it must NOT hide it from discovery —
+        // only unrelated, non-registered ignored paths stay excluded.
+        let fs = MemFs::new()
+            .touch("sub-02/anat/sub-02_flip-1_mt-1_QMTSPGR.nii.gz")
+            .with(
+                "sub-02/anat/sub-02_flip-1_mt-1_QMTSPGR.json",
+                b"{}".to_vec(),
+            )
+            // Not a registered suffix ("NOTREG" isn't in qmrust_core::registry)
+            // and IS covered by a `.bidsignore` line — must stay excluded.
+            .touch("derivatives/tool/sub-02/anat/sub-02_NOTREG.nii.gz")
+            .with(".bidsignore", b"*QMTSPGR*\nderivatives/*".to_vec());
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
+        assert_eq!(rows.len(), 1, "only the QMTSPGR volume should surface");
+        assert_eq!(rows[0].suffix, "QMTSPGR");
+        assert!(
+            rows[0].sidecar_path.is_some(),
+            "sidecar must also be exempted so pairing still works"
+        );
+    }
+
+    #[test]
+    fn bidsignore_match_globs_wildcards_and_substrings() {
+        // Leading/trailing `*` — the QMTSPGR case that a trailing-only strip
+        // would miss.
+        assert!(bidsignore_match(
+            "*QMTSPGR*",
+            "sub-02/anat/sub-02_flip-1_mt-1_QMTSPGR.nii.gz"
+        ));
+        // Interior `*` anchors segments in order.
+        assert!(bidsignore_match(
+            "derivatives/*",
+            "derivatives/tool/sub-01/anat/sub-01_T1map.nii.gz"
+        ));
+        assert!(bidsignore_match("*.log", "code/run.log"));
+        // A `*`-free pattern is a plain substring test.
+        assert!(bidsignore_match("code/x.log", "a/code/x.log"));
+        // Non-matches.
+        assert!(!bidsignore_match(
+            "*QMTSPGR*",
+            "sub-01/anat/sub-01_T1w.nii.gz"
+        ));
+        assert!(!bidsignore_match(
+            "derivatives/*",
+            "sub-01/anat/sub-01_T1w.nii.gz"
+        ));
+    }
+
+    #[test]
+    fn derivatives_column_records_pipeline_and_is_none_for_raw() {
+        let fs = MemFs::new()
+            .touch("sub-02/anat/sub-02_flip-1_mt-1_QMTSPGR.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/fmap/sub-02_TB1map.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/fmap/sub-02_B0map.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/anat/sub-02_R1map.nii.gz")
+            .with(".bidsignore", b"*QMTSPGR*".to_vec());
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
+
+        let by_suffix = |s: &str| rows.iter().find(|r| r.suffix == s).unwrap();
+        // Raw acquisition: no pipeline.
+        assert_eq!(by_suffix("QMTSPGR").derivatives, None);
+        // Every preprocessed input carries the pipeline name, so a subject
+        // query can locate aux maps across the raw/derivative boundary.
+        for suffix in ["TB1map", "B0map", "R1map"] {
+            let row = by_suffix(suffix);
+            assert_eq!(row.derivatives.as_deref(), Some("preprocessed"));
+            assert_eq!(row.entities.get("subject").map(String::as_str), Some("02"));
+        }
+    }
+
+    #[test]
+    fn table_filter_matches_arbitrary_columns_including_structural() {
+        let fs = MemFs::new()
+            .touch("sub-02/ses-1/anat/sub-02_ses-1_run-1_flip-1_mt-1_QMTSPGR.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/ses-1/fmap/sub-02_ses-1_run-1_TB1map.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/ses-2/fmap/sub-02_ses-2_run-1_TB1map.nii.gz")
+            .with(".bidsignore", b"*QMTSPGR*".to_vec());
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
+
+        // Identity that spans several entities plus a structural column pins
+        // exactly one file — the ses-1 B1 map, not the ses-2 one.
+        let hits = table_filter(
+            &rows,
+            &[
+                ("subject", "02"),
+                ("session", "1"),
+                ("run", "1"),
+                ("suffix", "TB1map"),
+            ],
+        );
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].path.contains("ses-1"));
+
+        // Structural columns are first-class: filter by pipeline + datatype.
+        let by_pipeline = table_filter(
+            &rows,
+            &[("derivatives", "preprocessed"), ("datatype", "fmap")],
+        );
+        assert_eq!(by_pipeline.len(), 2);
+
+        // No constraints → everything; a missing-column constraint → nothing.
+        assert_eq!(table_filter(&rows, &[]).len(), rows.len());
+        assert!(table_filter(&rows, &[("subject", "99")]).is_empty());
+    }
+
+    #[test]
+    fn config_custom_suffix_is_discoverable_despite_bidsignore() {
+        let cfg = crate::config::parse_config(
+            r#"
+loop_over: [subject, session, run, task]
+custom_suffixes: [MYSUFFIX]
+"#,
+        )
+        .unwrap();
+        let vocab = Vocabulary::from_config(&cfg);
+        let fs = MemFs::new()
+            .touch("sub-01/anat/sub-01_MYSUFFIX.nii.gz")
+            .with(".bidsignore", b"*MYSUFFIX*".to_vec());
+        let rows = parse_to_table(&fs, &vocab).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].suffix, "MYSUFFIX");
+    }
+
+    #[test]
+    fn custom_entity_key_is_normalized_to_its_declared_name() {
+        let cfg = crate::config::parse_config(
+            r#"
+loop_over: [subject, session, run, task]
+custom_entities:
+  - key: myent
+    name: myentity
+"#,
+        )
+        .unwrap();
+        let vocab = Vocabulary::from_config(&cfg);
+        let fs = MemFs::new().touch("sub-01/anat/sub-01_myent-3_T1w.nii.gz");
+        let rows = parse_to_table(&fs, &vocab).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].entities.get("myentity").map(String::as_str),
+            Some("3")
+        );
+        assert!(!rows[0].entities.contains_key("myent"));
+    }
+
+    #[test]
+    fn file_under_non_datatype_dir_has_no_datatype() {
+        let fs = MemFs::new().touch("sub-01/notadatatype/sub-01_T1w.nii.gz");
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].datatype, None);
     }
 }

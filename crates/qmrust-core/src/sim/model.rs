@@ -46,7 +46,7 @@ mod tests {
     use super::*;
 
     fn ir_cfg_raw() -> (Config, serde_yaml::Value) {
-        let yaml = "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800, 950, 1100, 1250, 1400, 1700]\nsim:\n  params: { T1: 900.0, a: 500.0, b: -1000.0 }\n";
+        let yaml = "model: inversion_recovery\nmethod: complex\ninversion_times: [0.350, 0.500, 0.650, 0.800, 0.950, 1.100, 1.250, 1.400, 1.700]\nsim:\n  params: { T1: 0.9, a: 500.0, b: -1000.0 }\n";
         let raw: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
         let mut c: Config = serde_yaml::from_str(yaml).unwrap();
         c.validate().unwrap();
@@ -58,15 +58,15 @@ mod tests {
         let (cfg, raw) = ir_cfg_raw();
         let model = build_model(&cfg, &raw).unwrap();
         let p = param_vector(model.as_ref(), cfg.sim.as_ref().unwrap()).unwrap();
-        assert_eq!(p, vec![900.0, 500.0, -1000.0]);
+        assert_eq!(p, vec![0.9, 500.0, -1000.0]);
         let meas = model.forward(&p, &Aux::new());
         let fitted = model.fit(&meas, &Aux::new());
-        assert!((fitted[0] - 900.0).abs() < 1.0, "T1: {}", fitted[0]);
+        assert!((fitted[0] - 0.9).abs() < 1e-3, "T1: {}", fitted[0]);
     }
 
     #[test]
     fn missing_param_errors() {
-        let yaml = "model: inversion_recovery\nmethod: complex\ninversion_times: [350, 500, 650, 800, 950, 1100, 1250, 1400, 1700]\nsim:\n  params: { T1: 900.0, a: 500.0 }\n";
+        let yaml = "model: inversion_recovery\nmethod: complex\ninversion_times: [0.350, 0.500, 0.650, 0.800, 0.950, 1.100, 1.250, 1.400, 1.700]\nsim:\n  params: { T1: 0.9, a: 500.0 }\n";
         let raw: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
         let mut c: Config = serde_yaml::from_str(yaml).unwrap();
         c.validate().unwrap();

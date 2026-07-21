@@ -34,9 +34,44 @@ A `BidsConfig` has a `loop_over` (which entities define one "unit", e.g.
   IRT1's inversion-recovery series ordered `by: [inversion]`.
 
 Today the grouping config is a **bundled default** (`default_config()`,
-covering `IRT1` and `MTS`) plus a programmatic `parse_config(yaml: &str)` for
-supplying your own. A discoverable, on-disk `rust-bids.yaml` convention is
-planned but not yet implemented.
+covering `IRT1`, `MTS`, and `QMTSPGR`) plus a programmatic `parse_config(yaml:
+&str)` for supplying your own. A discoverable, on-disk `rust-bids.yaml`
+convention is planned but not yet implemented.
+
+`QMTSPGR` (qMT-SPGR) is a **custom, non-official** BIDS suffix — it isn't
+part of the BIDS-MRI spec, so a `QMTSPGR` dataset ships a root `.bidsignore`
+containing `*QMTSPGR*` to keep general-purpose BIDS validators quiet. Layout
+resolution discovers it anyway: a path whose suffix matches a *registered*
+model (`qmrust_core::registry::by_bids_suffix`) is never dropped by
+`.bidsignore`, only genuinely unrelated ignored paths are. It's grouped as a
+`sequential_set` ordered `by: [mt, flip]` — the 2 flip angles × 5 offsets
+qMRLab's `qmt_spgr_batch` convention produces
+(`sub-<subject>_flip-<f>_mt-<m>_QMTSPGR.nii.gz`) — but that ordering is
+cosmetic: `qmt_spgr` reads each volume's identity from its sidecar's
+`Angle`/`Offset` fields (see below), so a fit is correct regardless of file
+order.
+
+## Non-official entities and suffixes
+
+The reader parses filenames against a **vocabulary** of the canonical BIDS
+entities, suffixes, and datatypes (`rust_bids::Vocabulary`), extended with every
+registered model's own suffix (so `QMTSPGR` is known with no configuration). A
+dataset that uses non-standard terms declares them in its grouping config rather
+than relying on anything hardcoded:
+
+```yaml
+custom_suffixes: [QMTSPGR]              # discoverable + .bidsignore-exempt
+custom_entities:
+  - { key: cest, name: cestPool }       # short key -> full column name
+```
+
+An unrecognized suffix is still read into the table (nothing is silently
+dropped) but flagged with a warning. Every input a fit consumes — B1/B0/R1 maps,
+and the brain **mask** — is located from this table by the collection's identity
+plus a declared suffix (and, for the mask, entity constraints given in the
+`--config` `mask:` block, e.g. `mask: { desc: brain }`), found wherever it lives
+in the raw tree or any `derivatives/<pipeline>/`. See
+[Adding a model](models.md) for the full contributor-facing customization.
 
 ## The I/O seam
 
@@ -59,4 +94,15 @@ resolve_protocol` evaluates that schema against each volume's `Sidecar` (and the
 same acquisition-metadata shape a model reads its protocol from — so grouped BIDS volumes
 feed directly into the existing fitting shell described in [Architecture](architecture.md).
 A model with no declared `protocol_schema()` resolves to an empty `Protocol`, falling
-back to reading its own `--config` as before.
+back to reading its own `--config` as before. `qmt_spgr` declares `Angle` and `Offset`
+(both `PerVolume`, read straight off each `QMTSPGR` volume's sidecar), mirroring IR's
+`InversionTime` — the fit matches samples to the model's canonical rows by these values,
+not by file order.
+
+## Units
+
+Sidecar fields resolved through `protocol_schema()` are read as-is — qmrust expects them
+in BIDS/SI units, so an `InversionTime` sidecar value of `0.35` means 350 ms, and the
+resulting fitted map (e.g. `T1map`) is in seconds too. See the "Units — BIDS-native (SI)"
+principle in [`CLAUDE.md`](../CLAUDE.md) for the full rule and how it differs from
+qMRLab (milliseconds).

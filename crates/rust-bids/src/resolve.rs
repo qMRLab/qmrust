@@ -5,6 +5,7 @@ use crate::collection::{Collection, GroupedData, VolumeRef, Warning};
 use crate::config::{BidsConfig, SetDef};
 use crate::fs::DatasetFs;
 use crate::table::{parse_to_table, BidsRow};
+use crate::vocab::Vocabulary;
 use anyhow::{anyhow, Result};
 use std::collections::BTreeMap;
 
@@ -63,6 +64,15 @@ pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result
     let mut out = Vec::new();
     for (key, members) in by_group {
         let (subject, session, run, task) = key_fields(&key, &cfg.loop_over);
+        // The full grouping identity: every present loop_over entity as a bare
+        // value. Drives auxiliary-input resolution generically (any entity the
+        // dataset groups by, not only the four named convenience fields).
+        let entities: BTreeMap<String, String> = cfg
+            .loop_over
+            .iter()
+            .zip(key.iter())
+            .filter_map(|(name, val)| val.clone().map(|v| (name.clone(), v)))
+            .collect();
         let (data, warnings) = match def {
             SetDef::Sequential(seq) => {
                 let mut sorted: Vec<&BidsRow> = members.clone();
@@ -84,8 +94,8 @@ pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result
             }
             SetDef::Named(named) => resolve_named(named, &members),
             SetDef::Plain(_) => {
-                // plain_set is intentionally parse-only (YAGNI): it is not yet
-                // grouped into a Collection by this resolver.
+                // A plain_set is parsed but not grouped into a Collection by
+                // this resolver; its members surface as a flat sequence.
                 (
                     GroupedData::Sequential(members.iter().map(|r| vol(r)).collect()),
                     vec![Warning {
@@ -107,6 +117,7 @@ pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result
             session,
             run,
             task,
+            entities,
             suffix: set_name.to_string(),
             data,
             warnings,
@@ -128,7 +139,7 @@ fn resolve_named(
             .filter(|r| {
                 constraints
                     .iter()
-                    .all(|(k, v)| r.entities.get(k).map(|rv| rv == v).unwrap_or(false))
+                    .all(|(k, v)| crate::table::row_column(r, k) == Some(v.as_str()))
             })
             .collect();
         match matched.as_slice() {
@@ -163,7 +174,8 @@ pub fn collections_for<F: DatasetFs>(
     cfg: &BidsConfig,
     suffix: &str,
 ) -> Result<Vec<Collection>> {
-    let table = parse_to_table(fs)?;
+    let vocab = Vocabulary::from_config(cfg);
+    let table = parse_to_table(fs, &vocab)?;
     resolve_set(&table, cfg, suffix)
 }
 
@@ -196,6 +208,41 @@ mod tests {
         assert_eq!(v.len(), 4);
         assert!(v[0].nii.contains("inv-01"));
         assert!(v[3].nii.contains("inv-04"));
+    }
+
+    #[test]
+    fn resolves_sequential_qmtspgr_ordered_by_mt_then_flip() {
+        // 2 flip x 5 mt = 10 volumes; canonical order is mt outer, flip inner:
+        // flip-1_mt-1, flip-2_mt-1, flip-1_mt-2, flip-2_mt-2, ...
+        let mut fs = MemFs::new();
+        for mt in 1..=5 {
+            for flip in 1..=2 {
+                fs = fs
+                    .touch(&format!(
+                        "sub-02/anat/sub-02_flip-{flip}_mt-{mt}_QMTSPGR.nii.gz"
+                    ))
+                    .with(
+                        &format!("sub-02/anat/sub-02_flip-{flip}_mt-{mt}_QMTSPGR.json"),
+                        b"{}".to_vec(),
+                    );
+            }
+        }
+        let cols = collections_for(&fs, &default_config(), "QMTSPGR").unwrap();
+        assert_eq!(cols.len(), 1);
+        let GroupedData::Sequential(v) = &cols[0].data else {
+            panic!("expected sequential data")
+        };
+        assert_eq!(v.len(), 10);
+        let expected: Vec<(u32, u32)> = (1..=5)
+            .flat_map(|mt| (1..=2).map(move |f| (mt, f)))
+            .collect();
+        for (vol, (mt, flip)) in v.iter().zip(expected) {
+            assert!(
+                vol.nii.contains(&format!("flip-{flip}_mt-{mt}_QMTSPGR")),
+                "expected flip-{flip}_mt-{mt} at this position, got {}",
+                vol.nii
+            );
+        }
     }
 
     #[test]
