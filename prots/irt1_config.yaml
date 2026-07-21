@@ -18,3 +18,6 @@ t1_range:
 zoom:
   iterations: 2
   points: 21
+
+mask:
+  desc: brain

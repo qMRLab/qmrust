@@ -193,14 +193,16 @@ impl Vocabulary {
         vocab
     }
 
-    /// The full name a custom entity key normalizes to, or the key itself if
-    /// it isn't declared as a custom entity (canonical keys are already
-    /// normalized upstream by `parse_filename`).
+    /// Normalize an entity key to the full name the table stores it under: a
+    /// declared custom entity wins, otherwise the canonical BIDS short→full
+    /// alias applies (`desc`→`description`), and an unknown key is returned
+    /// unchanged. This is the single normalizer callers use to match config- or
+    /// user-supplied keys (which may be short) against table columns.
     pub fn normalize_entity_key(&self, key: &str) -> String {
-        self.custom_entities
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| key.to_string())
+        match self.custom_entities.get(key) {
+            Some(name) => name.clone(),
+            None => crate::entities::full_key(key),
+        }
     }
 
     /// Whether `s` is known to this vocabulary at all: canonical, or a

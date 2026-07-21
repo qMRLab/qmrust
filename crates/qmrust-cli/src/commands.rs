@@ -696,6 +696,23 @@ pub fn run_fit_bids(
     };
     let bids_cfg = rust_bids::default_config();
     let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
+
+    // Optional `mask:` config: which mask to apply, disambiguated by entity
+    // constraints. Its entity keys are normalized (e.g. `desc` -> `description`)
+    // to match how the table stores them.
+    let mask_spec: Option<MaskSpec> = raw
+        .get("mask")
+        .map(|v| serde_yaml::from_value::<MaskSpec>(v.clone()))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid `mask:` config: {e}"))?
+        .map(|spec| MaskSpec {
+            suffix: spec.suffix,
+            entities: spec
+                .entities
+                .into_iter()
+                .map(|(k, v)| (vocab.normalize_entity_key(&k), v))
+                .collect(),
+        });
     let suffix = entry.bids_suffix;
     // The flat file table spans the whole dataset — raw tree and every
     // `derivatives/` pipeline — and is the single source from which each
@@ -759,8 +776,13 @@ pub fn run_fit_bids(
         let (nx, ny, nz, _) = data.dim();
         let header = header.unwrap_or_else(|| make_minimal_header(nx, ny, nz));
 
-        let (aux, mask, aux_sources) =
-            resolve_aux_and_mask(&table, model.as_ref(), &c.entities, &bids_dir)?;
+        let (aux, mask, aux_sources) = resolve_aux_and_mask(
+            &table,
+            model.as_ref(),
+            &c.entities,
+            mask_spec.as_ref(),
+            &bids_dir,
+        )?;
         for src in &aux_sources {
             eprintln!("  input: {src}");
         }
@@ -820,6 +842,24 @@ pub fn run_fit_bids(
 /// ambiguous input is surfaced rather than silently chosen. Nothing here is
 /// model- or dataset-specific: the model supplies `extra`, the collection
 /// supplies `identity`, and `table_filter` does the rest.
+/// How to locate the brain mask for a fit, declared in `--config` under a
+/// `mask:` key. `suffix` is the BIDS suffix (default `mask`); every other field
+/// is an entity constraint (`desc: brain`) that disambiguates which mask to use
+/// when a dataset holds several. Absent `mask:` means no masking — a mask is
+/// never guessed, because a dataset can carry many (brain, tissue, lesion, …)
+/// and auto-picking one is ill-posed.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MaskSpec {
+    #[serde(default = "default_mask_suffix")]
+    suffix: String,
+    #[serde(flatten)]
+    entities: std::collections::BTreeMap<String, String>,
+}
+
+fn default_mask_suffix() -> String {
+    "mask".to_string()
+}
+
 fn find_input<'a>(
     table: &'a [rust_bids::BidsRow],
     identity: &std::collections::BTreeMap<String, String>,
@@ -852,14 +892,17 @@ fn find_input<'a>(
 /// `BidsMap.entity` the model declares), so it is matched on whatever entities
 /// identify the collection — subject/session/run/… alike — not a fixed pair.
 /// A `required` input that is absent is a hard error; an optional one becomes a
-/// `None` entry (the model uses its default). The brain mask (BIDS suffix
-/// `mask`) is applied when present. Returns the aux bundle, the optional mask,
-/// and the dataset-relative paths of every input loaded (for provenance
-/// `Sources`).
+/// `None` entry (the model uses its default). A brain mask is applied only when
+/// `mask_spec` is given (from the config's `mask:` key): it is located by the
+/// collection identity + the spec's suffix and entity constraints, so a dataset
+/// with several masks is disambiguated by the config rather than guessed.
+/// Returns the aux bundle, the optional mask, and the dataset-relative paths of
+/// every input loaded (for provenance `Sources`).
 fn resolve_aux_and_mask(
     table: &[rust_bids::BidsRow],
     model: &dyn Model,
     identity: &std::collections::BTreeMap<String, String>,
+    mask_spec: Option<&MaskSpec>,
     bids_dir: &Path,
 ) -> Result<(AuxMaps, Option<Array3<bool>>, Vec<String>)> {
     let mut maps: Vec<(String, Option<Array3<f64>>)> = Vec::new();
@@ -894,10 +937,17 @@ fn resolve_aux_and_mask(
             None => maps.push((spec.name.to_string(), None)),
         }
     }
-    let mask = match find_input(table, identity, &[("suffix", "mask")])? {
-        Some(row) => {
-            sources.push(row.path.clone());
-            Some(io::nifti::read_mask_nifti(&bids_dir.join(&row.path))?)
+    let mask = match mask_spec {
+        Some(spec) => {
+            let mut extra: Vec<(&str, &str)> = vec![("suffix", spec.suffix.as_str())];
+            extra.extend(spec.entities.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+            match find_input(table, identity, &extra)? {
+                Some(row) => {
+                    sources.push(row.path.clone());
+                    Some(io::nifti::read_mask_nifti(&bids_dir.join(&row.path))?)
+                }
+                None => None,
+            }
         }
         None => None,
     };
@@ -1439,6 +1489,46 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// A `mask:` config disambiguates which mask to use by entity constraint,
+    /// and its short entity keys must be matched against the table's full names.
+    /// A dataset holding several masks resolves to the configured one; a spec
+    /// too loose to be unique is a hard error rather than a silent pick.
+    #[test]
+    fn mask_spec_disambiguates_and_flags_ambiguity() {
+        use std::collections::BTreeMap;
+        // `desc: brain` parses (suffix defaults to `mask`); `desc` is the short
+        // key the config author writes.
+        let spec: MaskSpec = serde_yaml::from_str("desc: brain\n").unwrap();
+        assert_eq!(spec.suffix, "mask");
+        assert_eq!(spec.entities.get("desc").map(String::as_str), Some("brain"));
+
+        // Two masks for one subject; the table stores the entity as its full
+        // name `description` (as `parse_to_table` would), so the config key is
+        // normalized to match.
+        let mask_row = |desc: &str| rust_bids::BidsRow {
+            path: format!("derivatives/preprocessed/sub-01/anat/sub-01_desc-{desc}_mask.nii.gz"),
+            derivatives: Some("preprocessed".into()),
+            datatype: Some("anat".into()),
+            suffix: "mask".into(),
+            extension: ".nii.gz".into(),
+            entities: BTreeMap::from([
+                ("subject".to_string(), "01".to_string()),
+                ("description".to_string(), desc.to_string()),
+            ]),
+            sidecar_path: None,
+        };
+        let rows = vec![mask_row("brain"), mask_row("tumor")];
+        let identity = BTreeMap::from([("subject".to_string(), "01".to_string())]);
+
+        // Config `desc` -> full `description`, matching the table.
+        let extra = [("suffix", "mask"), ("description", "brain")];
+        let hit = find_input(&rows, &identity, &extra).unwrap().unwrap();
+        assert!(hit.path.contains("desc-brain"));
+
+        // Suffix alone is too loose — both masks match, so it errors.
+        assert!(find_input(&rows, &identity, &[("suffix", "mask")]).is_err());
     }
 
     /// End-to-end validation: the BIDS fit path (`bidsify` +
