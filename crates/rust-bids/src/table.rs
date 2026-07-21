@@ -3,7 +3,7 @@
 
 use crate::entities::parse_filename;
 use crate::fs::DatasetFs;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::collections::BTreeMap;
 
 const IMAGE_EXTS: [&str; 2] = [".nii", ".nii.gz"];
@@ -133,6 +133,41 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F) -> Result<Vec<BidsRow>> {
     Ok(rows)
 }
 
+/// Locate one auxiliary file for a subject (and session, when given) by BIDS
+/// suffix, across the whole table — raw tree and every derivatives pipeline
+/// alike, since the table spans both. `None` when no row matches; an error
+/// when several do, so an ambiguous input is surfaced rather than one being
+/// silently chosen. This is the seam by which a fit pulls its declared inputs
+/// (B1/B0/R1 maps, masks) from wherever they live in the dataset.
+pub fn aux_row<'a>(
+    rows: &'a [BidsRow],
+    subject: &str,
+    session: Option<&str>,
+    suffix: &str,
+) -> Result<Option<&'a BidsRow>> {
+    let matches: Vec<&BidsRow> = rows
+        .iter()
+        .filter(|r| r.suffix == suffix)
+        .filter(|r| r.entities.get("subject").map(String::as_str) == Some(subject))
+        .filter(|r| match session {
+            Some(s) => r.entities.get("session").map(String::as_str) == Some(s),
+            None => true,
+        })
+        .collect();
+    match matches.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(one)),
+        many => bail!(
+            "ambiguous aux '{suffix}' for sub-{subject}: {} candidates ({})",
+            many.len(),
+            many.iter()
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +270,36 @@ mod tests {
             assert_eq!(row.derivatives.as_deref(), Some("preprocessed"));
             assert_eq!(row.entities.get("subject").map(String::as_str), Some("02"));
         }
+    }
+
+    #[test]
+    fn aux_row_locates_inputs_across_the_derivative_boundary() {
+        let fs = MemFs::new()
+            .touch("sub-02/anat/sub-02_flip-1_mt-1_QMTSPGR.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/fmap/sub-02_TB1map.nii.gz")
+            .touch("derivatives/preprocessed/sub-02/anat/sub-02_R1map.nii.gz")
+            .with(".bidsignore", b"*QMTSPGR*".to_vec());
+        let rows = parse_to_table(&fs).unwrap();
+
+        // A declared input is found by suffix regardless of which pipeline
+        // holds it.
+        let b1 = aux_row(&rows, "02", None, "TB1map").unwrap().unwrap();
+        assert_eq!(
+            b1.path,
+            "derivatives/preprocessed/sub-02/fmap/sub-02_TB1map.nii.gz"
+        );
+        // Absent input → None (an optional aux the fit does without).
+        assert!(aux_row(&rows, "02", None, "B0map").unwrap().is_none());
+        // Wrong subject → None.
+        assert!(aux_row(&rows, "99", None, "R1map").unwrap().is_none());
+    }
+
+    #[test]
+    fn aux_row_errors_when_ambiguous() {
+        let fs = MemFs::new()
+            .touch("derivatives/pipeA/sub-02/anat/sub-02_R1map.nii.gz")
+            .touch("derivatives/pipeB/sub-02/anat/sub-02_R1map.nii.gz");
+        let rows = parse_to_table(&fs).unwrap();
+        assert!(aux_row(&rows, "02", None, "R1map").is_err());
     }
 }

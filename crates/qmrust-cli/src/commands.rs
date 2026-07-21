@@ -648,10 +648,11 @@ fn write_derivatives(
 /// Fit every collection of a BIDS dataset matching the config's model,
 /// writing each subject's (and session's, if present) result maps under
 /// `output_dir/qmrust/<subject>[/<session>]/anat/` in the BIDS-derivatives
-/// layout (see `write_derivatives`). v1 targets no-aux models (e.g. IRT1):
-/// BIDS-side B1/B0/R1 map resolution is a follow-up, so a model that
-/// `required`-declares any aux input is rejected up front rather than fit
-/// with a silently-missing map.
+/// layout (see `write_derivatives`). Each model's declared auxiliary inputs
+/// (B1/B0/R1) and a brain mask are resolved from the dataset's file table by
+/// BIDS suffix — found wherever they live, raw tree or any `derivatives/`
+/// pipeline — and fed to the fit; a `required` input that is absent is a hard
+/// error, an optional one simply falls back to the model's default.
 pub fn run_fit_bids(
     bids_dir: PathBuf,
     config_path: PathBuf,
@@ -678,25 +679,10 @@ pub fn run_fit_bids(
         )
     })?;
 
-    // Probe the model's shape (required aux, series identity keys) against an
+    // Probe the model's shape (declared aux, series identity keys) against an
     // empty protocol — these are structural and don't depend on any one
     // collection's resolved sidecar values.
     let probe = (entry.build)(&raw, &Protocol::default())?;
-    let required: Vec<&'static str> = probe
-        .required_inputs()
-        .into_iter()
-        .filter(|s| s.required)
-        .map(|s| s.name)
-        .collect();
-    if !required.is_empty() {
-        bail!(
-            "qmrust fit --bids-dir does not yet resolve BIDS auxiliary maps; model '{}' \
-             requires {:?}. This is a tracked follow-up — for now, fit it via --mat-dir/--data \
-             with explicit --r1map/--b1map/--b0map.",
-            cfg.model,
-            required
-        );
-    }
     // Declarative BIDS metadata -> protocol mapping. Empty for a model that
     // hasn't migrated to `protocol_schema()` yet — `load_collection` then
     // falls back to an empty `Protocol`, matching pre-schema behaviour.
@@ -710,6 +696,10 @@ pub fn run_fit_bids(
     };
     let bids_cfg = rust_bids::default_config();
     let suffix = entry.bids_suffix;
+    // The flat file table spans the whole dataset — raw tree and every
+    // `derivatives/` pipeline — and is the single source from which each
+    // collection's auxiliary inputs (B1/B0/R1, mask) are located by suffix.
+    let table = rust_bids::parse_to_table(&fs)?;
     let collections = rust_bids::collections_for(&fs, &bids_cfg, suffix)?;
 
     if collections.is_empty() {
@@ -760,19 +750,32 @@ pub fn run_fit_bids(
         let (nx, ny, nz, _) = data.dim();
         let header = header.unwrap_or_else(|| make_minimal_header(nx, ny, nz));
 
+        let (aux, mask, aux_sources) = resolve_aux_and_mask(
+            &table,
+            model.as_ref(),
+            &c.subject,
+            c.session.as_deref(),
+            &bids_dir,
+        )?;
+        for src in &aux_sources {
+            eprintln!("  input: {src}");
+        }
+
         let executed_at_unix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let fit_started = std::time::Instant::now();
-        let results = run_model_fit(model.as_ref(), &data, &proto, None, &AuxMaps::empty())?;
+        let results = run_model_fit(model.as_ref(), &data, &proto, mask.as_ref(), &aux)?;
         let duration_s = fit_started.elapsed().as_secs_f64();
 
+        let mut sources = collection_sources(c, &bids_dir);
+        sources.extend(aux_sources);
         let prov = crate::provenance::FitProvenance {
             model: cfg.model.clone(),
             config_json: serde_json::to_value(&raw)?,
             protocol_json: protocol_to_json(&proto),
-            sources: collection_sources(c, &bids_dir),
+            sources,
             executed_at_unix,
             duration_s,
         };
@@ -803,6 +806,59 @@ pub fn run_fit_bids(
     }
 
     Ok(())
+}
+
+/// Resolve a model's declared BIDS auxiliary inputs and a brain mask for one
+/// collection from the dataset `table` (which spans the raw tree and every
+/// `derivatives/` pipeline). Each declared input is located by its BIDS suffix
+/// and loaded; a `required` input that is absent is a hard error, an optional
+/// one becomes a `None` entry (the model uses its default). The brain mask
+/// (BIDS suffix `mask`) is applied to the fit when present. Returns the aux
+/// bundle, the optional mask, and the dataset-relative paths of every input
+/// actually loaded (recorded in the output sidecar's provenance `Sources`).
+fn resolve_aux_and_mask(
+    table: &[rust_bids::BidsRow],
+    model: &dyn Model,
+    subject: &str,
+    session: Option<&str>,
+    bids_dir: &Path,
+) -> Result<(AuxMaps, Option<Array3<bool>>, Vec<String>)> {
+    // A `Collection` carries the prefixed entity (`sub-02`), while the table's
+    // parsed entities carry the bare value (`02`) — match on the bare value.
+    let subject = subject.strip_prefix("sub-").unwrap_or(subject);
+    let session = session.map(|s| s.strip_prefix("ses-").unwrap_or(s));
+    let mut maps: Vec<(String, Option<Array3<f64>>)> = Vec::new();
+    let mut sources: Vec<String> = Vec::new();
+    for spec in model.required_inputs() {
+        let Some(bids) = spec.bids.as_ref() else {
+            // Not BIDS-locatable: leave absent for the model's own default.
+            maps.push((spec.name.to_string(), None));
+            continue;
+        };
+        match rust_bids::aux_row(table, subject, session, bids.suffix)? {
+            Some(row) => {
+                let map = io::nifti::read_map_nifti(&bids_dir.join(&row.path))?;
+                maps.push((spec.name.to_string(), Some(map)));
+                sources.push(row.path.clone());
+            }
+            None if spec.required => bail!(
+                "required input '{}' (BIDS suffix '{}') not found for sub-{} in {:?}",
+                spec.name,
+                bids.suffix,
+                subject,
+                bids_dir
+            ),
+            None => maps.push((spec.name.to_string(), None)),
+        }
+    }
+    let mask = match rust_bids::aux_row(table, subject, session, "mask")? {
+        Some(row) => {
+            sources.push(row.path.clone());
+            Some(io::nifti::read_mask_nifti(&bids_dir.join(&row.path))?)
+        }
+        None => None,
+    };
+    Ok((AuxMaps::new(maps), mask, sources))
 }
 
 /// Header for outputs whose input carried no spatial reference (.mat inputs),
