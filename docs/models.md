@@ -134,7 +134,7 @@ table (never dropped), just warned about — permissive but loud.
 Grouping itself is one of three declarative shapes under `BidsConfig`:
 
 ```yaml
-loop_over: [subject, session, run, task]
+loop_over: [sub, ses, run, task]
 
 custom_entities:
   - key: cest
@@ -143,17 +143,17 @@ custom_suffixes: [QMTSPGR]
 
 IRT1:
   sequential_set:
-    by: [inversion]
+    by: [inv]
 
 QMTSPGR:
   sequential_set:
-    by: [mtransfer, flip]
+    by: [mt, flip]
 
 MTS:
   named_set:
-    PDw: { flip: "flip-1", mtransfer: "mt-off" }
-    MTw: { flip: "flip-1", mtransfer: "mt-on" }
-    T1w: { flip: "flip-2", mtransfer: "mt-off" }
+    PDw: { flip: "1", mt: "off" }
+    MTw: { flip: "1", mt: "on" }
+    T1w: { flip: "2", mt: "off" }
     required: [PDw, MTw, T1w]
 ```
 

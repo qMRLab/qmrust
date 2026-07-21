@@ -103,7 +103,9 @@ pub fn run_dump_config(config_path: PathBuf) -> Result<()> {
             let mut ir: qmrust_core::models::inversion_recovery::config::IrConfig =
                 serde_yaml::from_value(raw.clone())?;
             ir.validate_options()?;
-            ir.validate_protocol()?;
+            if !ir.inversion_times.is_empty() {
+                ir.validate_protocol()?;
+            }
             println!("model: inversion_recovery");
             print!("{}", serde_yaml::to_string(&ir)?);
         }
@@ -1832,5 +1834,35 @@ mod tests {
             "BIDS-path F/kr must exactly match .mat-path F/kr for every voxel \
              (byte-identical input, identical no-aux fit, must produce byte-identical output)"
         );
+    }
+
+    /// A BIDS-style IR config (protocol supplied by sidecars, not the config
+    /// file) must dump cleanly: `validate_protocol()` requires >=3 inversion
+    /// times, which a BIDS recipe deliberately omits.
+    #[test]
+    fn run_dump_config_allows_bids_config_without_inversion_times() {
+        let dir = TempDir::new("dump-config-bids-ir");
+        let config_path = dir.0.join("irt1_config.yaml");
+        std::fs::write(
+            &config_path,
+            "model: inversion_recovery\nmethod: magnitude\n",
+        )
+        .unwrap();
+        run_dump_config(config_path).expect("BIDS-style IR config with no inversion_times");
+    }
+
+    /// A non-BIDS IR config that DOES carry a protocol must still enforce the
+    /// >=3 inversion-times requirement.
+    #[test]
+    fn run_dump_config_rejects_too_few_inversion_times() {
+        let dir = TempDir::new("dump-config-too-few-tis");
+        let config_path = dir.0.join("irt1_config.yaml");
+        std::fs::write(
+            &config_path,
+            "model: inversion_recovery\nmethod: magnitude\ninversion_times: [0.35, 0.5]\n",
+        )
+        .unwrap();
+        let err = run_dump_config(config_path).expect_err("too few inversion times must fail");
+        assert!(err.to_string().contains("inversion times"));
     }
 }

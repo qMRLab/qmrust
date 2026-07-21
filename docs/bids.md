@@ -23,7 +23,7 @@ layout-resolution problem is generalizable beyond this workspace.
 ## The grouping grammar
 
 A `BidsConfig` has a `loop_over` (which entities define one "unit", e.g.
-`[subject, session, run, task]`) and a map of named `sets`, each one of:
+`[sub, ses, run, task]`) and a map of named `sets`, each one of:
 
 - **`plain_set`** — one file per unit, optionally with extra extensions or
   cross-modal includes.
@@ -31,7 +31,7 @@ A `BidsConfig` has a `loop_over` (which entities define one "unit", e.g.
   qMT's MTS set groups `PDw`/`MTw`/`T1w` by `flip`/`mtransfer` entity values,
   with a `required: [...]` list of which named groups must all be present.
 - **`sequential_set`** — an ordered series along one or more entities, e.g.
-  IRT1's inversion-recovery series ordered `by: [inversion]`.
+  IRT1's inversion-recovery series ordered `by: [inv]`.
 
 Today the grouping config is a **bundled default** (`default_config()`,
 covering `IRT1`, `MTS`, and `QMTSPGR`) plus a programmatic `parse_config(yaml:
