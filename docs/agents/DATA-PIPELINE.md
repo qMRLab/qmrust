@@ -69,7 +69,36 @@ fit.
 - **`Collection` / `GroupedData`** — the resolved output: subject/session/
   run/task identity plus `GroupedData::Sequential(Vec<VolumeRef>)` or
   `GroupedData::Named(BTreeMap<String, VolumeRef>)`, each `VolumeRef` pairing
-  a `.nii` path with its (optional) co-located sidecar path.
+  a `.nii` path with its (optional) co-located sidecar path. A collection also
+  carries `entities` — its **full** grouping identity (every `loop_over`
+  entity present, as bare values), which is what auxiliary-input resolution
+  matches against so any entity a dataset groups by participates.
+
+### The flat table is the universal substrate
+
+`table::parse_to_table` is Layer 1 for **everything**, not just grouping. It
+walks the entire dataset — raw tree and every `derivatives/<pipeline>/` alike
+(the `derivatives` column records the pipeline, `None` for raw) — into
+`BidsRow`s whose columns are the parsed entities plus the structural
+`suffix`/`datatype`/`derivatives`/`extension`/`path`. This mirrors
+libBIDS.sh's model: one table spanning the whole dataset, queried by column.
+
+- **`table_filter(rows, &[(column, value)])`** (over the `row_column`
+  accessor) is the one generic query: select rows matching an arbitrary set of
+  column constraints. Both collection grouping (`resolve_named`) and
+  auxiliary-input resolution are expressed through it — nothing model- or
+  dataset-specific.
+- **Input resolution** (`qmrust-cli`, `resolve_aux_and_mask`) is a pure
+  function of *(table, the collection's full `entities` identity, the model's
+  declared inputs)*: for each `required_inputs()` entry it filters the table by
+  the collection identity + the declared BIDS suffix (+ any `BidsMap.entity`),
+  loads the single match, errors on ambiguity, and skips an absent optional
+  input. A B1/B0/R1 map or mask is thus found wherever it lives — raw or any
+  derivatives pipeline — and matched on whatever entities identify the
+  collection (subject/session/run/…), never a hard-coded pair.
+- Because resolution takes a *table + identity*, discovery is an optional top
+  layer: a caller that iterates (`scan_dataset`) and a caller that is handed
+  one subject's files (e.g. a Nextflow channel) share the same resolution path.
 
 ---
 
