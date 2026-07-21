@@ -21,32 +21,11 @@ fn qmt_default_mtdata() -> Vec<[f64; 2]> {
 pub struct QmtTiming {
     #[serde(default = "def_tmt")]
     pub tmt: f64,
-    // ts, tp, tr are not used by the Ramani physics model but are retained
-    // as legitimate protocol/config fields for future sub-models (e.g.
-    // Yarnykh/SledPike) that need saturation/spoiler/read-pulse timings.
-    #[allow(dead_code)]
-    #[serde(default = "def_ts")]
-    pub ts: f64,
-    #[allow(dead_code)]
-    #[serde(default = "def_tp")]
-    pub tp: f64,
-    #[allow(dead_code)]
-    #[serde(default = "def_tr")]
-    pub tr: f64,
     #[serde(default = "def_trep", rename = "TR")]
     pub trep: f64,
 }
 fn def_tmt() -> f64 {
     0.0102
-}
-fn def_ts() -> f64 {
-    0.0030
-}
-fn def_tp() -> f64 {
-    0.0018
-}
-fn def_tr() -> f64 {
-    0.0100
 }
 fn def_trep() -> f64 {
     0.0250
@@ -55,9 +34,6 @@ impl Default for QmtTiming {
     fn default() -> Self {
         Self {
             tmt: def_tmt(),
-            ts: def_ts(),
-            tp: def_tp(),
-            tr: def_tr(),
             trep: def_trep(),
         }
     }
@@ -85,12 +61,6 @@ pub struct QmtPulse {
     pub shape: String,
     #[serde(default = "def_bw")]
     pub bandwidth: f64,
-    // Not used by the Ramani physics model (which computes saturation from
-    // the continuous-wave-equivalent power), but retained for future
-    // sub-models (e.g. Yarnykh/SledPike) that model discrete pulse trains.
-    #[allow(dead_code)]
-    #[serde(default = "def_npulse")]
-    pub n_pulses: usize,
 }
 fn def_shape() -> String {
     "gausshann".to_string()
@@ -98,15 +68,11 @@ fn def_shape() -> String {
 fn def_bw() -> f64 {
     200.0
 }
-fn def_npulse() -> usize {
-    600
-}
 impl Default for QmtPulse {
     fn default() -> Self {
         Self {
             shape: def_shape(),
             bandwidth: def_bw(),
-            n_pulses: def_npulse(),
         }
     }
 }
