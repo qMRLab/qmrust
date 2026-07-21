@@ -472,7 +472,9 @@ fn write_bidsignore(out: &Path) -> Result<()> {
 }
 
 /// Create `participants.tsv` (with header) if missing, and append a
-/// `sub-<subject>` row if it isn't already present.
+/// `sub-<subject>` row if that participant isn't already present. Presence is
+/// keyed on the first (`participant_id`) column, so a row stays deduplicated
+/// even after extra columns (e.g. `description`) are added to the table.
 fn write_participants_row(out: &Path, subject: &str) -> Result<()> {
     let path = out.join("participants.tsv");
     let row = format!("sub-{subject}");
@@ -481,7 +483,10 @@ fn write_participants_row(out: &Path, subject: &str) -> Result<()> {
         return Ok(());
     }
     let mut contents = std::fs::read_to_string(&path)?;
-    if contents.lines().any(|l| l.trim() == row) {
+    if contents
+        .lines()
+        .any(|l| l.split('\t').next().map(str::trim) == Some(row.as_str()))
+    {
         return Ok(());
     }
     if !contents.ends_with('\n') {
@@ -622,6 +627,29 @@ mod tests {
         let ti = vec![0.350, 0.650, 0.950];
 
         bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
+        bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
+
+        let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
+        assert_eq!(participants.matches("sub-01").count(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A participant already listed with extra columns (e.g. a `description`)
+    /// must not be re-appended: dedup keys on the `participant_id` column, not
+    /// the whole row.
+    #[test]
+    fn bidsify_participants_row_deduped_with_extra_columns() {
+        let dir = tmp_dir("dedup-extra-cols");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("participants.tsv"),
+            "participant_id\tdescription\nsub-01\tInversion Recovery T1 mapping (IRT1)\n",
+        )
+        .unwrap();
+
+        let ir_data = Array4::from_shape_fn((1, 1, 1, 3), |(_, _, _, t)| t as f64);
+        let ti = vec![0.350, 0.650, 0.950];
         bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
 
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
