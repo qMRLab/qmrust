@@ -42,10 +42,15 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
     // write) fully describes the model's acquisition.
     let model = (entry.describe)(&raw)?;
 
-    let mat_data_path = args
-        .mat_data
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("--mat-data is required"))?;
+    let mat_data_path = match args.mat_data.clone() {
+        Some(p) => p,
+        None => {
+            let dir = args.mat_dir.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("bidsify needs --mat-data (or --mat-dir to locate it)")
+            })?;
+            measurement_in_dir(dir, model.as_ref())?
+        }
+    };
     let mat = io::mat::read_mat_file(&mat_data_path)?;
 
     // --mask wins; then a Mask.mat found via --mat-dir; then one embedded in
@@ -83,6 +88,50 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
         &args.subject,
         &args.out,
     )
+}
+
+/// Locate the measurement `.mat` in `dir`: the single top-level `.mat` file
+/// that is neither a declared auxiliary input (`<name>.mat` for each
+/// `required_inputs()`) nor the mask (`Mask.mat`). Model-agnostic — the
+/// measurement filename is never hardcoded; it is whatever remains after the
+/// model's own declared inputs are excluded. Zero or several candidates is an
+/// error asking for an explicit `--mat-data`.
+fn measurement_in_dir(dir: &Path, model: &dyn Model) -> Result<PathBuf> {
+    let mut excluded: std::collections::BTreeSet<String> = model
+        .required_inputs()
+        .iter()
+        .map(|s| format!("{}.mat", s.name))
+        .collect();
+    excluded.insert("Mask.mat".to_string());
+
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| anyhow::anyhow!("reading --mat-dir {:?}: {}", dir, e))?;
+    let mut candidates: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "mat"))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| !excluded.contains(n))
+        })
+        .collect();
+    candidates.sort();
+
+    match candidates.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => anyhow::bail!(
+            "no measurement .mat found in {:?} (every .mat matched a declared aux or Mask.mat); pass --mat-data explicitly",
+            dir
+        ),
+        many => {
+            let names: Vec<_> = many.iter().filter_map(|p| p.file_name()).collect();
+            anyhow::bail!(
+                "multiple candidate measurement .mat files in {:?}: {:?}; pass --mat-data to disambiguate",
+                dir,
+                names
+            )
+        }
+    }
 }
 
 /// Write one `.mat`-sourced dataset as a BIDS tree rooted at `out`, driven by
