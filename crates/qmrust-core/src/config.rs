@@ -142,10 +142,10 @@ fn def_trials() -> usize {
 }
 
 impl SimConfig {
-    /// Validate sim settings against the parent config's model. `raw` is the
-    /// full raw YAML tree so model-specific sub-config (e.g. `qmt_spgr`) can
-    /// be parsed without a typed field on `Config`.
-    pub fn validate(&self, model: &str, raw: &serde_yaml::Value) -> Result<()> {
+    /// Validate config-intrinsic sim settings (noise, trials). Model-specific
+    /// sim-input requirements are enforced separately, via each model's
+    /// `Model::sim_required_aux` (see `sim::model::validate_sim_inputs`).
+    pub fn validate(&self) -> Result<()> {
         match self.noise.kind.as_str() {
             "none" | "gaussian" | "rician" => {}
             other => bail!(
@@ -158,18 +158,6 @@ impl SimConfig {
         }
         if self.trials == 0 {
             bail!("sim.trials must be >= 1");
-        }
-        // qmt_spgr: r1 is required when the fit uses R1map to constrain R1f.
-        if model == "qmt_spgr" {
-            let q: QmtSpgrConfig = match raw.get("qmt_spgr") {
-                Some(sub) => serde_yaml::from_value(sub.clone())?,
-                None => QmtSpgrConfig::default(),
-            };
-            if q.fitting.use_r1map_to_constrain_r1f && self.r1.is_none() {
-                bail!(
-                    "sim.r1 is required when qmt_spgr.fitting.use_r1map_to_constrain_r1f is true"
-                );
-            }
         }
         Ok(())
     }
@@ -276,24 +264,5 @@ sim:
         assert_eq!(sim.noise.kind, "rician");
         assert!((sim.params["F"] - 0.16).abs() < 1e-12);
         assert!((sim.b1 - 1.0).abs() < 1e-12); // default
-    }
-
-    #[test]
-    fn sim_validate_requires_r1_when_r1map_on() {
-        let yaml = r#"
-model: qmt_spgr
-sim:
-  params: { F: 0.16, kr: 30.0, R1f: 1.0, R1r: 1.0, T2f: 0.03, T2r: 1.3e-5 }
-"#;
-        let cfg: Config = serde_yaml::from_str(yaml).unwrap();
-        let raw: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
-        // use_r1map_to_constrain_r1f defaults true → r1 required
-        let err = cfg
-            .sim
-            .as_ref()
-            .unwrap()
-            .validate(&cfg.model, &raw)
-            .unwrap_err();
-        assert!(err.to_string().contains("r1"), "got: {}", err);
     }
 }

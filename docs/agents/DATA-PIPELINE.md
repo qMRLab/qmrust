@@ -346,5 +346,7 @@ exactly.
   comparison disables aux on both sides so it stays apples-to-apples. For IRT1
   the fit is also within the OSF integration job's existing tolerance of
   qMRLab's own `FitResults/T1.nii.gz`.
-- `bidsify` supports exactly `inversion_recovery` and `qmt_spgr`
-  (`bail!`s otherwise).
+- `bidsify` is model-agnostic: the BIDS suffix, per-volume filename entities,
+  sidecar metadata, and which auxiliary maps to look for all come from the
+  registry-resolved `Model` (`bids()`, `bids_volume()`, `required_inputs()`),
+  so a newly registered model is bidsifiable with no change to `bidsify`.

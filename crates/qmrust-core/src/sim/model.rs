@@ -12,6 +12,27 @@ pub fn build_model(cfg: &Config, raw: &serde_yaml::Value) -> Result<Box<dyn Mode
     (entry.build)(raw, &crate::core::model::Protocol::default())
 }
 
+/// Enforce that the sim block supplies every aux input the configured model
+/// marks sim-critical (`Model::sim_required_aux`). Generic over the model — no
+/// per-model branching; a model that needs no aux passes trivially.
+///
+/// Contract: the names a model declares sim-critical must be ones the sim block
+/// can express — `B1map`/`B0map`/`R1map`, via `sim.b1`/`sim.b0`/`sim.r1` (see
+/// [`sim_aux`]). A name outside that set can never be provided through the sim
+/// block and would always fail here.
+pub fn validate_sim_inputs(model: &dyn Model, sim: &SimConfig) -> Result<()> {
+    let provided = sim_aux(sim);
+    for name in model.sim_required_aux() {
+        if provided.get(name).is_none() {
+            bail!(
+                "this model requires sim input '{name}' — supply it in the sim block \
+                 (e.g. sim.r1 for R1map, sim.b1/sim.b0 for B1map/B0map)"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Auxiliary scalars for sim (B1/B0/R1 from the sim block).
 pub fn sim_aux(sim: &SimConfig) -> Aux {
     let mut a = Aux::new();
@@ -74,5 +95,28 @@ mod tests {
         let result = param_vector(model.as_ref(), c.sim.as_ref().unwrap());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("b"));
+    }
+
+    #[test]
+    fn sim_enforces_model_declared_aux() {
+        // use_r1map_to_constrain_r1f ON: qMT declares R1map sim-critical, so a
+        // sim block without R1 is rejected and supplying it passes.
+        let yaml_on = "model: qmt_spgr\nqmt_spgr:\n  fitting:\n    use_r1map_to_constrain_r1f: true\nsim:\n  params: { F: 0.16, kr: 30.0, R1f: 1.0, R1r: 1.0, T2f: 0.03, T2r: 1.3e-5 }\n";
+        let raw: serde_yaml::Value = serde_yaml::from_str(yaml_on).unwrap();
+        let cfg: Config = serde_yaml::from_str(yaml_on).unwrap();
+        let model = build_model(&cfg, &raw).unwrap();
+        let mut sim = cfg.sim.clone().unwrap();
+        let err = validate_sim_inputs(model.as_ref(), &sim).unwrap_err();
+        assert!(err.to_string().contains("R1map"), "got: {}", err);
+        sim.r1 = Some(1.0);
+        validate_sim_inputs(model.as_ref(), &sim).unwrap();
+
+        // use_r1map_to_constrain_r1f OFF: R1map is not sim-critical, so a sim
+        // block without R1 is accepted.
+        let yaml_off = "model: qmt_spgr\nqmt_spgr:\n  fitting:\n    use_r1map_to_constrain_r1f: false\nsim:\n  params: { F: 0.16, kr: 30.0, R1f: 1.0, R1r: 1.0, T2f: 0.03, T2r: 1.3e-5 }\n";
+        let raw_off: serde_yaml::Value = serde_yaml::from_str(yaml_off).unwrap();
+        let cfg_off: Config = serde_yaml::from_str(yaml_off).unwrap();
+        let model_off = build_model(&cfg_off, &raw_off).unwrap();
+        validate_sim_inputs(model_off.as_ref(), cfg_off.sim.as_ref().unwrap()).unwrap();
     }
 }

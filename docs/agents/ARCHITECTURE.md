@@ -119,6 +119,9 @@ pub trait Model: Send + Sync {
     fn forward(&self, params: &[f64], aux: &Aux) -> Measurement;   // noise-free, identity-tagged
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;         // identity-keyed measurement → outputs
 
+    fn n_volumes(&self) -> usize;                 // volumes this model's protocol describes
+    fn bids_volume(&self, index: usize) -> BidsVolume;   // BIDS write descriptor for the i-th volume
+
     fn bids(&self) -> Option<BidsSpec> { None }   // BIDS grouping suffix + entity map
 
     fn protocol_schema(&self) -> Vec<ProtoParam> { vec![] }   // sidecar/config → Protocol mapping
@@ -381,7 +384,11 @@ fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` (name + BIDS suffix + `build` +
    `describe` + `dump`).
-4. Add unit tests (forward→fit round-trip; config parse/validate).
+4. If the model introduces a new BIDS suffix, add a grouping block for it to
+   `crates/rust-bids/src/default_grouping.yaml` (`sequential_set` or `named_set`)
+   so `qmrust fit --bids-dir` can assemble its volumes; without it a fit of the
+   new suffix errors unless the dataset supplies its own `--config` grouping.
+5. Add unit tests (forward→fit round-trip; config parse/validate).
 
 Nothing in `qmrust-cli`, `qmrust-wasm`, `engine`, or `config` needs to change. If the
 model needs a new auxiliary input, declare it in `required_inputs()` — the CLI loads any
