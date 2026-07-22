@@ -30,9 +30,10 @@ The skill is phase-gated: stop at each boundary for explicit human sign-off befo
 proceeding. This catches wrong-math-that-runs while it is still cheap.
 
 **Phase 0 — Setup.** Obtain the qMRLab source: ask for a local qMRLab checkout path
-(or read it from a configured location) and confirm the target model name. Record
-how this model fetches its example data (an `onlineData` URL / demo `*_batch.m` /
-`qMRgenBatch` download) — the port depends on it for the bidsify and validation gates.
+(or read it from a configured location) and confirm the target model name. It reads
+`.m` files directly with Read/Grep. Record how this model fetches its example data
+(an `onlineData` URL / demo `*_batch.m` / `qMRgenBatch` download) — the port depends
+on it for the bidsify and validation gates.
 
 **Phase 1 — Read the class.** Locate `equations`/`fit`/`Prot`/`xnames`/`st,lb,ub,fx`
 and options in the `.m` files. Produce a written statement of the signal equation,
@@ -41,20 +42,26 @@ with their units.
 → *Gate: confirm the equation and units.*
 
 **Phase 2 — Translate.** Run `./scaffold_model.sh <name> <Suffix>`, then fill the four
-`TODO(port)` markers (config fields, signal equation, fitter, protocol mapping). Write
-the forward→fit round-trip test.
+`TODO(port)` markers in `config.rs` (config fields), `fit.rs` (signal equation +
+fitter), `model.rs` (protocol mapping / `bids()`), and the `default_grouping.yaml`
+grouping block. Write the forward→fit round-trip test.
 → *Gate: confirm the translation; round-trip test passes.*
 
-**Phase 3 — Wire.**
+**Phase 3 — Wire.** Confirm the registry line and grouping block the scaffold added;
+decide optional-input wiring per `references/optional-inputs.md`.
 → *Gate: `cargo test --workspace`, `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, and both
 `cargo build --target wasm32-unknown-unknown` (`qmrust-core`, `rust-bids`) commands are
 green.*
 
-**Phase 4 — Fetch and bidsify example data.**
+**Phase 4 — Fetch and bidsify example data.** Using the fetch mechanism from Phase 0,
+download the model's example dataset and run `qmrust bidsify`; this exercises `bids()`,
+`bids_volume()`, `required_inputs()`, and the `default_grouping.yaml` block, and
+produces the dataset Phase 5 validates.
 → *Gate: bidsify succeeds and the BIDS layout is correct.*
 
-**Phase 5 — Validate against qMRLab.**
+**Phase 5 — Validate against qMRLab.** Fit the bidsified data via `qmrust fit
+--bids-dir` and compare the maps to qMRLab's `FitResults` for the same dataset.
 → *Gate: human reviews the delta and signs off.*
 
 ## Definition of done
