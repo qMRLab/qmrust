@@ -1,4 +1,7 @@
 model: inversion_recovery
+
+# non-BIDS: protocol from this file; mask via --mask
+# All times are in seconds (BIDS/SI).
 inversion_times:
 - 0.350
 - 0.500
@@ -9,8 +12,10 @@ inversion_times:
 - 1.250
 - 1.400
 - 1.700
-method: magnitude
 repetition_time: 2.5
+
+# Algorithm options (always used; not BIDS metadata).
+method: magnitude
 t1_range:
   start: 0.001
   stop: 5.0
@@ -18,6 +23,3 @@ t1_range:
 zoom:
   iterations: 2
   points: 21
-
-mask:
-  desc: brain

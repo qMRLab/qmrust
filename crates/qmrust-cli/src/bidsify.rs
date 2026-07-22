@@ -2,49 +2,20 @@
 //! voxel data is byte-identical to the source `.mat` (no rescale, no dtype
 //! narrowing — every volume is written as `f64`/datatype 64).
 //!
-//! Supports `inversion_recovery` (IRT1) and `qmt_spgr` (QMTSPGR, a
-//! non-official/`.bidsignore`'d suffix).
+//! Model-agnostic: every write decision — the BIDS suffix, per-volume
+//! filename entities, sidecar metadata, and which auxiliary maps to look for
+//! — comes from the registry-resolved `Model` (`Model::bids`,
+//! `Model::bids_volume`, `Model::required_inputs`). Adding a model here needs
+//! no change to this file.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use ndarray::{Array3, Array4, Axis};
 use nifti::NiftiHeader;
-use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 use crate::commands::make_minimal_header;
 use crate::io;
-
-/// IRT1 per-volume sidecar fields (BIDS-qMRI convention). `repetition_time`
-/// comes from the IR config's `repetition_time` field (qMRLab's IR_demo TR
-/// is 2.5 s — 2500 ms in qMRLab's ms convention, converted at the config
-/// boundary); it's `None`, and skipped rather than serialized as `null`,
-/// only when the config doesn't supply one. Kept as a typed struct (not a
-/// hand-formatted string) so it stays correct as fields grow (this shape,
-/// and later QMTSPGR's much larger sidecar).
-#[derive(Serialize)]
-struct IrSidecar {
-    #[serde(rename = "InversionTime")]
-    inversion_time: f64,
-    #[serde(rename = "RepetitionTime", skip_serializing_if = "Option::is_none")]
-    repetition_time: Option<f64>,
-}
-
-/// qMT-SPGR per-volume sidecar fields. `Angle`/`Offset` match the protocol
-/// keys `qmt_spgr`'s `protocol_schema()` reads back out of BIDS sidecars, so
-/// a `QMTSPGR` fit is metadata-driven and order-free. `RepetitionTime` and
-/// `MTPulseDuration` come from the config's `protocol.timing` (already
-/// BIDS-native seconds — qMT configs carry no ms convention to convert).
-#[derive(Serialize)]
-struct QmtSidecar {
-    #[serde(rename = "Angle")]
-    angle: f64,
-    #[serde(rename = "Offset")]
-    offset: f64,
-    #[serde(rename = "RepetitionTime")]
-    repetition_time: f64,
-    #[serde(rename = "MTPulseDuration")]
-    mt_pulse_duration: f64,
-}
+use qmrust_core::core::model::Model;
 
 /// Parsed CLI arguments for `qmrust bidsify`.
 pub struct BidsifyArgs {
@@ -57,92 +28,33 @@ pub struct BidsifyArgs {
     pub out: PathBuf,
 }
 
-/// Entry point for the `bidsify` subcommand: reads the `.mat` dataset (+
-/// optional mask + config) and writes the BIDS tree.
+/// Entry point for the `bidsify` subcommand: resolves the model from the
+/// registry, reads the `.mat` dataset (+ optional mask + aux maps), and
+/// writes the BIDS tree the model's own `bids()`/`bids_volume()`/
+/// `required_inputs()` describe.
 pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
-    match args.model.as_str() {
-        "inversion_recovery" => run_bidsify_ir(args),
-        "qmt_spgr" => run_bidsify_qmt(args),
-        other => bail!(
-            "bidsify only supports --model inversion_recovery|qmt_spgr, got '{}'",
-            other
-        ),
-    }
-}
-
-fn run_bidsify_ir(args: BidsifyArgs) -> Result<()> {
-    let mat_data = args
-        .mat_data
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("--mat-data is required for --model inversion_recovery"))?;
-
-    let contents = std::fs::read_to_string(&args.config)
-        .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", args.config, e))?;
-    let (cfg, _raw) = qmrust_core::config::parse_config(&contents)?;
-
-    let mat = io::mat::read_mat_file(mat_data)?;
-
-    // The .mat's own TI vector (if present) is authoritative and, crucially,
-    // in the same order as the data's 4th axis — never re-sort it. Falling
-    // back to the config's `inversion_times` assumes that list is already in
-    // the data's volume order (true for qMRLab's IR_demo protocol configs).
-    //
-    // qMRLab `.mat` TI vectors are in milliseconds, while the parsed config
-    // (and thus core) is BIDS-native seconds — convert ms -> s here, at the
-    // shell boundary, so the sidecar and the config fallback always agree on
-    // units (see CLAUDE.md "Units — BIDS-native").
-    let ti = crate::commands::mat_ti_to_seconds(mat.ti.clone())
-        .unwrap_or_else(|| cfg.inversion_times.clone());
-    if ti.is_empty() {
-        bail!("no inversion times: absent from both the .mat file and the config");
-    }
-
-    // A separately-supplied --mask file takes precedence over one embedded in
-    // the IR .mat (matches `qmrust fit`'s existing --mask-overrides-embedded
-    // convention).
-    let mask = match &args.mask {
-        Some(p) => Some(io::mat::read_mask_mat(p)?),
-        None => mat.mask,
-    };
-
-    // IR config fields are top-level in the YAML, so `_raw` (the raw parsed
-    // tree) can be re-parsed directly into `IrConfig` to pick up TR.
-    let ir_cfg: qmrust_core::models::inversion_recovery::config::IrConfig =
-        serde_yaml::from_value(_raw.clone())?;
-    let tr = ir_cfg.repetition_time;
-
-    bidsify_ir(
-        &mat.ir_data,
-        &ti,
-        mask.as_ref(),
-        &args.subject,
-        &args.out,
-        tr,
-    )
-}
-
-fn run_bidsify_qmt(args: BidsifyArgs) -> Result<()> {
-    // --mat-data wins; otherwise fall back to <mat-dir>/MTdata.mat (mirrors
-    // `qmrust fit --mat-dir`'s convenience-path convention).
-    let mat_data_path = args
-        .mat_data
-        .clone()
-        .or_else(|| args.mat_dir.as_ref().map(|d| d.join("MTdata.mat")))
-        .ok_or_else(|| anyhow::anyhow!("--model qmt_spgr requires --mat-data or --mat-dir"))?;
-
     let contents = std::fs::read_to_string(&args.config)
         .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", args.config, e))?;
     let (_cfg, raw) = qmrust_core::config::parse_config(&contents)?;
-    let mut q: qmrust_core::models::qmt_spgr::config::QmtSpgrConfig = match raw.get("qmt_spgr") {
-        Some(sub) => serde_yaml::from_value(sub.clone())?,
-        None => Default::default(),
-    };
-    q.validate()?;
+    let entry = qmrust_core::registry::by_name(&args.model)
+        .ok_or_else(|| anyhow::anyhow!("Unknown model: '{}'", args.model))?;
+    // The recipe supplies the acquisition: bidsify writes the BIDS sidecars
+    // from it, so there is no BIDS protocol to read here.
+    let model = (entry.describe)(&raw)?;
 
+    let mat_data_path = match args.mat_data.clone() {
+        Some(p) => p,
+        None => {
+            let dir = args.mat_dir.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("bidsify needs --mat-data (or --mat-dir to locate it)")
+            })?;
+            measurement_in_dir(dir, model.as_ref())?
+        }
+    };
     let mat = io::mat::read_mat_file(&mat_data_path)?;
 
-    // --mask, then a Mask.mat found via --mat-dir, then one embedded in the
-    // MTdata .mat itself, in that precedence order (same as the IR path).
+    // --mask wins; then a Mask.mat found via --mat-dir; then one embedded in
+    // the source .mat itself.
     let mat_dir_mask = args
         .mat_dir
         .as_ref()
@@ -153,63 +65,106 @@ fn run_bidsify_qmt(args: BidsifyArgs) -> Result<()> {
         None => mat.mask,
     };
 
-    // Aux maps are only available via --mat-dir (OSF's qMT dataset ships them
-    // as separate single-variable .mat files alongside MTdata.mat).
-    let load_aux = |name: &str| -> Result<Option<Array3<f64>>> {
-        match args
-            .mat_dir
-            .as_ref()
-            .map(|d| d.join(name))
-            .filter(|p| p.exists())
-        {
-            Some(p) => Ok(Some(io::mat::read_map_mat(&p)?)),
-            None => Ok(None),
-        }
-    };
-    let r1map = load_aux("R1map.mat")?;
-    let b1map = load_aux("B1map.mat")?;
-    let b0map = load_aux("B0map.mat")?;
+    // Every auxiliary input the model declares (by logical name) is looked
+    // up as `<name>.mat` under --mat-dir, if supplied.
+    let aux: Vec<(String, Array3<f64>)> = model
+        .required_inputs()
+        .into_iter()
+        .filter_map(|spec| {
+            let path = args
+                .mat_dir
+                .as_ref()
+                .map(|d| d.join(format!("{}.mat", spec.name)))
+                .filter(|p| p.exists())?;
+            Some(io::mat::read_map_mat(&path).map(|m| (spec.name.to_string(), m)))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    bidsify_qmt(
-        &mat.ir_data,
-        &q.protocol.mtdata,
-        q.protocol.timing.trep,
-        q.protocol.timing.tmt,
+    write_bids_tree(
+        model.as_ref(),
+        &mat.data,
         mask.as_ref(),
-        r1map.as_ref(),
-        b1map.as_ref(),
-        b0map.as_ref(),
+        &aux,
         &args.subject,
         &args.out,
     )
 }
 
-/// Write one inversion-recovery `.mat` dataset as a BIDS tree rooted at `out`:
-/// `dataset_description.json`, `participants.tsv`, one
-/// `sub-<subject>/anat/sub-<subject>_inv-<i>_IRT1.nii.gz` (+ JSON sidecar) per
-/// volume in `ir_data`'s 4th axis (1-based `<i>`, matching `ti`'s order), and
-/// — if a mask is given — a brain-mask derivative in the `preprocessed`
-/// pipeline (`derivatives/preprocessed/sub-<subject>/anat/`).
-pub fn bidsify_ir(
-    ir_data: &Array4<f64>,
-    ti: &[f64],
+/// Locate the measurement `.mat` in `dir`: the single top-level `.mat` file
+/// that is neither a declared auxiliary input (`<name>.mat` for each
+/// `required_inputs()`) nor the mask (`Mask.mat`). Model-agnostic — the
+/// measurement filename is never hardcoded; it is whatever remains after the
+/// model's own declared inputs are excluded. Zero or several candidates is an
+/// error asking for an explicit `--mat-data`.
+fn measurement_in_dir(dir: &Path, model: &dyn Model) -> Result<PathBuf> {
+    let mut excluded: std::collections::BTreeSet<String> = model
+        .required_inputs()
+        .iter()
+        .map(|s| format!("{}.mat", s.name))
+        .collect();
+    excluded.insert("Mask.mat".to_string());
+
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| anyhow::anyhow!("reading --mat-dir {:?}: {}", dir, e))?;
+    let mut candidates: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "mat"))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| !excluded.contains(n))
+        })
+        .collect();
+    candidates.sort();
+
+    match candidates.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => anyhow::bail!(
+            "no measurement .mat found in {:?} (every .mat matched a declared aux or Mask.mat); pass --mat-data explicitly",
+            dir
+        ),
+        many => {
+            let names: Vec<_> = many.iter().filter_map(|p| p.file_name()).collect();
+            anyhow::bail!(
+                "multiple candidate measurement .mat files in {:?}: {:?}; pass --mat-data to disambiguate",
+                dir,
+                names
+            )
+        }
+    }
+}
+
+/// Write one `.mat`-sourced dataset as a BIDS tree rooted at `out`, driven by
+/// `model`'s declared BIDS identity: `dataset_description.json`,
+/// `participants.tsv`, a `.bidsignore` entry if `model`'s suffix is
+/// non-canonical, one `sub-<subject>/anat/sub-<subject>[_<entity>-<val>...]_<suffix>.nii.gz`
+/// (+ JSON sidecar, from `model.bids_volume(i)`) per volume in `data`'s 4th
+/// axis, a brain-mask derivative if `mask` is given, and each `aux` map
+/// placed under its declared BIDS suffix in the `preprocessed` derivatives
+/// pipeline (`anat/` or `fmap/`, by BIDS field-map convention).
+pub fn write_bids_tree(
+    model: &dyn Model,
+    data: &Array4<f64>,
     mask: Option<&Array3<bool>>,
+    aux: &[(String, Array3<f64>)],
     subject: &str,
     out: &Path,
-    tr: Option<f64>,
 ) -> Result<()> {
-    let (nx, ny, nz, n_ti) = ir_data.dim();
-    if ti.len() != n_ti {
-        bail!(
-            "IR data has {} volumes but {} inversion times were supplied",
-            n_ti,
-            ti.len()
-        );
-    }
+    let spec = model
+        .bids()
+        .ok_or_else(|| anyhow::anyhow!("model declares no BIDS suffix"))?;
+
+    let (nx, ny, nz, n) = data.dim();
+    anyhow::ensure!(
+        n == model.n_volumes(),
+        "data has {n} volumes but the model's protocol describes {}",
+        model.n_volumes()
+    );
 
     std::fs::create_dir_all(out)?;
     write_dataset_description(out)?;
     write_participants_row(out, subject)?;
+    write_bidsignore_if_custom(out, spec.suffix)?;
 
     let anat_dir = out.join(format!("sub-{subject}")).join("anat");
     std::fs::create_dir_all(&anat_dir)?;
@@ -217,156 +172,107 @@ pub fn bidsify_ir(
     // minimal header (matches how `qmrust fit --mat-data` treats .mat input).
     let header = make_minimal_header(nx, ny, nz);
 
-    for (i, &inversion_time) in ti.iter().enumerate() {
-        let vol = ir_data.index_axis(Axis(3), i).to_owned();
-        let base = format!("sub-{subject}_inv-{}_IRT1", i + 1);
-        let nii_path = anat_dir.join(format!("{base}.nii.gz"));
-        write_inv_volume(&vol, &header, &nii_path)?;
-
-        let json_path = anat_dir.join(format!("{base}.json"));
-        // RepetitionTime comes from the config (qMRLab's IR_demo TR is 2.5 s
-        // — 2500 ms in qMRLab's ms convention, converted at the config
-        // boundary). It's recorded here per BIDS convention even though the
-        // RD-NLS fitter itself doesn't consume TR; it's omitted (not
-        // serialized as `null`) if the config doesn't supply one.
-        let sidecar = IrSidecar {
-            inversion_time,
-            repetition_time: tr,
-        };
-        std::fs::write(&json_path, serde_json::to_string_pretty(&sidecar)?)?;
+    for i in 0..n {
+        let vol = data.index_axis(Axis(3), i).to_owned();
+        let bv = model.bids_volume(i);
+        let base = filename_stem(subject, &bv.entities, spec.suffix);
+        write_inv_volume(&vol, &header, &anat_dir.join(format!("{base}.nii.gz")))?;
+        std::fs::write(
+            anat_dir.join(format!("{base}.json")),
+            serde_json::to_string_pretty(&bv.sidecar)?,
+        )?;
     }
 
     if let Some(mask) = mask {
-        let mask_f64 = mask.mapv(|b| if b { 1.0 } else { 0.0 });
-        write_preprocessed(
-            out,
-            subject,
-            "anat",
-            &format!("sub-{subject}_desc-brain_mask.nii.gz"),
-            &mask_f64,
-            &header,
-        )?;
+        write_mask(out, subject, mask, &header)?;
     }
 
-    Ok(())
-}
-
-/// Write one qMT-SPGR `.mat` dataset as a BIDS tree rooted at `out`: one
-/// `sub-<subject>/anat/sub-<subject>_flip-<f>_mt-<m>_QMTSPGR.nii.gz` (+ JSON
-/// sidecar) per volume in `mt_data`'s 4th axis, plus `dataset_description.json`,
-/// `participants.tsv`, and a root `.bidsignore` (QMTSPGR is a custom,
-/// non-official suffix). The raw tree holds only the QMTSPGR acquisitions;
-/// every supplied auxiliary map is a computed input and lands in the
-/// `preprocessed` derivatives pipeline under its datatype — B1/B0 field maps
-/// in `derivatives/preprocessed/sub-<subject>/fmap/` (`TB1map`, `B0map`), the
-/// R1 map and brain mask in `derivatives/preprocessed/sub-<subject>/anat/`.
-///
-/// `protocol[i]` is `[Angle (deg), Offset (Hz)]` for volume `i`, in the same
-/// order as `mt_data`'s 4th axis (never re-sorted — qMRLab's `.mat` volume
-/// order is authoritative, matching `bidsify_ir`'s TI-order convention).
-/// `flip-<f>` indexes the unique Angles in first-seen order; `mt-<m>` indexes
-/// the unique Offsets in first-seen order (both 1-based) — this reproduces
-/// qMRLab's `qmt_spgr_batch` file-naming convention. Correctness of any
-/// downstream fit does not depend on this ordering: `qmt_spgr` reads
-/// `Angle`/`Offset` back out of each sidecar via `protocol_schema()`.
-#[allow(clippy::too_many_arguments)]
-pub fn bidsify_qmt(
-    mt_data: &Array4<f64>,
-    protocol: &[[f64; 2]],
-    repetition_time: f64,
-    mt_pulse_duration: f64,
-    mask: Option<&Array3<bool>>,
-    r1map: Option<&Array3<f64>>,
-    b1map: Option<&Array3<f64>>,
-    b0map: Option<&Array3<f64>>,
-    subject: &str,
-    out: &Path,
-) -> Result<()> {
-    let (nx, ny, nz, n_vol) = mt_data.dim();
-    if protocol.len() != n_vol {
-        bail!(
-            "MT data has {} volumes but the protocol has {} rows",
-            n_vol,
-            protocol.len()
-        );
-    }
-
-    std::fs::create_dir_all(out)?;
-    write_dataset_description(out)?;
-    write_participants_row(out, subject)?;
-    write_bidsignore(out)?;
-
-    let anat_dir = out.join(format!("sub-{subject}")).join("anat");
-    std::fs::create_dir_all(&anat_dir)?;
-    let header = make_minimal_header(nx, ny, nz);
-
-    // First-seen-order indices, 1-based, matching qMRLab's flip/mt file
-    // naming (see the doc comment above).
-    let mut angles_seen: Vec<f64> = Vec::new();
-    let mut offsets_seen: Vec<f64> = Vec::new();
-
-    for (i, row) in protocol.iter().enumerate() {
-        let [angle, offset] = *row;
-        let flip_idx = first_seen_index(&mut angles_seen, angle);
-        let mt_idx = first_seen_index(&mut offsets_seen, offset);
-
-        let vol = mt_data.index_axis(Axis(3), i).to_owned();
-        let base = format!("sub-{subject}_flip-{flip_idx}_mt-{mt_idx}_QMTSPGR");
-        let nii_path = anat_dir.join(format!("{base}.nii.gz"));
-        write_inv_volume(&vol, &header, &nii_path)?;
-
-        let json_path = anat_dir.join(format!("{base}.json"));
-        let sidecar = QmtSidecar {
-            angle,
-            offset,
-            repetition_time,
-            mt_pulse_duration,
+    for spec_in in model.required_inputs() {
+        let Some(bmap) = spec_in.bids.as_ref() else {
+            continue;
         };
-        std::fs::write(&json_path, serde_json::to_string_pretty(&sidecar)?)?;
-    }
-
-    if let Some(b1) = b1map {
-        write_fmap(out, subject, "TB1map", "1", b1, &header)?;
-    }
-    if let Some(b0) = b0map {
-        write_fmap(out, subject, "B0map", "Hz", b0, &header)?;
-    }
-    if let Some(r1) = r1map {
-        write_preprocessed(
-            out,
-            subject,
-            "anat",
-            &format!("sub-{subject}_R1map.nii.gz"),
-            r1,
-            &header,
-        )?;
-    }
-    if let Some(mask) = mask {
-        let mask_f64 = mask.mapv(|b| if b { 1.0 } else { 0.0 });
-        write_preprocessed(
-            out,
-            subject,
-            "anat",
-            &format!("sub-{subject}_desc-brain_mask.nii.gz"),
-            &mask_f64,
-            &header,
-        )?;
-    }
-
-    Ok(())
-}
-
-/// Return `val`'s 1-based index in first-seen order within `seen`, appending
-/// it if not already present. Used to derive qMRLab's `flip-<f>`/`mt-<m>`
-/// BIDS entities from the protocol's raw Angle/Offset columns.
-fn first_seen_index(seen: &mut Vec<f64>, val: f64) -> usize {
-    match seen.iter().position(|&v| v == val) {
-        Some(idx) => idx + 1,
-        None => {
-            seen.push(val);
-            seen.len()
+        if let Some((_, vol)) = aux.iter().find(|(name, _)| name == spec_in.name) {
+            write_aux_map(out, subject, bmap.suffix, vol, &header)?;
         }
     }
+
+    Ok(())
+}
+
+/// Build a filename stem `sub-<subject>[_<entity>-<value>...]_<suffix>` from
+/// a model's per-volume filename entities and BIDS suffix.
+fn filename_stem(subject: &str, entities: &[(&'static str, String)], suffix: &str) -> String {
+    let mut stem = format!("sub-{subject}");
+    for (key, value) in entities {
+        stem.push_str(&format!("_{key}-{value}"));
+    }
+    stem.push('_');
+    stem.push_str(suffix);
+    stem
+}
+
+/// The datatype directory (`fmap` or `anat`) an auxiliary BIDS suffix belongs
+/// in, per BIDS field-map convention: `*B1map`/`*B0map` suffixes are
+/// estimated field maps (`fmap`); everything else (R1 maps, brain masks, …)
+/// is an anatomical derivative (`anat`).
+fn aux_datatype(suffix: &str) -> &'static str {
+    if suffix.ends_with("B1map") || suffix.ends_with("B0map") {
+        "fmap"
+    } else {
+        "anat"
+    }
+}
+
+/// The physical unit a known field-map BIDS suffix is conventionally
+/// recorded in, for the `Units` sidecar `write_aux_map` writes alongside a
+/// `fmap`-datatype map. `None` for suffixes that get no unit sidecar (e.g.
+/// `anat`-datatype maps).
+fn aux_units(suffix: &str) -> Option<&'static str> {
+    if suffix.ends_with("B1map") {
+        Some("1")
+    } else if suffix.ends_with("B0map") {
+        Some("Hz")
+    } else {
+        None
+    }
+}
+
+/// Write one auxiliary map into the `preprocessed` derivatives pipeline,
+/// under the datatype directory its BIDS suffix implies (see
+/// `aux_datatype`), with a `Units` sidecar for field-map-datatype suffixes.
+fn write_aux_map(
+    out: &Path,
+    subject: &str,
+    suffix: &str,
+    vol: &Array3<f64>,
+    header: &NiftiHeader,
+) -> Result<()> {
+    let datatype = aux_datatype(suffix);
+    let dir = preprocessed_datatype_dir(out, subject, datatype)?;
+    let base = format!("sub-{subject}_{suffix}");
+    write_inv_volume(vol, header, &dir.join(format!("{base}.nii.gz")))?;
+    if let Some(units) = aux_units(suffix) {
+        let sidecar = serde_json::json!({ "Units": units });
+        std::fs::write(
+            dir.join(format!("{base}.json")),
+            serde_json::to_string_pretty(&sidecar)?,
+        )?;
+    }
+    Ok(())
+}
+
+/// Write a brain mask into the `preprocessed` pipeline's `anat/` datatype — a
+/// mask is an anatomical derivative regardless of which model requested it.
+fn write_mask(out: &Path, subject: &str, mask: &Array3<bool>, header: &NiftiHeader) -> Result<()> {
+    let mask_f64 = mask.mapv(|b| if b { 1.0 } else { 0.0 });
+    write_preprocessed(
+        out,
+        subject,
+        "anat",
+        &format!("sub-{subject}_desc-brain_mask.nii.gz"),
+        &mask_f64,
+        header,
+    )
 }
 
 /// The byte-identical volume writer: a 3D `f64` array in, an `f64`/datatype
@@ -397,30 +303,6 @@ fn preprocessed_datatype_dir(out: &Path, subject: &str, datatype: &str) -> Resul
     let dir = pipeline.join(format!("sub-{subject}")).join(datatype);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
-}
-
-/// Write an estimated field map into the `preprocessed` pipeline's `fmap/`
-/// datatype with a minimal sidecar. `suffix` is the BIDS field-map suffix
-/// (`TB1map` for a transmit B1+ map, `B0map` for a B0 map); `units` is that
-/// map's unit (`"1"` for a dimensionless B1 ratio, `"Hz"` for B0). These maps
-/// are computed field estimates, not raw acquisitions, so they are derivatives.
-fn write_fmap(
-    out: &Path,
-    subject: &str,
-    suffix: &str,
-    units: &str,
-    vol: &Array3<f64>,
-    header: &NiftiHeader,
-) -> Result<()> {
-    let fmap_dir = preprocessed_datatype_dir(out, subject, "fmap")?;
-    let base = format!("sub-{subject}_{suffix}");
-    write_inv_volume(vol, header, &fmap_dir.join(format!("{base}.nii.gz")))?;
-    let sidecar = serde_json::json!({ "Units": units });
-    std::fs::write(
-        fmap_dir.join(format!("{base}.json")),
-        serde_json::to_string_pretty(&sidecar)?,
-    )?;
-    Ok(())
 }
 
 /// Write `vol` as `file` into datatype `datatype` of the `preprocessed`
@@ -457,14 +339,17 @@ fn write_derivative_dataset_description(pipeline: &Path, name: &str) -> Result<(
     Ok(())
 }
 
-/// Ensure the dataset root's `.bidsignore` contains a `*QMTSPGR*` line:
-/// `QMTSPGR` is a non-official BIDS suffix, so the raw dataset ignores it for
-/// generic validators (rust-bids's own discovery exempts registered model
-/// suffixes regardless of `.bidsignore`). Creates the file if missing; never
+/// Ensure the dataset root's `.bidsignore` contains a `*<suffix>*` line when
+/// `suffix` is not a canonical BIDS suffix (a registered model's own
+/// suffix is "custom" by construction — see `rust_bids::Vocabulary`).
+/// Canonical suffixes need no entry. Creates the file if missing; never
 /// duplicates the line.
-fn write_bidsignore(out: &Path) -> Result<()> {
+fn write_bidsignore_if_custom(out: &Path, suffix: &str) -> Result<()> {
+    if !rust_bids::Vocabulary::bids().is_custom_suffix(suffix) {
+        return Ok(());
+    }
     let path = out.join(".bidsignore");
-    let line = "*QMTSPGR*";
+    let line = format!("*{suffix}*");
     if !path.exists() {
         std::fs::write(&path, format!("{line}\n"))?;
         return Ok(());
@@ -476,7 +361,7 @@ fn write_bidsignore(out: &Path) -> Result<()> {
     if !contents.is_empty() && !contents.ends_with('\n') {
         contents.push('\n');
     }
-    contents.push_str(line);
+    contents.push_str(&line);
     contents.push('\n');
     std::fs::write(&path, contents)?;
     Ok(())
@@ -521,6 +406,38 @@ mod tests {
         dir
     }
 
+    /// Resolve `name` via the registry's `describe` (structural, no protocol
+    /// needed) from an in-memory YAML config — the same seam `run_bidsify`
+    /// itself uses, so these tests exercise the generic path exactly.
+    fn model_from_yaml(name: &str, yaml: &str) -> Box<dyn Model> {
+        let v: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+        let entry = qmrust_core::registry::by_name(name).unwrap();
+        (entry.describe)(&v).unwrap()
+    }
+
+    fn ir_model(ti: &[f64], tr: Option<f64>) -> Box<dyn Model> {
+        let mut yaml = format!(
+            "model: inversion_recovery\nmethod: magnitude\ninversion_times: {:?}\n",
+            ti
+        );
+        if let Some(tr) = tr {
+            yaml.push_str(&format!("repetition_time: {tr}\n"));
+        }
+        model_from_yaml("inversion_recovery", &yaml)
+    }
+
+    fn qmt_model(mtdata: &[[f64; 2]], tr: f64, tmt: f64) -> Box<dyn Model> {
+        let rows: Vec<String> = mtdata
+            .iter()
+            .map(|r| format!("[{}, {}]", r[0], r[1]))
+            .collect();
+        let yaml = format!(
+            "model: qmt_spgr\nqmt_spgr:\n  protocol:\n    mtdata: [{}]\n    timing:\n      TR: {tr}\n      tmt: {tmt}\n",
+            rows.join(", ")
+        );
+        model_from_yaml("qmt_spgr", &yaml)
+    }
+
     /// Byte-identical round-trip. Every voxel written by the
     /// volume-writer must read back exactly equal to the source array — no
     /// rescale, no precision loss.
@@ -550,8 +467,8 @@ mod tests {
     /// Non-square byte-identical round-trip: a 2x2x1 fixture can't
     /// distinguish a value-transpose from an nx<->ny shape-swap. A 3x2x1
     /// fixture pins both: read-back shape must stay (3,2,1) (not (2,3,1))
-    /// AND every voxel must match by (i,j,k), guarding the fix in
-    /// `io::nifti`'s 2D->3D reshape (see the commit that fixed it).
+    /// AND every voxel must match by (i,j,k), guarding `io::nifti`'s 2D->3D
+    /// reshape against an nx<->ny swap.
     #[test]
     fn write_inv_volume_is_byte_identical_non_square() {
         let dir = tmp_dir("roundtrip-nonsquare");
@@ -578,11 +495,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Structure test — the IRT1 tree is produced from an
-    /// in-memory Array4 + TI fixture (no .mat writer exists).
-    /// `bidsify_ir` itself is unit-agnostic (it writes whatever `ti`/`tr` it's
-    /// given verbatim); the fixture uses BIDS-native seconds — matching what
-    /// `run_bidsify` now feeds it after converting a `.mat`'s ms TI vector —
+    /// Structure test — the IRT1 tree is produced from an in-memory Array4 +
+    /// a registry-resolved IR model (no .mat writer exists). The fixture uses
+    /// BIDS-native seconds, matching what `run_bidsify` feeds the writer —
     /// so the sidecar this test asserts on reads as real InversionTime/
     /// RepetitionTime values in seconds (0.35 s / 2.5 s TR), not ms.
     #[test]
@@ -593,8 +508,9 @@ mod tests {
         });
         let ti = vec![0.350, 0.650, 0.950];
         let mask = Array3::from_shape_vec((2, 2, 1), vec![true, false, true, true]).unwrap();
+        let model = ir_model(&ti, Some(2.5));
 
-        bidsify_ir(&ir_data, &ti, Some(&mask), "01", &dir, Some(2.5)).unwrap();
+        write_bids_tree(model.as_ref(), &ir_data, Some(&mask), &[], "01", &dir).unwrap();
 
         assert!(dir.join("dataset_description.json").exists());
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
@@ -636,9 +552,10 @@ mod tests {
         let dir = tmp_dir("dedup");
         let ir_data = Array4::from_shape_fn((1, 1, 1, 3), |(_, _, _, t)| t as f64);
         let ti = vec![0.350, 0.650, 0.950];
+        let model = ir_model(&ti, None);
 
-        bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
-        bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir).unwrap();
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir).unwrap();
 
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
         assert_eq!(participants.matches("sub-01").count(), 1);
@@ -661,7 +578,8 @@ mod tests {
 
         let ir_data = Array4::from_shape_fn((1, 1, 1, 3), |(_, _, _, t)| t as f64);
         let ti = vec![0.350, 0.650, 0.950];
-        bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
+        let model = ir_model(&ti, None);
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir).unwrap();
 
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
         assert_eq!(participants.matches("sub-01").count(), 1);
@@ -676,8 +594,9 @@ mod tests {
         let dir = tmp_dir("no-tr");
         let ir_data = Array4::from_shape_fn((1, 1, 1, 3), |(_, _, _, t)| t as f64);
         let ti = vec![0.350, 0.650, 0.950];
+        let model = ir_model(&ti, None);
 
-        bidsify_ir(&ir_data, &ti, None, "01", &dir, None).unwrap();
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir).unwrap();
 
         let anat = dir.join("sub-01").join("anat");
         let json = std::fs::read_to_string(anat.join("sub-01_inv-1_IRT1.json")).unwrap();
@@ -694,10 +613,10 @@ mod tests {
     /// Angle/Offset/RepetitionTime sidecar, and the `.bidsignore` line —
     /// while still asserting every voxel round-trips exactly.
     ///
-    /// The fixture's row order mirrors the real qMRLab qMT protocol quoted in
-    /// the task brief: [142,443],[426,443],[142,1088],[426,1088] = flip-1_mt-1,
-    /// flip-2_mt-1, flip-1_mt-2, flip-2_mt-2 (Angle varies fastest -> flip
-    /// index; Offset next -> mt index).
+    /// The fixture's row order mirrors the qMRLab qMT protocol:
+    /// [142,443],[426,443],[142,1088],[426,1088] = flip-1_mt-1, flip-2_mt-1,
+    /// flip-1_mt-2, flip-2_mt-2 (Angle varies fastest -> flip index; Offset
+    /// next -> mt index).
     #[test]
     fn bidsify_qmt_writes_expected_tree() {
         let dir = tmp_dir("qmt-structure");
@@ -712,11 +631,9 @@ mod tests {
         ];
         let tr = 0.025;
         let tmt = 0.0102;
+        let model = qmt_model(&protocol, tr, tmt);
 
-        bidsify_qmt(
-            &mt_data, &protocol, tr, tmt, None, None, None, None, "02", &dir,
-        )
-        .unwrap();
+        write_bids_tree(model.as_ref(), &mt_data, None, &[], "02", &dir).unwrap();
 
         assert!(dir.join("dataset_description.json").exists());
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
@@ -761,24 +678,18 @@ mod tests {
         let dir = tmp_dir("qmt-aux");
         let mt_data = Array4::from_shape_fn((2, 1, 1, 1), |(i, _j, _k, _t)| i as f64);
         let protocol = vec![[142.0, 443.0]];
+        let model = qmt_model(&protocol, 0.025, 0.0102);
         let mask = Array3::from_shape_vec((2, 1, 1), vec![true, false]).unwrap();
         let r1map = Array3::from_shape_vec((2, 1, 1), vec![1.1, 2.2]).unwrap();
         let b1map = Array3::from_shape_vec((2, 1, 1), vec![0.9, 1.05]).unwrap();
         let b0map = Array3::from_shape_vec((2, 1, 1), vec![-12.0, 7.5]).unwrap();
+        let aux = vec![
+            ("R1map".to_string(), r1map.clone()),
+            ("B1map".to_string(), b1map.clone()),
+            ("B0map".to_string(), b0map.clone()),
+        ];
 
-        bidsify_qmt(
-            &mt_data,
-            &protocol,
-            0.025,
-            0.0102,
-            Some(&mask),
-            Some(&r1map),
-            Some(&b1map),
-            Some(&b0map),
-            "02",
-            &dir,
-        )
-        .unwrap();
+        write_bids_tree(model.as_ref(), &mt_data, Some(&mask), &aux, "02", &dir).unwrap();
 
         let preproc = dir.join("derivatives").join("preprocessed");
         assert!(preproc.join("dataset_description.json").exists());
@@ -816,21 +727,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Re-running `bidsify_qmt` must not duplicate the `.bidsignore` line.
+    /// Re-running `write_bids_tree` must not duplicate the `.bidsignore`
+    /// line.
     #[test]
     fn bidsify_qmt_bidsignore_not_duplicated() {
         let dir = tmp_dir("qmt-bidsignore-dedup");
         let mt_data = Array4::from_shape_fn((1, 1, 1, 1), |_| 0.0);
         let protocol = vec![[142.0, 443.0]];
+        let model = qmt_model(&protocol, 0.025, 0.0102);
 
-        bidsify_qmt(
-            &mt_data, &protocol, 0.025, 0.0102, None, None, None, None, "02", &dir,
-        )
-        .unwrap();
-        bidsify_qmt(
-            &mt_data, &protocol, 0.025, 0.0102, None, None, None, None, "02", &dir,
-        )
-        .unwrap();
+        write_bids_tree(model.as_ref(), &mt_data, None, &[], "02", &dir).unwrap();
+        write_bids_tree(model.as_ref(), &mt_data, None, &[], "02", &dir).unwrap();
 
         let bidsignore = std::fs::read_to_string(dir.join(".bidsignore")).unwrap();
         assert_eq!(bidsignore.matches("*QMTSPGR*").count(), 1);

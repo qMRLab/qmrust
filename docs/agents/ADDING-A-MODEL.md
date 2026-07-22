@@ -85,7 +85,15 @@ not reintroduce it.
 
 ```rust
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
-pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder }
+pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
+pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
+pub struct ModelEntry {
+    pub name: &'static str,
+    pub bids_suffix: &'static str,
+    pub build: Builder,
+    pub describe: Describer,
+    pub dump: Dumper,
+}
 pub fn all() -> &'static [ModelEntry];
 pub fn by_name(name: &str) -> Option<&'static ModelEntry>;
 pub fn by_bids_suffix(suffix: &str) -> Option<&'static ModelEntry>;
@@ -94,22 +102,57 @@ pub fn by_bids_suffix(suffix: &str) -> Option<&'static ModelEntry>;
 `by_name`/`by_bids_suffix` are the only lookups the CLI, sim, and wasm
 bindings use.
 
+## The one build pipeline — `ModelConfig`
+
+You do **not** hand-write the parse/validate/protocol dance. `core::model`
+owns it once, for every model, via `build_model::<C>` / `describe_model::<C>`
+(`crates/qmrust-core/src/core/model.rs`):
+
+```
+parse config → validate_options → ingest_protocol → validate_protocol
+             → construct → validate_against_protocol
+```
+
+Your config implements `ModelConfig` and supplies only the config-shaped hooks:
+
+```rust
+pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default {
+    const NAME: &'static str;
+    const SUBKEY: Option<&'static str>;         // Some("qmt_spgr"), or None for top-level
+    fn validate_options(&mut self) -> Result<()>;               // config-intrinsic checks
+    fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> { Ok(()) }  // fold sidecars in
+    fn validate_protocol(&mut self) -> Result<()> { Ok(()) }    // completeness, post-ingest
+    fn into_model(self) -> Box<dyn Model>;
+}
+```
+
+`ingest_protocol` is where the model folds the BIDS-resolved per-volume
+protocol into its own acquisition arrays (IR: `InversionTime`s → `inversion_times`;
+qMT: `Angle`/`Offset` → `mtdata`). It runs in the shared pipeline for **every**
+model, so a model sources its acquisition from BIDS identically and none can
+be built without it — the non-BIDS path passes an empty `Protocol` and the
+config's own arrays are used unchanged. `describe` runs only `validate_options`
+(no protocol), so the BIDS shell can read `protocol_schema()`/`bids_outputs()`
+before any data is resolved; `build` is the fit-ready path.
+
 ## Checklist
 
 1. New dir `crates/qmrust-core/src/models/<name>/`:
-   - `config.rs` — a `serde`-deserializable struct for the model's own YAML
-     sub-tree + a `validate()` method.
+   - `config.rs` — a `serde`-deserializable, `Default` struct for the model's
+     own YAML sub-tree, with `validate_options()`/`validate_protocol()` methods.
    - pure math (signal equation + fitter).
-   - `model.rs` — `impl Model for <Name>Model` + `pub fn build(v:
-     &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>>` that:
-     parses `config.rs`'s struct from `v`, applies any protocol override,
-     calls `.validate()`, constructs the model, then calls
-     `validate_against_protocol(&model.measurement(), proto)?` before boxing
-     — fail loudly at build time, not per-voxel.
+   - `model.rs` — `impl Model for <Name>Model`, `impl ModelConfig for <Name>Config`
+     (the hooks above), and three one-line entry points:
+     `pub fn build(v, proto) { core::model::build_model::<C>(v, proto) }`,
+     `pub fn describe(v) { core::model::describe_model::<C>(v) }`, and
+     `pub fn dump(v) { core::model::dump_model::<C>(v) }`.
 2. Register the module in `models/mod.rs`.
-3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs`.
-4. Tests: forward→fit round-trip; config parse/validate; if `bids_outputs()`
-   is non-empty, assert every entry names a real `output_names()` value.
+3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name +
+   BIDS suffix + `build` + `describe` + `dump` — the three registry-facing
+   capabilities every model provides).
+4. Tests: forward→fit round-trip; config parse/validate; `ingest_protocol`
+   composes from a resolved `Protocol`; if `bids_outputs()` is non-empty,
+   assert every entry names a real `output_names()` value.
 
 Reference models:
 - `models/inversion_recovery/` — minimal. `protocol_schema()` maps
@@ -140,11 +183,13 @@ raw tree + every `derivatives/<pipeline>/` — into a flat table
     `.bidsignore`-exempt.
   - `custom_entities: [{ key: cest, name: cestPool }]` — non-official entity
     key → full name.
-  - Grouping: `loop_over: [subject, session, run, task]` (collection
+  - Grouping: `loop_over: [sub, ses, run, task]` (collection
     identity) plus per-suffix `sequential_set: { by: [...] }` (ordered
-    series, e.g. IRT1 `by: [inversion]`, QMTSPGR `by: [mtransfer, flip]`) or
+    series, e.g. IRT1 `by: [inv]`, QMTSPGR `by: [mt, flip]`) or
     `named_set: { <role>: {...}, required: [...] }` (fixed role slots, e.g.
-    MTS PDw/MTw/T1w).
+    MTS PDw/MTw/T1w). Entity keys accept either the short BIDS-filename form
+    (`mt`, `inv`, `sub`) or the full name (`mtransfer`, `inversion`, `subject`);
+    both normalize to the same entity.
 - **Aux + mask resolution** (`qmrust-cli::commands::resolve_aux_and_mask`): a
   fit resolves each `required_inputs()` entry from the table by the
   collection's full identity + declared suffix (+ `BidsMap.entity`), found

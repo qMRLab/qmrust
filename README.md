@@ -1,124 +1,65 @@
 # qmrust
 
-Native-Rust quantitative MRI fitting — a fast port of selected [qMRLab](https://qmrlab.org) models.
+It is qMRLab (https://qmrlab.org) written in Rust, so it is fast, and the fitting code is portable: the same routines run on the command line and, compiled to WebAssembly, inside a web browser with no server.
 
-**Models available**
+qmrust is a growing library of models, each one self-contained so a new model
+can be added without disturbing the others. It fits:
 
-| Config (`prots/`) | Model | Fits |
-|---|---|---|
-| `irt1_config.yaml` | Inversion Recovery T1 (Barral RD-NLS) | T1 mapping |
-| `qmt_config_ramani.yaml` | qMT-SPGR · Ramani | F, kr, R1f, R1r, T2f, T2r |
-| `qmt_config_sledpikerp.yaml` | qMT-SPGR · SledPikeRP | F, kr, R1f, R1r, T2f, T2r |
+- Inversion recovery T1
+- Quantitative magnetization transfer (qMT-SPGR), with the Ramani and
+  Sled-Pike sub-models
 
-## Build
+More are on the way, and the project is built to make adding them simple.
 
-```bash
-cargo build --release          # binary at target/release/qmrust
-```
-Optional — install onto your PATH so you can call `qmrust` anywhere:
-```bash
-cargo install --path .         # → ~/.cargo/bin/qmrust
-```
-Examples below use `./target/release/qmrust`; swap in `qmrust` if installed.
+## Getting started
 
-## Usage per config
+Check out docs: qmrlab.org/qmrust
 
-### qMT-SPGR — SledPikeRP
-Fits from `MTdata` + `R1map` + `B1map` + `B0map` + `Mask`. The `--mat-dir` mode
-auto-loads all five `.mat` files from a folder by name.
+Build the tool:
 
 ```bash
-./target/release/qmrust fit \
-  --mat-dir ~/Desktop/qmrust_test/qmt_spgr \
-  --config prots/qmt_config_sledpikerp.yaml \
-  --output-dir ~/Desktop/qmrust_test/qmt_spgr/FitResults_rust
+cargo build --release
 ```
 
-### qMT-SPGR — Ramani
-Same inputs; just swap the config:
-```bash
-./target/release/qmrust fit \
-  --mat-dir ~/Desktop/qmrust_test/qmt_spgr \
-  --config prots/qmt_config_ramani.yaml \
-  --output-dir ./FitResults_ramani
-```
+The binary lands at `target/release/qmrust`. Run `cargo install --path .` to
+call `qmrust` from anywhere.
 
-Instead of `--mat-dir`, you can pass maps individually (`.mat` or NIfTI):
-```bash
-./target/release/qmrust fit \
-  --mat-data MTdata.mat --mask Mask.mat \
-  --r1map R1map.mat --b1map B1map.mat --b0map B0map.mat \
-  --config prots/qmt_config_sledpikerp.yaml --output-dir ./out
-```
-
-**qMT outputs** (8 maps): `F`, `kr`, `R1f`, `R1r`, `T2f`, `T2r`, `kf`, `resnorm`.
-
-### Inversion Recovery T1
-Needs IR data: a 4D NIfTI, or a `.mat` containing `IRdata` (+ optional `TI`, `Mask`).
-```bash
-./target/release/qmrust fit \
-  --data ir_data.nii.gz \
-  --config prots/irt1_config.yaml \
-  --output-dir ./FitResults_t1
-```
-**T1 outputs**: `T1`, `b`, `a`, `res` (+ `idx` for the magnitude method).
-
-## Configs
-
-The files in `prots/` are **fully explicit** — every protocol, timing, pulse,
-and fitting parameter is listed, so a run is self-documenting. Edit them to
-match your acquisition (angles/offsets, timing table, bounds, etc.).
-
-Print the fully-resolved config a run will use (defaults applied, validated):
-```bash
-./target/release/qmrust dump-config --config prots/qmt_config_sledpikerp.yaml
-```
-
-## Simulation
-
-`qmrust sim` mirrors qMRLab's `Sim_*` tools: generate signal from ground-truth
-parameters, optionally add noise, and fit it back. Parameters, noise, and sweep
-ranges live in a `sim:` block in the same YAML.
+Fit a dataset:
 
 ```bash
-# forward signal only
-qmrust sim signal       --config prots/qmt_sim_ramani.yaml --output sig.json
-# one voxel, N noisy trials, fit back (+ optional SVG)
-qmrust sim single-voxel --config prots/qmt_sim_ramani.yaml --output sv.json --plot sv.svg
-# sweep one parameter, report bias/std
-qmrust sim sensitivity  --config prots/qmt_sim_ramani.yaml --output sens.json --plot sens.svg
-# Monte-Carlo over parameter distributions
-qmrust sim montecarlo   --config prots/qmt_sim_ramani.yaml --output mc.json
+qmrust fit --bids-dir path/to/dataset \
+  --config recipes/bids/irt1_config.yaml \
+  --output-dir results
 ```
 
-`sim:` block fields: `params` (ground truth), `b1`/`b0`/`r1`, `noise`
-(`type: none|gaussian|rician`, `snr`), `seed`, `trials`, `sweep`
-(sensitivity), `distributions` (montecarlo). Noise is `sigma = max(|signal|)/SNR`;
-runs are reproducible for a fixed `seed`.
+qmrust reads BIDS datasets directly, taking each scan's acquisition details
+from its sidecar. When your data is not in BIDS, point it at plain NIfTI or
+qMRLab `.mat` files instead and the acquisition details come from the config.
+The `recipes/` folder holds ready-to-edit example configs, one per model,
+grouped by how you feed in the data. Run `qmrust fit --help` for the full list
+of inputs.
 
-## Common options
+## Simulating
 
-| Flag | Meaning |
-|---|---|
-| `--config <file>` | protocol/fitting config (required) |
-| `--mat-dir <dir>` | auto-load `MTdata/R1map/B1map/B0map/Mask.mat` |
-| `--data` / `--mat-data` | single 4D NIfTI / `.mat` input |
-| `--mask`, `--r1map`, `--b1map`, `--b0map` | individual maps (`.mat` or NIfTI) |
-| `--output-dir <dir>` | where maps are written (default `./FitResults`) |
-| `--threads <n>` | worker threads (default: all cores) |
+You can also generate a signal from known parameters, add noise, and fit it
+back. This helps you check a model or see how reliably a parameter can be
+recovered.
 
-Fitting shows a live progress bar (elapsed, throughput, ETA); it auto-hides when
-output is redirected to a file.
+```bash
+qmrust sim single-voxel --config recipes/sim/qmt_sim_ramani.yaml --output result.json
+```
 
-## Notes on comparing against qMRLab
+## Learning more
 
-- For `.mat` inputs, output maps are written with a `make_nii`-compatible header
-  (2D, sform origin at voxel (1,1,1)) so they **overlay and subtract voxel-exactly**
-  against qMRLab's `FitResults`.
-- Match the sub-model: comparing the wrong one dominates the differences.
-- For qMT, `kf`/`T2f`/`T2r` agree tightly (~1–4%); `F`/`kr` are individually
-  ill-conditioned and best compared on averages/trends, not per voxel.
-- Validate the Sf table (SledPikeRP) against qMRLab's:
-  ```bash
-  ./target/release/qmrust dump-sf --config prots/qmt_config_sledpikerp.yaml --output sf.bin
-  ```
+- `recipes/README.md` walks through the example configs and how to run BIDS and
+  non-BIDS data.
+- `docs/` covers the available models, the data pipeline, and how to add a
+  model of your own.
+
+## Background
+
+qmrust grows out of [qMRLab](https://qmrlab.org), the MATLAB toolbox for
+quantitative MRI. It reimplements selected models natively so they run quickly
+and in more places, and its results are made to line up with qMRLab's for
+validation. Values follow BIDS conventions in SI units, so a T1 map is in
+seconds rather than qMRLab's milliseconds.

@@ -1,17 +1,19 @@
 //! IR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    validate_against_protocol, Aux, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement,
-    MeasurementKind, Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
+    Model, ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::inversion_recovery::config::IrConfig;
 use crate::models::inversion_recovery::fit::IrFitter;
-use anyhow::{Context, Result};
+use anyhow::Result;
+use serde_json::json;
 use std::collections::BTreeMap;
 
 pub struct IrModel {
     fitter: IrFitter,
     output_names: Vec<String>,
+    repetition_time: Option<f64>,
 }
 
 /// One `{"InversionTime": ti}` identity row per fitter TI, in canonical order.
@@ -25,6 +27,7 @@ fn ir_rows(fitter: &IrFitter) -> Vec<BTreeMap<String, f64>> {
 
 impl IrModel {
     pub fn new(cfg: IrConfig) -> Self {
+        let repetition_time = cfg.repetition_time;
         let fitter = IrFitter::new(&cfg);
         let output_names = fitter
             .output_names()
@@ -34,6 +37,7 @@ impl IrModel {
         Self {
             fitter,
             output_names,
+            repetition_time,
         }
     }
 }
@@ -101,6 +105,20 @@ impl Model for IrModel {
             .collect();
         self.fitter.fit_voxel(&ndarray::Array1::from_vec(signal))
     }
+    fn n_volumes(&self) -> usize {
+        self.fitter.ti().len()
+    }
+    fn bids_volume(&self, index: usize) -> BidsVolume {
+        let mut sidecar = BTreeMap::new();
+        sidecar.insert("InversionTime".to_string(), json!(self.fitter.ti()[index]));
+        if let Some(tr) = self.repetition_time {
+            sidecar.insert("RepetitionTime".to_string(), json!(tr));
+        }
+        BidsVolume {
+            entities: vec![("inv", (index + 1).to_string())],
+            sidecar,
+        }
+    }
     fn bids(&self) -> Option<BidsSpec> {
         Some(BidsSpec {
             suffix: "IRT1",
@@ -125,25 +143,52 @@ impl Model for IrModel {
     }
 }
 
-/// Registry builder: parse `IrConfig` from the raw YAML tree, apply any
-/// protocol override (e.g. `.mat` TI values), validate, and box the model.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    let mut cfg: IrConfig = serde_yaml::from_value(v.clone())?;
-    if !proto.volumes.is_empty() {
-        let tis: Vec<f64> = proto
-            .volumes
-            .iter()
-            .filter_map(|m| m.get("InversionTime").copied())
-            .collect();
-        if !tis.is_empty() {
-            cfg.inversion_times = tis;
-        }
+impl crate::core::model::ModelConfig for IrConfig {
+    const NAME: &'static str = "inversion_recovery";
+    const SUBKEY: Option<&'static str> = None;
+
+    fn validate_options(&mut self) -> Result<()> {
+        IrConfig::validate_options(self)
     }
-    cfg.validate()?;
-    let model = IrModel::new(cfg);
-    validate_against_protocol(&model.measurement(), proto)
-        .context("inversion_recovery: protocol inconsistent with model's measurement")?;
-    Ok(Box::new(model))
+
+    fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
+        if !proto.volumes.is_empty() {
+            let tis: Vec<f64> = proto
+                .volumes
+                .iter()
+                .filter_map(|m| m.get("InversionTime").copied())
+                .collect();
+            if !tis.is_empty() {
+                self.inversion_times = tis;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_protocol(&mut self) -> Result<()> {
+        IrConfig::validate_protocol(self)
+    }
+
+    fn into_model(self) -> Box<dyn Model> {
+        Box::new(IrModel::new(self))
+    }
+}
+
+/// Structural interrogation entry point (see [`describe_model`]).
+pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+    crate::core::model::describe_model::<IrConfig>(v)
+}
+
+/// Registry builder (see [`build_model`]): the shared parse → ingest protocol →
+/// validate → construct pipeline.
+pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
+    crate::core::model::build_model::<IrConfig>(v, proto)
+}
+
+/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
+/// the fully-resolved effective config as YAML.
+pub fn dump(v: &serde_yaml::Value) -> Result<String> {
+    crate::core::model::dump_model::<IrConfig>(v)
 }
 
 #[cfg(test)]
@@ -273,5 +318,22 @@ mod tests {
         assert_eq!(schema[0].name, "InversionTime");
         assert!(matches!(schema[0].source, Source::Field("InversionTime")));
         assert!(matches!(schema[0].scope, Scope::PerVolume));
+    }
+
+    #[test]
+    fn describe_succeeds_without_inversion_times_and_exposes_schema() {
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: inversion_recovery\nmethod: magnitude\n").unwrap();
+        let m = super::describe(&v).unwrap(); // no inversion_times → still OK
+        assert_eq!(m.protocol_schema()[0].name, "InversionTime");
+    }
+
+    #[test]
+    fn build_still_requires_three_times_when_protocol_empty() {
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: inversion_recovery\nmethod: magnitude\ninversion_times: [0.35, 0.50]\n",
+        )
+        .unwrap();
+        assert!(super::build(&v, &Protocol::default()).is_err()); // only 2 TIs, no sidecars
     }
 }

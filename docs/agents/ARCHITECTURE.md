@@ -19,7 +19,7 @@ qmrust/                         Cargo workspace
 │   ├── qmrust-cli/    ── IMPERATIVE SHELL ─  the `qmrust` binary: files, CLI, progress
 │   ├── qmrust-wasm/   ── IMPERATIVE SHELL ─  the browser cdylib: wasm-bindgen bindings
 │   └── rust-bids/     ── SHARED ── wasm-clean qMRI-BIDS layout resolver
-├── prots/                       example protocol / sim configs (YAML)
+├── recipes/                     example `--config` manifests (bids/non-bids/sim, YAML)
 ├── docs/                        agents/ARCHITECTURE.md (this file) + MyST human-docs site
 ├── ci/integration_osf.sh        end-to-end fit against qMRLab's OSF datasets
 └── .github/workflows/           ci.yml (lint · native · wasm · integration) + docs.yml (MyST → Pages)
@@ -53,7 +53,6 @@ crates/qmrust-core/src/
 ├── engine.rs          the parallel voxel-fitting engine (FitStrategy)
 ├── sim/               forward signal, noise, sim→fit round-trips, reports
 ├── config.rs          parse_config(&str) → (Config, Value)   (parsing only, no fs)
-├── protocol.rs        ProtocolSource → Protocol
 ├── fitting.rs         FitResults type
 └── quad.rs            numerical quadrature helper
 ```
@@ -184,12 +183,14 @@ function that builds it:
 
 ```rust
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
+pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
+pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
 
-pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder }
+pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder, pub describe: Describer, pub dump: Dumper }
 
 pub fn all() -> &'static [ModelEntry] { &[
-    ModelEntry { name: "inversion_recovery", bids_suffix: "IRT1", build: models::inversion_recovery::build },
-    ModelEntry { name: "qmt_spgr",           bids_suffix: "QMTSPGR", build: models::qmt_spgr::build },
+    ModelEntry { name: "inversion_recovery", bids_suffix: "IRT1", build: models::inversion_recovery::build, describe: models::inversion_recovery::describe, dump: models::inversion_recovery::dump },
+    ModelEntry { name: "qmt_spgr",           bids_suffix: "QMTSPGR", build: models::qmt_spgr::build, describe: models::qmt_spgr::describe, dump: models::qmt_spgr::dump },
 ]}
 
 pub fn by_name(name: &str) -> Option<&'static ModelEntry>;
@@ -197,6 +198,17 @@ pub fn by_bids_suffix(suffix: &str) -> Option<&'static ModelEntry>;
 ```
 
 The CLI, the simulator, and the wasm bindings all resolve models through `by_name`.
+
+Each model's `build`/`describe` are one-liners delegating to a **single shared
+build pipeline** in `core::model` (`build_model::<C>` / `describe_model::<C>`):
+parse the config → `validate_options` → `ingest_protocol` (fold the
+BIDS-resolved per-volume protocol into the model's acquisition arrays) →
+`validate_protocol` → construct → `validate_against_protocol`. Protocol
+ingestion lives in that one place, so **every** model sources its acquisition
+from BIDS identically — a model cannot be built skipping it, and there is no
+per-model protocol-folding to get wrong. `describe` runs only the
+config-intrinsic validation (no protocol), letting the BIDS shell read a
+model's `protocol_schema()`/`bids_outputs()` before any data is resolved.
 There is **no `match cfg.model { … }` scattered anywhere else** — adding a `ModelEntry`
 here is the only wiring a new model needs.
 
@@ -211,7 +223,7 @@ YAML config ─► config::parse_config ─► (Config, raw Value)
    registry::by_name(cfg.model).build(raw, protocol) ─► Box<dyn Model>
    shell loads model.required_inputs() as 3-D maps ─► AuxMaps
    shell labels each data volume with a VolumeId (Role or Params)
-   engine::run(model, data4d, mask, volume_ids, aux, progress) ─► FitResults (name → 3-D map)
+   engine::run(model, data4d, volume_ids, mask, aux, progress) ─► FitResults (name → 3-D map)
    io::nifti writes each map
 ```
 
@@ -228,7 +240,7 @@ qmrust fit --bids-dir <dir> ─► StdFs (native DatasetFs) ─► rust_bids::co
    for each Collection: resolve_protocol + load 4-D volumes
    resolve_aux_and_mask(table, model, identity, mask_spec) ─► AuxMaps + Option<mask>
    build_volume_ids(model.measurement(), protocol) ─► engine::run ─► FitResults
-   io::nifti writes output_dir/<subject>[/<session>]/<map>.nii.gz
+   io::nifti writes output_dir/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz
 ```
 
 A BIDS collection is just another way to arrive at a `Protocol` and an ordered volume
@@ -240,8 +252,8 @@ collection's full identity + declared BIDS suffix — found in raw *or* any
 `mask:` key (a suffix + entity constraints, e.g. `desc: brain`); an under-specified
 `mask:` matching several files is a hard error rather than a silent pick, and no
 `mask:` block means no masking. See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for how
-collections are resolved, how sidecars are merged, and current v1 scope/limitations
-(`Sequential`-only fitting).
+collections are resolved, how sidecars are merged, and the scope of BIDS fitting
+(`Sequential` collections; `Named`/MTS-style collections are not BIDS-fittable).
 
 Output is written in the BIDS-derivatives convention too — `output_dir/qmrust/<subject>
 [/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz`, per each model's declared
@@ -275,13 +287,14 @@ A model is a directory under `crates/qmrust-core/src/models/<name>/` with three 
 kept together:
 
 1. **Config** (`config.rs`) — a `serde`-deserializable struct for the model's own YAML
-   sub-tree, with a `validate()` method. Each model owns its config; the top-level
-   `Config` only knows the shared fields (`model`, `sim`) — there is no monolithic config
-   struct listing every model's fields.
+   sub-tree, `Default`, with `validate_options()`/`validate_protocol()` methods.
+   Each model owns its config; the top-level `Config` only knows the shared fields
+   (`model`, `sim`) — there is no monolithic config struct listing every model's fields.
 2. **Math** (`fit.rs`, and for qMT `lineshape.rs`/`ode.rs`/`pulse.rs`/`sf.rs`) — the pure
    signal equation and the fitter. No I/O, no config-file types.
 3. **Adapter + builder** (`model.rs` / `adapter.rs`) — an `impl Model` that delegates to
-   the math, and a `build` function the registry calls.
+   the math, an `impl ModelConfig` supplying the build-pipeline hooks, and one-line
+   `build`/`describe` entry points the registry calls.
 
 ### Worked example — inversion recovery
 
@@ -320,17 +333,28 @@ fn protocol_schema(&self) -> Vec<ProtoParam> {
     vec![ProtoParam { name: "InversionTime", source: Source::Field("InversionTime"), scope: Scope::PerVolume }]
 }
 
-// the registry builder: parse this model's config, apply any protocol override, validate, box it
+// The config implements ModelConfig; build/describe delegate to the shared
+// pipeline (core::model::build_model / describe_model). ingest_protocol is the
+// only model-specific step — it folds the BIDS-resolved Protocol into the
+// config's acquisition array; the shared driver handles the rest (validate
+// options → ingest → validate protocol → construct → validate_against_protocol).
+impl ModelConfig for IrConfig {
+    const NAME: &'static str = "inversion_recovery";
+    const SUBKEY: Option<&'static str> = None;                 // IR reads top-level keys
+    fn validate_options(&mut self) -> Result<()> { /* method, t1_range, zoom */ }
+    fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
+        // BIDS sidecars supply the InversionTimes here.
+        if !proto.volumes.is_empty() { /* pull InversionTime values into self.inversion_times */ }
+        Ok(())
+    }
+    fn validate_protocol(&mut self) -> Result<()> { /* ≥3 TIs, sort ascending */ }
+    fn into_model(self) -> Box<dyn Model> { Box::new(IrModel::new(self)) }
+}
 pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    let mut cfg: IrConfig = serde_yaml::from_value(v.clone())?;
-    // e.g. a .mat file may override inversion times via the resolved Protocol
-    if !proto.volumes.is_empty() { /* pull InversionTime values from proto */ }
-    cfg.validate()?;
-    let model = IrModel::new(cfg);
-    // Fail loudly at build if `proto` is inconsistent with the model's own
-    // declared measurement, rather than per-voxel at fit time.
-    validate_against_protocol(&model.measurement(), proto)?;
-    Ok(Box::new(model))
+    crate::core::model::build_model::<IrConfig>(v, proto)
+}
+pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+    crate::core::model::describe_model::<IrConfig>(v)
 }
 ```
 
@@ -339,7 +363,7 @@ locators, and reads a `Series` measurement keyed by `(Angle, Offset)` rather tha
 
 ```rust
 fn required_inputs(&self) -> Vec<InputSpec> { vec![
-    InputSpec { name: "R1map", required: false, bids: Some(BidsMap { suffix: "T1map",  entity: None }) },
+    InputSpec { name: "R1map", required: false, bids: Some(BidsMap { suffix: "R1map",  entity: None }) },
     InputSpec { name: "B1map", required: false, bids: Some(BidsMap { suffix: "TB1map", entity: None }) },
     InputSpec { name: "B0map", required: false, bids: Some(BidsMap { suffix: "B0map",  entity: None }) },
 ]}
@@ -355,7 +379,8 @@ fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
 1. Create `crates/qmrust-core/src/models/<name>/` with `config.rs`, the math, and
    `model.rs` (`impl Model` + `pub fn build`).
 2. Register the module in `models/mod.rs`.
-3. Add **one** `ModelEntry` to `registry::all()` (name + BIDS suffix + `build`).
+3. Add **one** `ModelEntry` to `registry::all()` (name + BIDS suffix + `build` +
+   `describe` + `dump`).
 4. Add unit tests (forward→fit round-trip; config parse/validate).
 
 Nothing in `qmrust-cli`, `qmrust-wasm`, `engine`, or `config` needs to change. If the

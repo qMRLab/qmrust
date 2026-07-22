@@ -5,11 +5,11 @@
 use ndarray::Array3;
 use rayon::prelude::*;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(test)]
 use anyhow::{Context, Result};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(test)]
 use matfile::MatFile;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(test)]
 use std::path::Path;
 
 use super::ode::{bloch_no_mt_deriv, rk_bs23};
@@ -160,7 +160,7 @@ impl SfTable {
 
 impl SfTable {
     /// Max absolute value difference vs another table. None if grids differ in size.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn max_abs_diff(&self, other: &SfTable) -> Option<f64> {
         if self.values.dim() != other.values.dim() {
             return None;
@@ -173,10 +173,9 @@ impl SfTable {
     }
 }
 
-/// Extract f64 values from a matfile NumericData. Duplicated from
-/// qmrust-cli's `io::mat` (which this core validation helper cannot depend
-/// on) — keep in sync if changed.
-#[cfg(not(target_arch = "wasm32"))]
+/// Extract f64 values from a matfile NumericData, mirroring qmrust-cli's
+/// `io::mat` (which this wasm-clean core cannot depend on).
+#[cfg(test)]
 fn numeric_to_f64(data: &matfile::NumericData) -> Vec<f64> {
     use matfile::NumericData::*;
     match data {
@@ -196,8 +195,7 @@ fn numeric_to_f64(data: &matfile::NumericData) -> Vec<f64> {
 /// Read a reference Sf table from a .mat file exported as flat arrays:
 /// `values` (nA×nO×nT, column-major), `angles`, `offsets`, `T2f`. Returns
 /// Ok(None) if the required arrays are not present (e.g. a struct-only file).
-#[cfg(not(target_arch = "wasm32"))]
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn load_reference_arrays(path: &Path) -> Result<Option<SfTable>> {
     let file = std::fs::File::open(path).with_context(|| format!("open {:?}", path))?;
     let mat = MatFile::parse(file).with_context(|| format!("parse {:?}", path))?;
@@ -425,9 +423,8 @@ mod tests {
     #[test]
     fn load_reference_arrays_rejects_length_mismatch_without_panic() {
         // angles(2) x offsets(2) x t2f(1) => 4 expected elements, but
-        // `values` only carries 3 -- a corrupted/mismatched export. Before
-        // the fix this would panic on out-of-bounds indexing; now it must
-        // be treated as an absent/invalid reference.
+        // `values` only carries 3 -- a corrupted/mismatched export, which must
+        // be treated as an absent/invalid reference, not panic on indexing.
         let angles = mat_double_array("angles", &[2, 1], &[100.0, 200.0]);
         let offsets = mat_double_array("offsets", &[2, 1], &[10.0, 20.0]);
         let t2f = mat_double_array("T2f", &[1, 1], &[0.03]);

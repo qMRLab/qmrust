@@ -13,8 +13,6 @@ pub enum NoiseKind {
 }
 
 impl NoiseKind {
-    // clippy: renaming this inherent method (or implementing std::str::FromStr) would
-    // change the public API surface and call sites across the crate; keep the name.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<NoiseKind> {
         Ok(match s {

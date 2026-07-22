@@ -1,0 +1,57 @@
+# qMT-SPGR (Ramani) recipe for `qmrust fit --bids-dir`.
+# The acquisition table (per-volume Angle/Offset) is NOT listed here: it is
+# read from the BIDS sidecars via the model's protocol_schema() and composed
+# into the fit. Only algorithm options + fixed timing/pulse/fitting live here.
+# Aux maps (R1map/B1map/B0map) are resolved from the dataset by suffix.
+
+model: qmt_spgr
+qmt_spgr:
+  protocol:
+    timing:
+      tmt: 0.0102
+      TR: 0.025
+  pulse:
+    shape: gausshann
+    bandwidth: 200.0
+  lineshape: SuperLorentzian
+  model: Ramani
+  read_pulse_alpha: 7.0
+  fitting:
+    st:
+    - 0.16
+    - 30.0
+    - 1.0
+    - 1.0
+    - 0.03
+    - 0.000013
+    lb:
+    - 0.0001
+    - 0.0001
+    - 0.05
+    - 0.05
+    - 0.003
+    - 3e-6
+    ub:
+    - 0.5
+    - 100.0
+    - 5.0
+    - 5.0
+    - 0.5
+    - 0.00005
+    fx:
+    - false
+    - false
+    - true
+    - true
+    - false
+    - false
+    use_r1map_to_constrain_r1f: true
+    fix_r1r_eq_r1f: false
+    fix_r1f_t2f: false
+    r1f_t2f: 0.055
+
+# BIDS mask selection: restrict the fit to this dataset mask (same as the IR
+# recipe). Remove this block to fit the whole volume.
+mask:
+  desc: brain
+

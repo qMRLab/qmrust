@@ -9,7 +9,7 @@ pub mod ode;
 pub mod pulse;
 pub mod sf;
 
-pub use adapter::build;
+pub use adapter::{build, describe, dump};
 
 use config::QmtSpgrConfig;
 use fit::fit_bounded;

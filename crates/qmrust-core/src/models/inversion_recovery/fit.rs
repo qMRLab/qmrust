@@ -206,10 +206,12 @@ fn grid_search(
     (rho_ty_vec, best_ind)
 }
 
-// clippy: arguments mirror the distinct algorithm quantities (data/time/T1 grids,
-// exponential design matrix, precomputed reductions, best index, sample count);
-// bundling them into a struct would not simplify call sites and risks touching
-// numerics, so the signature is kept as-is.
+// Compute the fit parameters at the chosen T1-grid index. Returns
+// `(T1, b, a, residual)`: the T1 estimate, the exponential amplitude `b`, the
+// offset `a`, and the normalized RMS residual. Preconditions: `ind` is a valid
+// index into `t1_vec`/`rho_ty_vec`/`rho_norm_vec`; `n` is within the sample
+// range of `data`/`t_vec` and of `the_exp`'s rows; and `rho_norm_vec[ind]` is
+// nonzero, since it divides `rho_ty_vec[ind]`.
 #[allow(clippy::too_many_arguments)]
 fn extract_params(
     data: &Array1<f64>,

@@ -17,19 +17,20 @@ exists.
   and a scalar `Aux` bundle (`aux.get("B1map")`) — never files, JSON, or a
   config format. That's what keeps it portable to wasm.
 - **The registry** (`registry::all()` in `registry.rs`) is the whole dispatch
-  point: a static list of `ModelEntry { name, bids_suffix, build }`. The CLI,
-  the simulator, and the wasm bindings all resolve a model by calling
-  `registry::by_name` — there is no `match cfg.model { ... }` anywhere else in
-  the codebase.
+  point: a static list of `ModelEntry { name, bids_suffix, build, describe,
+  dump }`. The CLI, the simulator, and the wasm bindings all resolve a model by
+  calling `registry::by_name` — there is no `match cfg.model { ... }` anywhere
+  else in the codebase.
 
 ## Checklist: add a model
 
 1. New directory `crates/qmrust-core/src/models/<name>/`: a `config.rs` (a
-   `serde` struct + a `validate()` method), the pure math, and a `model.rs`
-   (`impl Model` + a `pub fn build`).
+   `serde` struct implementing `ModelConfig`), the pure math, and a `model.rs`
+   (`impl Model` + the one-line `build`/`describe`/`dump` entry points that
+   delegate to the shared pipeline).
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name + BIDS
-   suffix + `build`).
+   suffix + `build` + `describe` + `dump`).
 4. Add tests: a forward → fit round-trip, and config parse/validate.
 
 That's it. Use `models/inversion_recovery/` as the minimal reference model
@@ -95,7 +96,7 @@ A model doesn't read files or JSON; it declares what it needs, and the shell
   ```rust
   fn required_inputs(&self) -> Vec<InputSpec> {
       vec![
-          InputSpec { name: "R1map", required: false, bids: Some(BidsMap { suffix: "T1map",  entity: None }) },
+          InputSpec { name: "R1map", required: false, bids: Some(BidsMap { suffix: "R1map",  entity: None }) },
           InputSpec { name: "B1map", required: false, bids: Some(BidsMap { suffix: "TB1map", entity: None }) },
           InputSpec { name: "B0map", required: false, bids: Some(BidsMap { suffix: "B0map",  entity: None }) },
       ]
@@ -134,7 +135,7 @@ table (never dropped), just warned about — permissive but loud.
 Grouping itself is one of three declarative shapes under `BidsConfig`:
 
 ```yaml
-loop_over: [subject, session, run, task]
+loop_over: [sub, ses, run, task]
 
 custom_entities:
   - key: cest
@@ -143,17 +144,17 @@ custom_suffixes: [QMTSPGR]
 
 IRT1:
   sequential_set:
-    by: [inversion]
+    by: [inv]
 
 QMTSPGR:
   sequential_set:
-    by: [mtransfer, flip]
+    by: [mt, flip]
 
 MTS:
   named_set:
-    PDw: { flip: "flip-1", mtransfer: "mt-off" }
-    MTw: { flip: "flip-1", mtransfer: "mt-on" }
-    T1w: { flip: "flip-2", mtransfer: "mt-off" }
+    PDw: { flip: "1", mt: "off" }
+    MTw: { flip: "1", mt: "on" }
+    T1w: { flip: "2", mt: "off" }
     required: [PDw, MTw, T1w]
 ```
 

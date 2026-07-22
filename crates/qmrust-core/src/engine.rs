@@ -1,5 +1,5 @@
 //! The single voxel-fitting engine. Drives any `Model`, dispatching on its
-//! declared `FitStrategy`. Replaces the old `fitting::fit_volume*` pair.
+//! declared `FitStrategy`.
 
 use crate::core::model::{Aux, FitStrategy, Measurement, MeasurementKind, Model, Sample, VolumeId};
 use crate::fitting::FitResults;
@@ -274,6 +274,15 @@ mod tests {
                 m.series().iter().map(|s| s.value).sum(),
                 aux.get("k").unwrap_or(-1.0),
             ]
+        }
+        fn n_volumes(&self) -> usize {
+            sum_rows().len()
+        }
+        fn bids_volume(&self, index: usize) -> crate::core::model::BidsVolume {
+            crate::core::model::BidsVolume {
+                entities: vec![("t", index.to_string())],
+                sidecar: BTreeMap::new(),
+            }
         }
     }
 

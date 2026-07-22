@@ -4,7 +4,7 @@
 //! subcommand. `main.rs` parses arguments and calls straight into here, keeping
 //! the binary thin and this logic testable as part of the library.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use ndarray::{Array3, Array4};
 use nifti::NiftiHeader;
 use owo_colors::{OwoColorize, Stream::Stderr};
@@ -25,10 +25,9 @@ use rust_bids::{Collection, GroupedData};
 /// - `Named { roles }`: volume `i` takes role `roles[i]` (requires exactly
 ///   `roles.len()` volumes).
 /// - `Series { rows }`: prefer externally-resolved per-volume rows
-///   (`proto.volumes`, e.g. `.mat` sidecar TIs); otherwise fall back to the
-///   model's own canonical identity rows. Both carry populated params — an
-///   empty/positional row is never emitted. (The future BIDS shell supplies
-///   sidecar-derived rows here.)
+///   (`proto.volumes`, the BIDS sidecar-derived identities); otherwise fall
+///   back to the model's own canonical identity rows. Both carry populated
+///   params — an empty/positional row is never emitted.
 fn build_volume_ids(
     kind: MeasurementKind,
     proto: &Protocol,
@@ -82,37 +81,9 @@ fn load_config_raw(
 /// block that a short config expands to.
 pub fn run_dump_config(config_path: PathBuf) -> Result<()> {
     let (cfg, raw) = load_config_raw(&config_path)?;
-    match cfg.model.as_str() {
-        "qmt_spgr" => {
-            let mut q: qmrust_core::models::qmt_spgr::config::QmtSpgrConfig =
-                match raw.get("qmt_spgr") {
-                    Some(sub) => serde_yaml::from_value(sub.clone())?,
-                    None => Default::default(),
-                };
-            q.validate()?;
-            println!("model: qmt_spgr");
-            println!("qmt_spgr:");
-            for line in serde_yaml::to_string(&q)?.lines() {
-                println!("  {}", line);
-            }
-        }
-        "inversion_recovery" => {
-            // Materialize defaults + validate via the typed config (matching the
-            // qmt_spgr branch and the command's "fully-resolved" contract),
-            // rather than echoing the raw file verbatim.
-            let mut ir: qmrust_core::models::inversion_recovery::config::IrConfig =
-                serde_yaml::from_value(raw.clone())?;
-            ir.validate()?;
-            println!("model: inversion_recovery");
-            print!("{}", serde_yaml::to_string(&ir)?);
-        }
-        other => {
-            // Unknown models are rejected by validate() before reaching here;
-            // fall back to echoing the resolved raw tree (already carries `model:`).
-            print!("{}", serde_yaml::to_string(&raw)?);
-            let _ = other;
-        }
-    }
+    let entry = qmrust_core::registry::by_name(&cfg.model)
+        .ok_or_else(|| anyhow::anyhow!("Unknown model: '{}'", cfg.model))?;
+    print!("{}", (entry.dump)(&raw)?);
     Ok(())
 }
 
@@ -178,16 +149,6 @@ struct InputData {
     data: Array4<f64>,
     mask: Option<Array3<bool>>,
     nifti_header: Option<NiftiHeader>,
-    ti_override: Option<Vec<f64>>,
-}
-
-/// qMRLab `.mat` inversion times are in milliseconds; `qmrust-core` is
-/// BIDS-native seconds (see CLAUDE.md "Units — BIDS-native"). This is the
-/// ms -> s conversion boundary for `.mat`-supplied TI: everything downstream
-/// (`ti_override`, the resolved `Protocol`, and the fitted model) must see
-/// seconds, never ms.
-pub(crate) fn mat_ti_to_seconds(ti: Option<Vec<f64>>) -> Option<Vec<f64>> {
-    ti.map(|ti| ti.iter().map(|t| t / 1000.0).collect())
 }
 
 fn load_input(
@@ -214,7 +175,6 @@ fn load_input(
                 data,
                 mask,
                 nifti_header: Some(header),
-                ti_override: None,
             })
         }
         (None, Some(mat_path)) => {
@@ -231,10 +191,9 @@ fn load_input(
             };
 
             Ok(InputData {
-                data: mat.ir_data,
+                data: mat.data,
                 mask,
                 nifti_header: None,
-                ti_override: mat_ti_to_seconds(mat.ti),
             })
         }
         (None, None) => bail!("Must provide either --data (NIfTI) or --mat-data (.mat)"),
@@ -268,9 +227,9 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 /// role-labeled volumes to a model's `required` axis order is not implemented,
 /// and silently mis-assigning volumes would be worse than refusing.
 ///
-/// An empty `schema` (a model that hasn't declared a `protocol_schema()`)
-/// resolves to an empty `Protocol` — the model falls back to reading its own
-/// `--config` in that case, matching the pre-schema behaviour.
+/// An empty `schema` (a model that declares no `protocol_schema()`) resolves to
+/// an empty `Protocol`; the model then reads its acquisition from its own
+/// `--config`.
 fn load_collection(
     fs: &StdFs,
     c: &Collection,
@@ -387,23 +346,12 @@ pub fn run_fit(
         (data_path, mat_path, r1map, b1map, b0map, mask_path)
     };
 
-    let (mut cfg, raw) = load_config_raw(&config_path)?;
+    let (cfg, raw) = load_config_raw(&config_path)?;
     let input = load_input(data_path.as_ref(), mat_path.as_ref(), mask_path.as_ref())?;
 
-    // .mat may supply IR TI values as a protocol override.
-    let proto = qmrust_core::protocol::resolve(qmrust_core::protocol::ProtocolSource::Mat {
-        inversion_times: input.ti_override.clone(),
-    });
-    // Keep cfg.inversion_times in sync for the dump/eprintln summary below.
-    if let Some(ti) = input.ti_override.clone() {
-        cfg.inversion_times = ti;
-        cfg.inversion_times
-            .sort_by(|a, b| a.partial_cmp(b).unwrap());
-        eprintln!(
-            "  Using TI from .mat file ({} values)",
-            cfg.inversion_times.len()
-        );
-    }
+    // The mat/NIfTI path carries no BIDS sidecar metadata — the model reads
+    // its whole acquisition (TIs, flip angles, …) from `--config` directly.
+    let proto = Protocol::default();
 
     let entry = qmrust_core::registry::by_name(&cfg.model).ok_or_else(|| {
         anyhow::anyhow!(
@@ -494,8 +442,7 @@ fn run_model_fit(
 
 /// Run the engine over one (data, protocol) volume and write the result maps
 /// as NIfTI into `output_dir` — the flat layout `run_fit` (NIfTI/.mat input)
-/// uses. Behaviour-preserving: unchanged since before the BIDS-derivatives
-/// output was added (the OSF integration script asserts `out_ir/T1.nii.gz`).
+/// uses (`<output_dir>/<name>.nii.gz`, e.g. `out_ir/T1.nii.gz`).
 #[allow(clippy::too_many_arguments)]
 fn fit_and_write(
     model: &dyn Model,
@@ -658,6 +605,7 @@ pub fn run_fit_bids(
     config_path: PathBuf,
     output_dir: PathBuf,
     threads: Option<usize>,
+    grouping: Option<PathBuf>,
 ) -> Result<()> {
     if let Some(n) = threads {
         rayon::ThreadPoolBuilder::new()
@@ -679,13 +627,12 @@ pub fn run_fit_bids(
         )
     })?;
 
-    // Probe the model's shape (declared aux, series identity keys) against an
-    // empty protocol — these are structural and don't depend on any one
-    // collection's resolved sidecar values.
-    let probe = (entry.build)(&raw, &Protocol::default())?;
+    // Read the model's structural declarations (protocol schema, declared aux)
+    // before composing any collection's protocol from its sidecars.
+    let probe = (entry.describe)(&raw)?;
     // Declarative BIDS metadata -> protocol mapping. Empty for a model that
-    // hasn't migrated to `protocol_schema()` yet — `load_collection` then
-    // falls back to an empty `Protocol`, matching pre-schema behaviour.
+    // declares no `protocol_schema()`; `load_collection` then resolves into an
+    // empty `Protocol` and the model reads its protocol from `--config`.
     let schema = probe.protocol_schema();
     // `Source::Option` protocol params fall back to `--config`; the BIDS path
     // resolves protocol from sidecars, so no options are supplied.
@@ -694,7 +641,15 @@ pub fn run_fit_bids(
     let fs = StdFs {
         root: bids_dir.clone(),
     };
-    let bids_cfg = rust_bids::default_config();
+    let bids_cfg = match &grouping {
+        Some(path) => {
+            let yaml = std::fs::read_to_string(path)
+                .with_context(|| format!("reading grouping manifest {:?}", path))?;
+            rust_bids::parse_config(&yaml)
+                .with_context(|| format!("parsing grouping manifest {:?}", path))?
+        }
+        None => rust_bids::default_config(),
+    };
     let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
 
     // Optional `mask:` config: which mask to apply, disambiguated by entity
@@ -751,8 +706,8 @@ pub fn run_fit_bids(
         };
 
         // Only the expected, structural case is a skip: `Named` collections
-        // (e.g. MTsat-style MTS sets) aren't reorderable to a model's axis order
-        // yet (see `load_collection`). Anything else `load_collection` (or the
+        // (e.g. MTsat-style MTS sets) are not reorderable to a model's axis
+        // order (see `load_collection`). Anything else `load_collection` (or the
         // model build / run_model_fit / write_derivatives below) reports — a
         // corrupt NIfTI, a spatial-dims mismatch, a broken sidecar — is a real
         // failure and must propagate loudly (`?`), never be logged-and-skipped
@@ -1023,31 +978,6 @@ mod tests {
         a + b * (-ti / t1).exp()
     }
 
-    /// A `.mat`-shaped ms TI vector (qMRLab convention) must reach the
-    /// fitting core as seconds — the ms -> s boundary conversion invariant
-    /// (CLAUDE.md "Units — BIDS-native").
-    #[test]
-    fn mat_ti_to_seconds_converts_ms_to_seconds() {
-        let ti_ms = vec![350.0_f64, 500.0, 900.0, 1250.0];
-        let ti_s = mat_ti_to_seconds(Some(ti_ms)).unwrap();
-        assert_eq!(ti_s, vec![0.35, 0.5, 0.9, 1.25]);
-
-        // Feeding the converted TIs through the same `ProtocolSource::Mat`
-        // path `load_input`/`run_fit` use must yield the seconds values, not
-        // the original ms ones.
-        let proto = qmrust_core::protocol::resolve(qmrust_core::protocol::ProtocolSource::Mat {
-            inversion_times: Some(ti_s.clone()),
-        });
-        let got: Vec<f64> = proto
-            .volumes
-            .iter()
-            .map(|v| *v.get("InversionTime").unwrap())
-            .collect();
-        assert_eq!(got, ti_s);
-
-        assert!(mat_ti_to_seconds(None).is_none());
-    }
-
     #[test]
     fn load_collection_stacks_sequential_irt1_series_in_ti_order() {
         let tmp = TempDir::new("load-collection");
@@ -1121,16 +1051,19 @@ mod tests {
     /// disk (same layout `load_collection`'s test builds) fitted through
     /// `run_fit_bids`, writing `T1.nii.gz` whose single voxel recovers the
     /// known T1.
-    #[test]
-    fn run_fit_bids_recovers_t1_from_a_synthetic_dataset() {
+    ///
+    /// Builds a synthetic single-voxel IRT1 BIDS dataset (T1 = 0.9 s, 7
+    /// inversion times) plus its `--config` and an empty output dir, returning
+    /// `(bids_dir, config_path, out_dir, tmp)` — `tmp` must be kept alive for
+    /// the duration of the test (it removes the fixture tree on drop).
+    fn synthetic_ir_dataset() -> (PathBuf, PathBuf, PathBuf, TempDir) {
         let tmp = TempDir::new("fit-bids");
         let bids_dir = tmp.0.join("dataset");
         let anat_dir = bids_dir.join("sub-01/anat");
         std::fs::create_dir_all(&anat_dir).unwrap();
 
-        // BIDS-native seconds throughout: T1 = 0.9 s, TIs 0.35..1.25 s (the
-        // same physical protocol as the pre-migration ms fixture, ÷1000 —
-        // see CLAUDE.md "Units — BIDS-native").
+        // BIDS-native seconds throughout: T1 = 0.9 s, TIs 0.35..1.25 s
+        // (see CLAUDE.md "Units — BIDS-native").
         let t1 = 0.9_f64;
         let a = 500.0_f64;
         let b = -1000.0_f64;
@@ -1153,7 +1086,14 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.0.join("out");
-        run_fit_bids(bids_dir, config_path, out_dir.clone(), None).unwrap();
+        (bids_dir, config_path, out_dir, tmp)
+    }
+
+    #[test]
+    fn run_fit_bids_recovers_t1_from_a_synthetic_dataset() {
+        let t1 = 0.9_f64;
+        let (bids_dir, config_path, out_dir, _tmp) = synthetic_ir_dataset();
+        run_fit_bids(bids_dir, config_path, out_dir.clone(), None, None).unwrap();
 
         // BIDS-derivatives layout: output_dir is the derivatives root, so the
         // T1 map lands at qmrust/sub-01/anat/sub-01_T1map.nii.gz (mapped from
@@ -1183,6 +1123,63 @@ mod tests {
         assert!(
             dataset_description.exists(),
             "expected qmrust/dataset_description.json to exist"
+        );
+    }
+
+    /// A `--config` YAML that omits `inversion_times` entirely still fits:
+    /// the BIDS shell reads the model's structural declarations via
+    /// `entry.describe` (not a `build` against an empty `Protocol`, which
+    /// would bail on the missing inversion times), then resolves
+    /// `InversionTime` per volume from the sidecars via `protocol_schema()`.
+    #[test]
+    fn run_fit_bids_omits_inversion_times_uses_sidecars() {
+        let t1 = 0.9_f64;
+        let (bids_dir, _config_path, out_dir, tmp) = synthetic_ir_dataset();
+        let config_path = tmp.0.join("ir_no_tis.yaml");
+        std::fs::write(&config_path, "model: inversion_recovery\nmethod: complex\n").unwrap();
+
+        run_fit_bids(bids_dir, config_path, out_dir.clone(), None, None).unwrap();
+
+        let t1_path = out_dir
+            .join("qmrust")
+            .join("sub-01")
+            .join("anat")
+            .join("sub-01_T1map.nii.gz");
+        assert!(t1_path.exists(), "expected {:?} to exist", t1_path);
+        let t1_map = io::nifti::read_map_nifti(&t1_path).unwrap();
+        assert!(
+            (t1_map[[0, 0, 0]] - t1).abs() < 0.001,
+            "T1: {} (expected ~{})",
+            t1_map[[0, 0, 0]],
+            t1
+        );
+    }
+
+    /// A `--grouping` manifest overriding the built-in default is actually
+    /// threaded into collection resolution, not read and then ignored in
+    /// favor of `rust_bids::default_config()`. Proven by contrast: the same
+    /// synthetic IRT1 dataset that resolves and fits under the default
+    /// grouping (`run_fit_bids_recovers_t1_from_a_synthetic_dataset`) fails
+    /// to resolve any `IRT1` collection under a custom manifest that omits
+    /// the `IRT1` set entirely.
+    #[test]
+    fn run_fit_bids_custom_grouping_changes_resolution() {
+        let (bids_dir, config_path, out_dir, tmp) = synthetic_ir_dataset();
+        let grouping = tmp.0.join("grouping.yaml");
+        // No `IRT1` set declared, so the config's inversion_recovery model
+        // must find zero matching collections under this grouping.
+        std::fs::write(&grouping, "loop_over: [sub, ses, run, task]\n").unwrap();
+
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None, Some(grouping)) {
+            Ok(()) => panic!(
+                "a grouping manifest without an IRT1 set must fail to resolve any \
+                 collections, not silently succeed via the default grouping"
+            ),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("no set definition named IRT1"),
+            "expected a missing-IRT1-set error, got: {err}"
         );
     }
 
@@ -1306,7 +1303,7 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.0.join("out");
-        let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None, None) {
             Ok(()) => panic!("a spatial-dims mismatch must fail the run, not be skipped"),
             Err(e) => e,
         };
@@ -1316,42 +1313,30 @@ mod tests {
         );
     }
 
-    /// A qmt_spgr-targeted dataset must exit non-zero, not silently report
-    /// success having fit zero subjects. `QMTSPGR` now has a `rust-bids`
-    /// sequential set definition, so this 3-volume dataset resolves into a
-    /// real collection — but it doesn't carry the model's expected 10-row
-    /// series protocol, so fitting itself must bail (not silently skip). Now
-    /// that qmt_spgr declares a `protocol_schema()`, the mismatch is caught
-    /// earlier, by `validate_against_protocol` inside the model's `build`
-    /// (wrapped in a "protocol inconsistent" context) rather than later by
-    /// `build_volume_ids` — check the full error chain (`{:?}`), not just the
-    /// outer `Display` message, for the underlying counts.
+    /// A qmt_spgr dataset that resolves but cannot supply the model's protocol
+    /// must exit non-zero, not silently report success. Each volume composes its
+    /// acquisition (Angle/Offset) from its sidecar; here the sidecars omit
+    /// `Offset`, so `resolve_protocol` bails on the missing field and the error
+    /// propagates through `run_fit_bids` rather than being logged-and-skipped.
     #[test]
-    fn run_fit_bids_bails_when_every_collection_is_skipped() {
-        let tmp = TempDir::new("fit-bids-all-named");
+    fn run_fit_bids_bails_when_sidecars_lack_required_protocol() {
+        let tmp = TempDir::new("fit-bids-missing-field");
         let bids_dir = tmp.0.join("dataset");
         let anat_dir = bids_dir.join("sub-01/anat");
         std::fs::create_dir_all(&anat_dir).unwrap();
 
         let header = make_minimal_header(1, 1, 1);
         let data = Array3::from_elem((1, 1, 1), 1.0_f64);
-        // Give each volume a valid Angle/Offset sidecar (qmt_spgr now declares
-        // a `protocol_schema()`, so `resolve_protocol` reads these) but only 3
-        // of the model's 10 expected mtdata rows, so the mismatch is caught by
-        // `validate_against_protocol`'s count check, not by a missing-field error.
-        for (fname, angle, offset) in [
-            ("sub-01_flip-1_mt-off_QMTSPGR.nii.gz", 142.0, 443.0),
-            ("sub-01_flip-1_mt-on_QMTSPGR.nii.gz", 426.0, 443.0),
-            ("sub-01_flip-2_mt-off_QMTSPGR.nii.gz", 142.0, 1088.0),
+        // Sidecars carry Angle but omit the required Offset field.
+        for (fname, angle) in [
+            ("sub-01_flip-1_mt-off_QMTSPGR.nii.gz", 142.0),
+            ("sub-01_flip-1_mt-on_QMTSPGR.nii.gz", 426.0),
+            ("sub-01_flip-2_mt-off_QMTSPGR.nii.gz", 142.0),
         ] {
             let path = anat_dir.join(fname);
             io::nifti::write_3d_nifti(&data, &header, &path).unwrap();
             let json_path = anat_dir.join(fname.replace(".nii.gz", ".json"));
-            std::fs::write(
-                &json_path,
-                format!(r#"{{"Angle": {angle}, "Offset": {offset}}}"#),
-            )
-            .unwrap();
+            std::fs::write(&json_path, format!(r#"{{"Angle": {angle}}}"#)).unwrap();
         }
 
         let config_path = tmp.0.join("qmt.yaml");
@@ -1362,14 +1347,14 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.0.join("out");
-        let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
-            Ok(()) => panic!("a protocol-mismatched QMTSPGR dataset must bail, not exit Ok"),
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None, None) {
+            Ok(()) => panic!("a QMTSPGR dataset missing a required sidecar field must bail"),
             Err(e) => e,
         };
         let chain = format!("{err:?}");
         assert!(
-            chain.contains("expected 10 volumes") && chain.contains("supplies 3"),
-            "expected a volumes-vs-protocol-rows mismatch bail message, got: {chain}"
+            chain.contains("Offset"),
+            "expected an error naming the missing Offset field, got: {chain}"
         );
     }
 
@@ -1403,7 +1388,7 @@ mod tests {
         .unwrap();
 
         let out_dir = tmp.0.join("out");
-        let err = match run_fit_bids(bids_dir, config_path, out_dir, None) {
+        let err = match run_fit_bids(bids_dir, config_path, out_dir, None, None) {
             Ok(()) => panic!("zero matching collections must bail, not exit Ok"),
             Err(e) => e,
         };
@@ -1572,7 +1557,14 @@ mod tests {
         let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..");
-        let config = repo_root.join("prots").join("irt1_config.yaml");
+        let config = repo_root
+            .join("recipes")
+            .join("non-bids")
+            .join("irt1_config.yaml");
+        let bids_config = repo_root
+            .join("recipes")
+            .join("bids")
+            .join("irt1_config.yaml");
 
         let tmp = TempDir::new("bids-matches-mat");
         let out_mat = tmp.0.join("out_mat");
@@ -1610,7 +1602,8 @@ mod tests {
             out: bids_dir.clone(),
         })
         .expect("bidsify failed");
-        run_fit_bids(bids_dir, config, deriv_dir.clone(), None).expect("bids-path fit failed");
+        run_fit_bids(bids_dir, bids_config, deriv_dir.clone(), None, None)
+            .expect("bids-path fit failed");
         let t1_bids = io::nifti::read_map_nifti(
             &deriv_dir
                 .join("qmrust")
@@ -1651,12 +1644,11 @@ mod tests {
     /// End-to-end validation: the QMTSPGR BIDS fit path (bidsify
     /// plus run_fit_bids) must reproduce the .mat fit path (run_fit against
     /// mat_data) exactly, mirroring `bids_fit_matches_mat_fit` above for qMT.
-    /// `run_fit_bids` doesn't yet resolve BIDS aux maps (see its doc
-    /// comment), so this test disables aux on both sides: run_fit is called
-    /// with no r1map/b1map/b0map and no mat_dir (so no aux .mat convenience
-    /// loading either), and run_fit_bids never resolves BIDS aux at all. Both
-    /// sides therefore fit with default aux (B1=1, B0=0, no R1), making this
-    /// an apples-to-apples comparison on byte-identical input.
+    /// The dataset is bidsified with no aux maps, so neither side has aux to
+    /// resolve: run_fit is called with no r1map/b1map/b0map and no mat_dir (no
+    /// aux .mat convenience loading), and run_fit_bids finds no declared aux in
+    /// the tree. Both sides therefore fit with default aux (B1=1, B0=0, no R1),
+    /// making this an apples-to-apples comparison on byte-identical input.
     ///
     /// Needs a *real* qMRLab OSF qMT dataset (`MTdata.mat`) supplied via an
     /// env var — no network access here, so it's `#[ignore]`d by default.
@@ -1677,7 +1669,10 @@ mod tests {
         let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..");
-        let config = repo_root.join("prots").join("qmt_config_ramani.yaml");
+        let config = repo_root
+            .join("recipes")
+            .join("non-bids")
+            .join("qmt_config_ramani.yaml");
 
         let tmp = TempDir::new("qmt-bids-matches-mat");
         let out_mat = tmp.0.join("out_mat");
@@ -1714,7 +1709,8 @@ mod tests {
             out: bids_dir.clone(),
         })
         .expect("bidsify failed");
-        run_fit_bids(bids_dir, config, deriv_dir.clone(), None).expect("bids-path fit failed");
+        run_fit_bids(bids_dir, config, deriv_dir.clone(), None, None)
+            .expect("bids-path fit failed");
 
         let anat = deriv_dir.join("qmrust").join("sub-02").join("anat");
         let f_bids =
@@ -1745,5 +1741,36 @@ mod tests {
             "BIDS-path F/kr must exactly match .mat-path F/kr for every voxel \
              (byte-identical input, identical no-aux fit, must produce byte-identical output)"
         );
+    }
+
+    /// A BIDS-style IR config (protocol supplied by sidecars, not the config
+    /// file) must dump cleanly: `validate_protocol()` requires >=3 inversion
+    /// times, which a BIDS recipe deliberately omits.
+    #[test]
+    fn run_dump_config_allows_bids_config_without_inversion_times() {
+        let dir = TempDir::new("dump-config-bids-ir");
+        let config_path = dir.0.join("irt1_config.yaml");
+        std::fs::write(
+            &config_path,
+            "model: inversion_recovery\nmethod: magnitude\n",
+        )
+        .unwrap();
+        run_dump_config(config_path).expect("BIDS-style IR config with no inversion_times");
+    }
+
+    /// `dump-config` validates options only, never protocol completeness (a
+    /// fit-time concern — see `dump_model`'s doc comment): an IR config with
+    /// too few inversion times to ever fit still dumps cleanly, echoing the
+    /// values back rather than rejecting them.
+    #[test]
+    fn run_dump_config_ignores_protocol_completeness() {
+        let dir = TempDir::new("dump-config-too-few-tis");
+        let config_path = dir.0.join("irt1_config.yaml");
+        std::fs::write(
+            &config_path,
+            "model: inversion_recovery\nmethod: magnitude\ninversion_times: [0.35, 0.5]\n",
+        )
+        .unwrap();
+        run_dump_config(config_path).expect("dump-config does not enforce protocol completeness");
     }
 }

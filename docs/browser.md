@@ -5,7 +5,7 @@ simulation code that powers the CLI also compiles to WebAssembly and runs in a
 browser tab. `qmrust-wasm` is the crate that makes that available to
 JavaScript.
 
-## What runs in the browser today
+## What runs in the browser
 
 `qmrust-wasm` is a `cdylib` split into two layers:
 
@@ -30,11 +30,9 @@ function-by-function API reference and build recipe.
 
 ## Planned: a browser UI
 
-*(Planned — not implemented yet.)* The direction is a browser-based UI (for
-example, a Tauri app or a plain web page) that lets someone drag in a BIDS
-dataset, has `rust-bids` (see [BIDS](bids.md)) resolve it client-side via the
-`DatasetFs` seam against a JS/Tauri directory listing instead of a native
-filesystem walker, and drives `qmrust-wasm`'s `fit_volume`/`sim` to fit
-without any server round-trip. None of that UI exists in this repository yet;
-today `qmrust-wasm` is a library consumed however a downstream JS project
-chooses to wire it up.
+`qmrust-wasm` is a library, consumed however a downstream JS project wires it
+up; this repository ships no browser UI. The intended direction is one built on
+the existing seams: a browser page (for example a Tauri app) where someone drags
+in a BIDS dataset, `rust-bids` (see [BIDS](bids.md)) resolves it client-side
+through the `DatasetFs` seam against a JS/Tauri directory listing, and
+`qmrust-wasm`'s `fit_volume`/`sim` fit it without a server round-trip.

@@ -20,13 +20,16 @@ cargo install --path crates/qmrust-cli   # optional: onto your PATH
 ## Run a fit
 
 Every fit needs a **config** (protocol + fitting parameters) and some data.
-Example configs live in [`prots/`](../prots/) — they're fully explicit YAML,
-so a run is self-documenting.
+Example configs live in [`recipes/`](../recipes/), grouped by input type. The
+non-BIDS configs (`recipes/non-bids/`) are fully explicit YAML that list the
+whole acquisition protocol, so a run is self-documenting. BIDS configs
+(`recipes/bids/`) leave the protocol out; those values come from the dataset's
+JSON sidecars.
 
 ```bash
 cargo run -p qmrust-cli -- fit \
   --mat-dir <dir-with-MTdata/R1map/B1map/B0map/Mask.mat> \
-  --config prots/qmt_config_sledpikerp.yaml \
+  --config recipes/non-bids/qmt_config_sledpikerp.yaml \
   --output-dir <out>
 ```
 
@@ -35,14 +38,14 @@ Or fit inversion-recovery T1 from a single 4D NIfTI:
 ```bash
 cargo run -p qmrust-cli -- fit \
   --data ir_data.nii.gz \
-  --config prots/irt1_config.yaml \
+  --config recipes/non-bids/irt1_config.yaml \
   --output-dir <out>
 ```
 
 Print the fully-resolved config (defaults applied, validated) before running:
 
 ```bash
-cargo run -p qmrust-cli -- dump-config --config prots/qmt_config_sledpikerp.yaml
+cargo run -p qmrust-cli -- dump-config --config recipes/non-bids/qmt_config_sledpikerp.yaml
 ```
 
 ## Fit a BIDS dataset
@@ -53,23 +56,27 @@ instead of individual files:
 ```bash
 cargo run -p qmrust-cli -- fit \
   --bids-dir <path-to-bids-dataset> \
-  --config prots/irt1_config.yaml \
+  --config recipes/bids/irt1_config.yaml \
   --output-dir <out>
 ```
 
 This scans the dataset, groups files into collections per the config's model
-(e.g. an inversion-time series for IRT1), and fits each subject (and session,
-if present), writing `<out>/<subject>[/<session>]/<map>.nii.gz`. v1 scope:
-sequential collections (IRT1-style) and models with no required auxiliary
-input — a model needing B1/B0/R1 maps or a named collection like MTS isn't
-BIDS-fittable yet; use `--mat-dir`/`--data` with explicit `--r1map`/`--b1map`/
-`--b0map` for those. See [BIDS](bids.md) for how `rust-bids` resolves the
-dataset layout.
+(e.g. an inversion-time series for IRT1, or an Angle/Offset series for
+QMTSPGR), and fits each subject (and session, if present), writing
+`<out>/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`.
+Each model composes its
+acquisition protocol from the sidecars and resolves any auxiliary maps it
+declares (B1/B0/R1) from the dataset by suffix — so aux-requiring models like
+qMT fit through `--bids-dir` too. The one shape not BIDS-fittable is a
+*named* collection (fixed role slots, e.g. MTS's PDw/MTw/T1w); use
+`--mat-dir`/`--data` for those. See [BIDS](bids.md) for how `rust-bids`
+resolves the dataset layout.
 
-Notice `--config` above still points at `irt1_config.yaml`, but in a BIDS fit
-it no longer needs to carry the inversion times — the model declares which
-acquisition parameters it needs from the JSON sidecars, so `--config` is just
-algorithm options (fit bounds, etc.). See
+Notice `--config` above points at `recipes/bids/irt1_config.yaml`, not the
+non-BIDS one — a BIDS fit's config doesn't carry the inversion times: the
+model declares which acquisition parameters it needs from the JSON sidecars,
+so `--config` is just algorithm options (fit bounds, etc.) plus the `mask:`
+block that disambiguates which mask to apply. See
 [From sidecar metadata to `Protocol`](bids.md#from-sidecar-metadata-to-protocol)
 for how that mapping works.
 
@@ -90,7 +97,7 @@ narrowing — every volume round-trips as `f64`):
 cargo run -p qmrust-cli -- bidsify \
   --model inversion_recovery \
   --mat-data IRData.mat --mask Mask.mat \
-  --config prots/irt1_config.yaml \
+  --config recipes/non-bids/irt1_config.yaml \
   --subject 01 --out ds-qmrust
 ```
 
@@ -108,7 +115,7 @@ second subject in the same dataset:
 cargo run -p qmrust-cli -- bidsify \
   --model qmt_spgr \
   --mat-dir <dir-with-MTdata/R1map/B1map/B0map/Mask.mat> \
-  --config prots/qmt_config_ramani.yaml \
+  --config recipes/non-bids/qmt_config_ramani.yaml \
   --subject 02 --out ds-qmrust
 ```
 
@@ -133,7 +140,7 @@ Fitting the resulting `QMTSPGR` collection the same way as IRT1:
 ```bash
 cargo run -p qmrust-cli -- fit \
   --bids-dir ds-qmrust \
-  --config prots/qmt_config_ramani.yaml \
+  --config recipes/bids/qmt_config_ramani.yaml \
   --output-dir ds-qmrust/derivatives
 ```
 
@@ -158,7 +165,7 @@ protocol without any real data.
 
 ```bash
 cargo run -p qmrust-cli -- sim single-voxel \
-  --config prots/qmt_sim_ramani.yaml \
+  --config recipes/sim/qmt_sim_ramani.yaml \
   --output sv.json
 ```
 

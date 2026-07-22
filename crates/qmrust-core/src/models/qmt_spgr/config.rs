@@ -1,4 +1,4 @@
-//! qMT-SPGR config (moved out of the monolithic top-level config).
+//! qMT-SPGR config types (protocol, timing, pulse, lineshape, fitting bounds).
 
 use serde::{Deserialize, Serialize};
 
@@ -21,32 +21,11 @@ fn qmt_default_mtdata() -> Vec<[f64; 2]> {
 pub struct QmtTiming {
     #[serde(default = "def_tmt")]
     pub tmt: f64,
-    // ts, tp, tr are not used by the Ramani physics model but are retained
-    // as legitimate protocol/config fields for future sub-models (e.g.
-    // Yarnykh/SledPike) that need saturation/spoiler/read-pulse timings.
-    #[allow(dead_code)]
-    #[serde(default = "def_ts")]
-    pub ts: f64,
-    #[allow(dead_code)]
-    #[serde(default = "def_tp")]
-    pub tp: f64,
-    #[allow(dead_code)]
-    #[serde(default = "def_tr")]
-    pub tr: f64,
     #[serde(default = "def_trep", rename = "TR")]
     pub trep: f64,
 }
 fn def_tmt() -> f64 {
     0.0102
-}
-fn def_ts() -> f64 {
-    0.0030
-}
-fn def_tp() -> f64 {
-    0.0018
-}
-fn def_tr() -> f64 {
-    0.0100
 }
 fn def_trep() -> f64 {
     0.0250
@@ -55,9 +34,6 @@ impl Default for QmtTiming {
     fn default() -> Self {
         Self {
             tmt: def_tmt(),
-            ts: def_ts(),
-            tp: def_tp(),
-            tr: def_tr(),
             trep: def_trep(),
         }
     }
@@ -85,12 +61,6 @@ pub struct QmtPulse {
     pub shape: String,
     #[serde(default = "def_bw")]
     pub bandwidth: f64,
-    // Not used by the Ramani physics model (which computes saturation from
-    // the continuous-wave-equivalent power), but retained for future
-    // sub-models (e.g. Yarnykh/SledPike) that model discrete pulse trains.
-    #[allow(dead_code)]
-    #[serde(default = "def_npulse")]
-    pub n_pulses: usize,
 }
 fn def_shape() -> String {
     "gausshann".to_string()
@@ -98,15 +68,11 @@ fn def_shape() -> String {
 fn def_bw() -> f64 {
     200.0
 }
-fn def_npulse() -> usize {
-    600
-}
 impl Default for QmtPulse {
     fn default() -> Self {
         Self {
             shape: def_shape(),
             bandwidth: def_bw(),
-            n_pulses: def_npulse(),
         }
     }
 }
@@ -203,7 +169,8 @@ impl Default for QmtSpgrConfig {
 use anyhow::{bail, Result};
 
 impl QmtSpgrConfig {
-    pub fn validate(&mut self) -> Result<()> {
+    /// Config-intrinsic validation: options that need no acquisition protocol.
+    pub fn validate_options(&mut self) -> Result<()> {
         if self.pulse.shape != "gausshann" {
             bail!(
                 "Only 'gausshann' pulse shape is supported, got '{}'",
@@ -222,9 +189,6 @@ impl QmtSpgrConfig {
                 self.model
             );
         }
-        if self.protocol.mtdata.is_empty() {
-            bail!("qmt_spgr protocol.mtdata must have at least one row");
-        }
         for i in 0..6 {
             if self.fitting.lb[i] >= self.fitting.ub[i] {
                 bail!("fitting.lb[{}] must be < fitting.ub[{}]", i, i);
@@ -235,6 +199,15 @@ impl QmtSpgrConfig {
         }
         if self.fitting.fix_r1r_eq_r1f {
             self.fitting.fx[3] = true;
+        }
+        Ok(())
+    }
+
+    /// Protocol-completeness validation: run once the acquisition is final
+    /// (from `--config` for non-BIDS, or composed from sidecars for BIDS).
+    pub fn validate_protocol(&mut self) -> Result<()> {
+        if self.protocol.mtdata.is_empty() {
+            bail!("qmt_spgr protocol.mtdata must have at least one row");
         }
         Ok(())
     }
@@ -264,7 +237,8 @@ mod tests {
     #[test]
     fn validation_forces_r1f_fixed_when_r1map_on() {
         let mut q = QmtSpgrConfig::default();
-        q.validate().unwrap();
+        q.validate_options().unwrap();
+        q.validate_protocol().unwrap();
         assert!(q.fitting.fx[2], "R1f must be fixed");
     }
 
@@ -272,7 +246,8 @@ mod tests {
     fn accepts_sledpikerp_model() {
         let yaml = "model: SledPikeRP\n";
         let mut q: QmtSpgrConfig = serde_yaml::from_str(yaml).unwrap();
-        q.validate().unwrap();
+        q.validate_options().unwrap();
+        q.validate_protocol().unwrap();
         assert_eq!(q.model, "SledPikeRP");
     }
 }

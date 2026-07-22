@@ -2,7 +2,8 @@
 //! value types the shell uses to drive it. Nothing here touches I/O or
 //! config-file formats — this is the functional-core boundary.
 
-use anyhow::{bail, Result as AnyResult};
+use anyhow::{bail, Context, Result as AnyResult};
+use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
 
 /// How the engine iterates the volume when fitting.
@@ -21,7 +22,7 @@ pub struct BidsMap {
     pub entity: Option<&'static str>,
 }
 
-/// One auxiliary input a model consumes (B1/B0/R1 today).
+/// One auxiliary scalar input a model consumes (e.g. a B1, B0, or R1 map).
 pub struct InputSpec {
     /// Logical name the compute layer reads: `aux.get(name)`.
     pub name: &'static str,
@@ -92,6 +93,116 @@ pub enum MeasurementKind {
     Series { rows: Vec<BTreeMap<String, f64>> },
 }
 
+/// A model's configuration, wired into the one shared build pipeline.
+///
+/// The platform owns the flow — parse the config, validate its options, ingest
+/// the BIDS-resolved acquisition protocol, validate protocol completeness,
+/// construct the model, and check it against the protocol. A model supplies only
+/// these config-shaped hooks. Protocol ingestion lives in [`build_model`] alone,
+/// so every model sources its acquisition from BIDS identically and none can be
+/// built without it.
+pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default {
+    /// Model name, used for error context.
+    const NAME: &'static str;
+    /// YAML sub-key this config lives under (e.g. `Some("qmt_spgr")`), or `None`
+    /// to read the top-level document (e.g. inversion_recovery).
+    const SUBKEY: Option<&'static str>;
+
+    /// Config-intrinsic validation — checks that need no protocol.
+    fn validate_options(&mut self) -> AnyResult<()>;
+
+    /// Fold the BIDS-resolved per-volume protocol into this config's acquisition
+    /// arrays (e.g. `InversionTime`s, or `[Angle, Offset]` rows). Runs once, in
+    /// the shared pipeline, for every model. Default: a no-op, for a model whose
+    /// acquisition is not BIDS-sourced. An empty `proto` leaves the config as
+    /// written (the non-BIDS path, where the config carries the acquisition).
+    fn ingest_protocol(&mut self, _proto: &Protocol) -> AnyResult<()> {
+        Ok(())
+    }
+
+    /// Protocol-completeness validation, run after ingestion.
+    fn validate_protocol(&mut self) -> AnyResult<()> {
+        Ok(())
+    }
+
+    /// Construct the fit-ready model from the finalized config.
+    fn into_model(self) -> Box<dyn Model>;
+}
+
+fn parse_model_config<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<C> {
+    let cfg = match C::SUBKEY {
+        Some(key) => match v.get(key) {
+            Some(sub) => serde_yaml::from_value(sub.clone())?,
+            None => C::default(),
+        },
+        None => serde_yaml::from_value(v.clone())?,
+    };
+    Ok(cfg)
+}
+
+/// Construct a model from config alone for structural interrogation
+/// (`protocol_schema`, `bids_outputs`, `required_inputs`), running only
+/// config-intrinsic validation — no protocol, no completeness check. Not
+/// fit-ready. The BIDS shell uses this to read a model's contract before it has
+/// resolved any protocol.
+pub fn describe_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<Box<dyn Model>> {
+    let mut cfg = parse_model_config::<C>(v)?;
+    cfg.validate_options()
+        .with_context(|| format!("{}: invalid config", C::NAME))?;
+    Ok(cfg.into_model())
+}
+
+/// The one build pipeline every model runs: parse → validate options → ingest
+/// the resolved BIDS protocol → validate protocol completeness → construct →
+/// check against the protocol. Returns a fit-ready model.
+pub fn build_model<C: ModelConfig>(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> AnyResult<Box<dyn Model>> {
+    let mut cfg = parse_model_config::<C>(v)?;
+    cfg.validate_options()
+        .with_context(|| format!("{}: invalid config", C::NAME))?;
+    cfg.ingest_protocol(proto)
+        .with_context(|| format!("{}: ingesting BIDS protocol", C::NAME))?;
+    cfg.validate_protocol()
+        .with_context(|| format!("{}: invalid protocol", C::NAME))?;
+    let model = cfg.into_model();
+    validate_against_protocol(&model.measurement(), proto).with_context(|| {
+        format!(
+            "{}: protocol inconsistent with model's measurement",
+            C::NAME
+        )
+    })?;
+    Ok(model)
+}
+
+/// Print the fully-resolved effective config (defaults materialized, options
+/// validated) as YAML. Display validates options only — protocol completeness
+/// is a fit concern, not a display one.
+pub fn dump_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<String> {
+    let mut cfg = parse_model_config::<C>(v)?;
+    cfg.validate_options()
+        .with_context(|| format!("{}: invalid config", C::NAME))?;
+    let body = serde_yaml::to_string(&cfg)?;
+    let mut out = format!("model: {}\n", C::NAME);
+    match C::SUBKEY {
+        Some(key) => {
+            out.push_str(&format!("{key}:\n"));
+            for line in body.lines() {
+                if line.is_empty() {
+                    out.push('\n');
+                } else {
+                    out.push_str("  ");
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        None => out.push_str(&body),
+    }
+    Ok(out)
+}
+
 /// Fail loudly, at build time, if a supplied `Protocol` is inconsistent with a
 /// model's declared measurement shape. An empty `proto` means "model, use
 /// your own config" and is always consistent (nothing to check). A non-empty
@@ -100,9 +211,9 @@ pub enum MeasurementKind {
 /// count or key mismatch here would otherwise surface only per-voxel, as a
 /// fit-time panic for every voxel whose identity has no matching sample.
 ///
-/// `Named` models are not designed to accept an external protocol today (no
-/// shipping `Named` model reads one): a non-empty `proto` supplied to one is
-/// therefore rejected rather than silently ignored.
+/// A `Named` measurement carries its own fixed roles, not an external protocol,
+/// so a non-empty `proto` supplied against one is rejected rather than silently
+/// ignored.
 pub fn validate_against_protocol(kind: &MeasurementKind, proto: &Protocol) -> AnyResult<()> {
     if proto.volumes.is_empty() {
         return Ok(());
@@ -181,6 +292,17 @@ fn series_keys(rows: &[BTreeMap<String, f64>]) -> Vec<&str> {
     keys.sort_unstable();
     keys.dedup();
     keys
+}
+
+/// One acquired volume's BIDS write descriptor: filename entities + sidecar
+/// metadata, computed by the model from its own protocol. The shell writes it
+/// verbatim, knowing nothing about the entity meanings.
+pub struct BidsVolume {
+    /// Filename entities as (key, value), in filename order:
+    /// e.g. [("inv", "1")] or [("flip", "1"), ("mt", "off")].
+    pub entities: Vec<(&'static str, String)>,
+    /// Per-volume sidecar metadata as BIDS JSON values.
+    pub sidecar: BTreeMap<String, serde_json::Value>,
 }
 
 /// One acquired volume's value with the metadata identifying it.
@@ -276,6 +398,10 @@ pub trait Model: Send + Sync {
     fn forward(&self, params: &[f64], aux: &Aux) -> Measurement;
     /// Fit an identity-keyed measurement, returning values in `output_names` order.
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;
+    /// Number of acquired volumes this model's protocol describes.
+    fn n_volumes(&self) -> usize;
+    /// BIDS write descriptor for the i-th volume (0-based).
+    fn bids_volume(&self, index: usize) -> BidsVolume;
     /// BIDS identity, if this model maps to a BIDS grouping suffix.
     fn bids(&self) -> Option<BidsSpec> {
         None
@@ -442,6 +568,15 @@ mod tests {
         }
         fn fit(&self, _m: &Measurement, _aux: &Aux) -> Vec<f64> {
             vec![]
+        }
+        fn n_volumes(&self) -> usize {
+            0
+        }
+        fn bids_volume(&self, _index: usize) -> BidsVolume {
+            BidsVolume {
+                entities: vec![],
+                sidecar: BTreeMap::new(),
+            }
         }
     }
 

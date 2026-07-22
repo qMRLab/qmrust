@@ -80,9 +80,12 @@ pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result
                     for e in &seq.by {
                         let av = a.entities.get(e);
                         let bv = b.entities.get(e);
-                        match av.cmp(&bv) {
-                            std::cmp::Ordering::Equal => continue,
-                            ord => return ord,
+                        let ord = match (av, bv) {
+                            (Some(x), Some(y)) => crate::entities::entity_value_cmp(x, y),
+                            (x, y) => x.cmp(&y), // None sorts before Some
+                        };
+                        if ord != std::cmp::Ordering::Equal {
+                            return ord;
                         }
                     }
                     std::cmp::Ordering::Equal
@@ -137,9 +140,13 @@ fn resolve_named(
         let matched: Vec<&&BidsRow> = members
             .iter()
             .filter(|r| {
-                constraints
-                    .iter()
-                    .all(|(k, v)| crate::table::row_column(r, k) == Some(v.as_str()))
+                constraints.iter().all(|(k, v)| {
+                    crate::table::row_column(r, k)
+                        .map(|rv| {
+                            crate::entities::entity_value_cmp(rv, v) == std::cmp::Ordering::Equal
+                        })
+                        .unwrap_or(false)
+                })
             })
             .collect();
         match matched.as_slice() {
@@ -390,5 +397,20 @@ TEST:
             .warnings
             .iter()
             .any(|w| w.message.contains('B') && w.message.contains("no matching file")));
+    }
+
+    #[test]
+    fn named_match_ignores_zero_padding_in_index_entities() {
+        let cfg = crate::config::parse_config(
+            "loop_over: [sub]\nMTS:\n  named_set:\n    PDw:\n      flip: \"1\"\n      mt: \"off\"\n    required: [PDw]\n",
+        )
+        .unwrap();
+        let fs = MemFs::new().touch("sub-01/anat/sub-01_flip-01_mt-off_MTS.nii.gz");
+        let cols = collections_for(&fs, &cfg, "MTS").unwrap();
+        assert_eq!(
+            cols.len(),
+            1,
+            "flip-01 file should satisfy flip: \"1\" constraint"
+        );
     }
 }

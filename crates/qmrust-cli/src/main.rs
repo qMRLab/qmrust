@@ -67,6 +67,11 @@ enum Commands {
         /// B0 map (NIfTI or .mat)
         #[arg(long)]
         b0map: Option<PathBuf>,
+
+        /// Custom BIDS grouping manifest (YAML); overrides the built-in default.
+        /// Only valid with --bids-dir.
+        #[arg(long)]
+        grouping: Option<PathBuf>,
     },
 
     /// Build the qmt_spgr Sf saturation table for a config's protocol and write
@@ -187,10 +192,14 @@ fn main() -> Result<()> {
             r1map,
             b1map,
             b0map,
+            grouping,
         } => {
             if let Some(bids_dir) = bids_dir {
-                commands::run_fit_bids(bids_dir, config, output_dir, threads)
+                commands::run_fit_bids(bids_dir, config, output_dir, threads, grouping)
             } else {
+                if grouping.is_some() {
+                    anyhow::bail!("--grouping is only valid with --bids-dir");
+                }
                 commands::run_fit(
                     data, mat_data, config, mask, output_dir, threads, mat_dir, r1map, b1map, b0map,
                 )

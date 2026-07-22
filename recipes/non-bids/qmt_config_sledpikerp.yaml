@@ -1,5 +1,5 @@
 # Fully-resolved config (all defaults materialized, validation applied).
-# Regenerate with: qmrust dump-config --config qmt_config.yaml
+# Regenerate with: qmrust dump-config --config qmt_config_sledpikerp.yaml
 
 model: qmt_spgr
 qmt_spgr:
@@ -27,16 +27,12 @@ qmt_spgr:
       - 17235.0
     timing:
       tmt: 0.0102
-      ts: 0.003
-      tp: 0.0018
-      tr: 0.01
       TR: 0.025
   pulse:
     shape: gausshann
     bandwidth: 200.0
-    n_pulses: 600
   lineshape: SuperLorentzian
-  model: Ramani
+  model: SledPikeRP
   read_pulse_alpha: 7.0
   fitting:
     st:

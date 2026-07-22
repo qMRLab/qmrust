@@ -189,10 +189,9 @@ pub struct Config {
 }
 
 impl Config {
-    /// Validate configuration values. Per-model validation now lives in each
-    /// model's own config/builder (see `models::*::config` and
-    /// `models::*::adapter::build`); this only checks the model name is
-    /// registered.
+    /// Check the top-level config: only that `model` names a registered model.
+    /// Per-model validation lives in each model's own config/builder
+    /// (`models::*::config`, `models::*::build`).
     pub fn validate(&mut self) -> Result<()> {
         if crate::registry::by_name(&self.model).is_none() {
             bail!("Unknown model: '{}'", self.model);

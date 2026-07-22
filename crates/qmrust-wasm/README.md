@@ -22,13 +22,15 @@ All functions are free functions exported from the wasm module (i.e.
 Returns a JS array of registered model names (e.g. `["inversion_recovery",
 "qmt_spgr", ...]`).
 
-### `fit_voxel(cfg_yaml: &str, signal: &[f64], aux_json: &str) -> Vec<f64>`
+### `fit_voxel(cfg_yaml: &str, measurement_json: &str, aux_json: &str) -> Vec<f64>`
 
-Fits a single voxel's signal against the model named in `cfg_yaml` (a YAML
-config string, same format as the native CLI). `signal` is the measured
-signal (Float64Array on the JS side). `aux_json` is a JSON object of
-scalar auxiliary inputs, e.g. `{"B1map": 1.2}`; pass `""` if the model
-needs none. Returns fitted parameter values in the model's
+Fits a single voxel against the model named in `cfg_yaml` (a YAML config
+string, same format as the native CLI). `measurement_json` is the
+identity-keyed measurement: a `{ role: value }` object for a `Named` model,
+or a `[{ params, value }, ...]` array for a `Series` model (e.g.
+`[{"params": {"InversionTime": 0.35}, "value": 1200.0}, ...]`). `aux_json`
+is a JSON object of scalar auxiliary inputs, e.g. `{"B1map": 1.2}`; pass `""`
+if the model needs none. Returns fitted parameter values in the model's
 `output_names` order.
 
 > **Acquisition parameters must be in `cfg_yaml`.** In the browser there
@@ -38,12 +40,13 @@ needs none. Returns fitted parameter values in the model's
 > given explicitly in the YAML config string passed to every `api`/`wasm`
 > function.
 
-### `forward(cfg_yaml: &str, params: &[f64], aux_json: &str) -> Vec<f64>`
+### `forward(cfg_yaml: &str, params: &[f64], aux_json: &str) -> String`
 
-The inverse of `fit_voxel`: computes the noise-free forward signal for
-`params` (in the model's `param_names` order).
+The inverse of `fit_voxel`: computes the noise-free forward measurement for
+`params` (in the model's `param_names` order). Returns the measurement
+JSON-encoded in the same identity-keyed shape `fit_voxel` accepts.
 
-### `fit_volume(cfg_yaml: &str, data: &[f64], dims: &[usize], mask: Option<Vec<u8>>, aux_json: &str) -> JsValue`
+### `fit_volume(cfg_yaml: &str, data: &[f64], dims: &[usize], volume_ids_json: &str, mask: Option<Vec<u8>>, aux_json: &str) -> JsValue`
 
 Fits every voxel in a volume.
 
@@ -51,6 +54,9 @@ Fits every voxel in a volume.
   nt]` (i.e. the `nt`/measurement axis varies fastest).
 - `dims` — exactly `[nx, ny, nz, nt]` (length 4; any other length is a
   hard error).
+- `volume_ids_json` — each volume's identity, length `nt`: a JSON array of
+  role names for a `Named` model, or of param-row objects for a `Series`
+  model (e.g. `[{"InversionTime": 0.35}, ...]`).
 - `mask` — optional, flattened `[nx, ny, nz]`, one `u8` per voxel;
   nonzero means "fit this voxel". Omit (`undefined`/`null` on the JS
   side) to fit every voxel.
@@ -156,18 +162,25 @@ await init();
 
 console.log(list_models()); // ["inversion_recovery", "qmt_spgr", ...]
 
+// Times are seconds (BIDS/SI), as in the native CLI.
 const cfg = `
 model: inversion_recovery
 method: complex
-inversion_times: [350, 500, 650, 800, 950, 1100, 1250, 1400, 1700]
+inversion_times: [0.350, 0.500, 0.650, 0.800, 0.950, 1.100, 1.250, 1.400, 1.700]
 `;
 
-const signal = new Float64Array([/* 9 measured points */]);
-const params = fit_voxel(cfg, signal, ""); // [T1, ...]
+const tis = [0.350, 0.500, 0.650, 0.800, 0.950, 1.100, 1.250, 1.400, 1.700];
+const signal = [/* 9 measured points */];
+// Series measurement: one { params, value } row per volume, keyed by identity.
+const measurement = JSON.stringify(
+  tis.map((ti, i) => ({ params: { InversionTime: ti }, value: signal[i] }))
+);
+const params = fit_voxel(cfg, measurement, ""); // [T1, ...]
 
 // Whole-volume fit (threaded build only needs initThreadPool() first):
 const dims = new Uint32Array([nx, ny, nz, nt]);
-const maps = fit_volume(cfg, volumeData, dims, maskBytes, "");
+const volumeIds = JSON.stringify(tis.map((ti) => ({ InversionTime: ti })));
+const maps = fit_volume(cfg, volumeData, dims, volumeIds, maskBytes, "");
 console.log(maps.T1); // Float64Array-like output, C-order [nx,ny,nz]
 ```
 

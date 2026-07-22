@@ -1,163 +1,93 @@
-# CLAUDE.md
+This document contains repository-wide constraints and engineering principles. This is NOT an architecture document.
 
-Guidance for working in this repo. Read [`docs/agents/ARCHITECTURE.md`](docs/agents/ARCHITECTURE.md)
-for the full design (the system map); this file is the operational quick-reference. For
-the BIDS/metadata→fit subsystem specifically — layout resolution, sidecar metadata, and
-the model input contract — read [`docs/agents/DATA-PIPELINE.md`](docs/agents/DATA-PIPELINE.md),
-the deep-dive ARCHITECTURE.md links out to.
+- For system design and extension points see `docs/agents/ARCHITECTURE.md`
+- For BIDS layout, metadata resolution, model input pipeline see `docs/agents/DATA-PIPELINE.md`
 
-## What this is
+---
 
-Native-Rust quantitative-MRI fitting, built as a **functional core / imperative shell**
-Cargo workspace so the numerical models are pure and run identically in a terminal and in
-a browser (WebAssembly).
+# About this codebase
 
-## Workspace map
+qmrust is a native Rust quantitative MRI fitting workspace built on a **functional core /
+imperative shell** architecture. The numerical core is deterministic, side-effect free, and
+compiles unchanged for native and WebAssembly.
 
-- `crates/qmrust-core` — **pure functional core**: the `Model` trait, per-model math,
-  the registry, the fitting engine, simulation, config *parsing*. Compiles to
-  `wasm32-unknown-unknown`.
-- `crates/qmrust-cli` — the `qmrust` binary: CLI, file I/O (`.mat`/NIfTI), progress.
-- `crates/qmrust-wasm` — browser `cdylib`: `wasm-bindgen` bindings over the core.
-- `crates/rust-bids` — **wasm-clean, standalone qMRI-BIDS layout resolver**: flat-table
-  parse → declarative grouping (`BidsConfig`) → `Collection`, with all I/O behind the
-  `DatasetFs` trait; bridges a collection's sidecars to `qmrust_core::Protocol`. A consumer
-  of core, not part of it (and generalizable beyond this workspace). The flat-table parse
-  reads against a `Vocabulary` of canonical BIDS entities/suffixes/datatypes; non-standard
-  entities/suffixes are declared via `BidsConfig.custom_entities`/`custom_suffixes`, and
-  every registered model's BIDS suffix is auto-known with no config (`Vocabulary::from_config`).
+---
 
-## The one rule that must never break
+# The one rule that must never break
 
-**`qmrust-core` stays pure.** It must NOT:
-- depend on `qmrust-cli`, `qmrust-wasm`, or `rust-bids` (dependency arrow points inward only);
-- use `clap`, `nifti`, `indicatif`, `owo-colors`;
-- use `std::fs` or `matfile` on the wasm target (they're gated `#[cfg(not(target_arch = "wasm32"))]`).
+**`qmrust-core` stays pure.** No filesystem, CLI, browser, JS-binding, or BIDS-traversal
+dependencies. If functionality needs I/O or the outside world, it lives outside the core.
 
-If you need file/CLI/JS behaviour, it belongs in `qmrust-cli` or `qmrust-wasm`, not core.
-Verify with: `cargo build -p qmrust-core --target wasm32-unknown-unknown`.
-
-## Clean codebase — a hard principle
-
-**Clean context, clean code. No garbage in the repo.** Every commit leaves the tree free of:
-- dead code, commented-out blocks, speculative stubs, or unused scaffolding;
-- internal development-phase codenames or process references (e.g. "Plan A/Plan B", task
-  numbers, "the next increment") — write what the code *is*, not the story of how it got here;
-- stale or confusing mentions. Rename or supersede something and you update **every**
-  reference and delete what it replaced — no orphaned names, no duplicated sources of truth.
-
-Keep docs in lockstep with the code: `docs/agents/ARCHITECTURE.md` must always match the
-current design, and the human docs under `docs/` follow **progressive disclosure** — lead with
-the essential what/why, then details. When in doubt, delete rather than keep "just in case".
-
-**Comments explain the code, not its author.** A comment or docstring states what the code
-does and the invariant or contract behind it, from the first principles of the domain — never
-the decision-making, alternatives weighed, or the narrative of how the code came to be. No
-"I chose X", no "this used to be Y", no "note: tricky because earlier…", no reviewer-directed
-asides, no task/plan references. Write for whoever reads this line a year from now: they need
-the *what* and the *why it must be so*, not the story of how it got written. If a comment would
-only make sense to someone who watched it being written, delete it.
-
-## Units — BIDS-native (SI), not qMRLab's
-
-qmrust works natively in **BIDS/SI units end to end — no internal unit conversion** (no
-ms↔s round-tripping). Time (`RepetitionTime`, `EchoTime`, `InversionTime`, and any fitted
-time constant such as T1/T2) is in **seconds**; frequency in **Hz**; magnetic field in
-**tesla**; angle in **radians** in general, *except* BIDS-MRI metadata fields the spec
-defines otherwise — notably **`FlipAngle` in degrees**. Reference:
-https://bids-specification.readthedocs.io/en/stable/appendices/units.html (SI) plus the
-BIDS-MRI common-metadata field definitions.
-
-This is a deliberate divergence from qMRLab (milliseconds/degrees). The consequences are
-intentional, not bugs:
-- Config protocol values, JSON sidecars, and output maps are all in BIDS units (e.g.
-  `InversionTime: 0.35`, a T1 map whose values are seconds).
-- Fitted maps therefore differ from qMRLab's `FitResults` by the unit factor (qMRLab T1 in
-  ms = qmrust T1 in s × 1000). Validation against qMRLab references must **reconcile the
-  unit**, never expect raw equality.
-- Raw signal/voxel **data** is unitless and stays byte-identical to source; only quantitative
-  parameters carry units.
-
-Convert non-BIDS sources (e.g. a qMRLab `.mat` in ms) to BIDS units **at the shell boundary**
-(during `bidsify` / `.mat` load), so `qmrust-core` only ever sees BIDS units.
-
-## Adding a model (the common task)
-
-1. New dir `crates/qmrust-core/src/models/<name>/`: `config.rs` (a `serde` struct +
-   `validate()`), the pure math, and `model.rs` (`impl Model` + `pub fn build`).
-2. Register it in `models/mod.rs`.
-3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name + BIDS suffix + `build`).
-4. Add tests (forward→fit round-trip; config parse/validate).
-
-That's it — do **not** add `match cfg.model` branches in the CLI, engine, sim, or config.
-The `Model` trait is the whole contributor surface; the registry is the whole dispatch
-point. Auxiliary inputs (B1/B0/R1, …) are *declared* via `required_inputs()`; the shell
-resolves each from the dataset's flat table by the collection's full entity identity +
-the declared BIDS suffix (found in the raw tree or any `derivatives/<pipeline>/`), and the
-model reads scalars via `aux.get("B1map")`. A **mask** is never auto-guessed (a dataset can
-carry many): it is declared in `--config` under a `mask:` block — `suffix` (default `mask`)
-plus entity constraints that disambiguate which mask (`mask:\n  desc: brain`) — and an
-under-specified spec that matches several masks is a hard error, not a silent pick. A model declares its
-measurement shape via `measurement() -> MeasurementKind` (`Named { roles }` for a fixed
-set of role-labeled volumes, or `Series { rows }` for a variable-length series with its
-own canonical per-volume identity rows), and `forward`/`fit` read the identity-keyed
-`Measurement` they're handed by identity — `m.role("MTw")` / `s.params["InversionTime"]`
-— never by position. The engine assembles that keyed `Measurement` from the shell's
-per-volume `VolumeId`s; `build` validates the supplied `Protocol` against the model's own
-declared measurement (`validate_against_protocol`), failing loudly at build rather than
-per-voxel. If the model's protocol (e.g. `InversionTime`) can be read from a BIDS JSON
-sidecar, declare it via `protocol_schema() -> Vec<ProtoParam>` — `Source::Field(key)` for
-a value read straight off the sidecar, `Source::Derived(fn(&dyn Meta) -> Result<f64>)`
-for one computed from several sidecar fields (a pure, image-scoped fn, not a closure), or
-`Source::Option(key)` for a non-BIDS fallback read from `--config`. The shell
-(`rust-bids::resolve_protocol`) evaluates the schema against each image's
-inheritance-merged `Sidecar` into the `Protocol`; `protocol_schema()` defaults to `vec![]`
-so this is opt-in — a model that skips it just reads its own `--config` as before, and
-`--config` for a migrated model narrows to algorithm options plus the `Source::Option`
-fallback. Use IR (`models/inversion_recovery/`) as the minimal reference — its
-`protocol_schema()` maps `InversionTime`; qMT (`models/qmt_spgr/`) shows a nested-config
-model with aux inputs, whose `protocol_schema()` maps per-volume `Angle`/`Offset` under
-its custom, `.bidsignore`'d `QMTSPGR` BIDS suffix. A model also
-declares `bids_outputs() -> Vec<(&'static str, &'static str, &'static str)>` — which
-`output_names()` are real quantitative maps, their BIDS-derivatives suffix, and their
-physical unit as a BIDS/SI string (e.g. IR's `T1→T1map→"s"`; `""` for a unitless
-quantity) — so `qmrust fit --bids-dir` writes them into the `derivatives/qmrust/...`
-tree, each with a full provenance sidecar; see `docs/agents/DATA-PIPELINE.md`.
-
-## Invariants to respect
-
-- **Object safety.** `Model` is used as `Box<dyn Model>` — no generics/associated types on
-  the trait.
-- **Behaviour-preserving refactors.** Fitting output must not drift; validate against the
-  fixtures (the CI OSF job runs the real pipelines). When in doubt, diff output maps.
-- **Threaded wasm is behind the `threads` feature** (nightly + `wasm-bindgen-rayon`). Do
-  NOT put its atomics/`build-std` flags in a committed `.cargo/config.toml` — that breaks
-  the stable native and default-wasm builds. Keep them in the wasm CI job only.
-- **Each model owns its config**; the top-level `Config` holds only shared fields
-  (`model`, `sim`).
-
-## Commands
+Verify:
 
 ```bash
-cargo build --workspace
-cargo test  --workspace
-cargo fmt --all --check                                 # CI format gate
-cargo clippy --workspace --all-targets -- -D warnings   # CI lint gate (must be clean)
-cargo run -p qmrust-cli -- fit  --mat-dir <dir> --config prots/<cfg>.yaml --output-dir <out>
-cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config prots/<cfg>.yaml --output-dir <out>  # v1: no-aux, sequential (e.g. IRT1); writes derivatives/qmrust/...
-cargo run -p qmrust-cli -- bidsify --model inversion_recovery --mat-data <IRData.mat> --mask <Mask.mat> --config prots/irt1_config.yaml --subject 01 --out <ds-root>
-cargo run -p qmrust-cli -- sim  single-voxel --config prots/<cfg>.yaml --output <out>.json
-cargo build -p qmrust-core --target wasm32-unknown-unknown   # core must stay wasm-clean
-cargo build -p rust-bids   --target wasm32-unknown-unknown   # rust-bids must stay wasm-clean too
-cargo test  -p qmrust-wasm --target wasm32-unknown-unknown --no-run  # wasm bindings + browser tests must compile (CI runs them in a headless browser)
+cargo build -p qmrust-core --target wasm32-unknown-unknown
 ```
 
-Before claiming work is done: `cargo test --workspace`, `cargo fmt --all --check`, and
-`cargo clippy --workspace --all-targets -- -D warnings` must all pass.
+---
 
-## Notes
+# Repository invariants
 
-- Large test data is **not** committed; CI fetches qMRLab's datasets from OSF
-  (`ci/integration_osf.sh`). Locally you supply your own `--mat-dir`/`--mat-data`.
-- Config files live in `prots/`; the browser build's API + build recipe are documented in
-  `crates/qmrust-wasm/README.md`.
+Part of the architecture. Do not violate.
+
+- **Core purity** — enforced by the wasm build above.
+- **`Model` stays object-safe** — enforced at compile time.
+- **Behaviour-preserving refactors do not change fitting results.** Verify by fitting a
+  fixed dataset before and after the change and diffing the output maps voxelwise — they
+  must be identical (values and NaN footprint). The real pipelines are exercised by
+  `ci/integration_osf.sh` (CI, against qMRLab's OSF datasets) and the `#[ignore]`d
+  round-trip tests `bids_fit_matches_mat_fit` / `qmtspgr_bids_fit_matches_mat_fit`, which
+  assert the BIDS-path maps equal the `.mat`-path maps exactly:
+  ```bash
+  QMRUST_IR_MAT=<path>/IRData.mat QMRUST_IR_MASK=<path>/Mask.mat \
+    cargo test -p qmrust-cli --release bids_fit_matches_mat_fit -- --ignored --nocapture
+  ```
+  Any diff in fitting output is a regression regardless of intent.
+- **Each model owns its own configuration.**
+- **Threaded WebAssembly is an optional feature** — must not affect default native or default
+  wasm builds.
+
+---
+
+# Working principles
+
+**Extend, don't special-case.** Use existing abstractions and extension points (see
+ARCHITECTURE.md) rather than model-specific branches, ad hoc dispatch, or duplicated logic. If
+an abstraction can't support a feature, improve the abstraction.
+
+**Delete, don't accumulate.** Never leave dead code, commented-out code, speculative
+scaffolding, obsolete compat layers, duplicated sources of truth, or stale terminology. When a
+concept is renamed or superseded, update every reference and remove the old one.
+
+**Comments and docs are timeless.** Explain the current contract: invariants, assumptions,
+safety requirements, domain knowledge, non-obvious reasoning. Never explain history, recent
+changes, rejected alternatives, review context, or task references. If a comment only makes
+sense to someone who watched it being written, delete it. Same rule for `///` and `//!`.
+
+**Docs describe the current system.** Keep architecture docs synchronized with code.
+Progressive disclosure: essentials first, details second.
+
+---
+
+# Units
+
+BIDS-native units throughout. The core performs no unit conversion; convert non-BIDS formats
+only at the shell boundary before data enters the core. Validation against external
+implementations must account for unit differences, not expect raw numerical equality.
+
+---
+
+# Before considering work complete
+
+```bash
+cargo test --workspace
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+If changes touch purity boundaries, also:
+
+```bash
+cargo build -p qmrust-core --target wasm32-unknown-unknown
+cargo build -p rust-bids --target wasm32-unknown-unknown
+```

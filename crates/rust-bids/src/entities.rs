@@ -4,6 +4,22 @@
 
 use std::collections::BTreeMap;
 
+/// Compare two BIDS entity *values* as a total order. Index entities may be
+/// zero-padded and the padding is not semantic, so two integers compare
+/// numerically and two non-integers compare lexically (string labels like
+/// `off`, `brain`); any integer sorts before any non-integer. The explicit
+/// class ordering keeps the comparator transitive, which the sequential-set
+/// sort relies on.
+pub(crate) fn entity_value_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a.parse::<i64>(), b.parse::<i64>()) {
+        (Ok(x), Ok(y)) => x.cmp(&y),
+        (Ok(_), Err(_)) => Ordering::Less,
+        (Err(_), Ok(_)) => Ordering::Greater,
+        (Err(_), Err(_)) => a.cmp(b),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedName {
     pub entities: BTreeMap<String, String>,
@@ -123,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_newly_covered_entity_keys() {
+    fn normalizes_aliased_entity_keys() {
         assert_eq!(full_key("ce"), "ceagent");
         assert_eq!(full_key("rec"), "reconstruction");
         assert_eq!(full_key("desc"), "description");
@@ -139,5 +155,22 @@ mod tests {
         let j = parse_filename("sub-01_inv-01_IRT1.json").unwrap();
         assert_eq!(j.suffix, "IRT1");
         assert_eq!(j.extension, ".json");
+    }
+
+    #[test]
+    fn entity_value_cmp_numeric_when_both_integers() {
+        use std::cmp::Ordering::*;
+        assert_eq!(entity_value_cmp("2", "10"), Less); // numeric, not lexical "2">"10"
+        assert_eq!(entity_value_cmp("1", "01"), Equal); // zero-padding is not semantic
+        assert_eq!(entity_value_cmp("10", "2"), Greater);
+    }
+
+    #[test]
+    fn entity_value_cmp_lexical_for_non_integers() {
+        use std::cmp::Ordering::*;
+        assert_eq!(entity_value_cmp("off", "off"), Equal);
+        assert_eq!(entity_value_cmp("off", "on"), Less);
+        assert_eq!(entity_value_cmp("1a", "1"), Greater); // non-numeric → string compare
+        assert_eq!(entity_value_cmp("2", "1a"), Less); // any integer sorts before any non-integer
     }
 }

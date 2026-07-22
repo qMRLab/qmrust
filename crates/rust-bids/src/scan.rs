@@ -5,10 +5,9 @@ use std::collections::BTreeMap;
 /// Registry-driven — a new model appears here with no change to this function.
 ///
 /// This is the multi-model entry point: unlike `run_fit_bids` (which resolves
-/// a single suffix for one already-chosen model), `scan_dataset` is the seam
-/// for "what can I fit in this dataset" consumers — e.g. the forthcoming
-/// Tauri backend's dataset browser — that need every fittable collection
-/// across all registered models before a model is picked.
+/// a single suffix for one already-chosen model), `scan_dataset` answers "what
+/// can I fit in this dataset" across all registered models before a model is
+/// picked.
 pub fn scan_dataset<F: DatasetFs>(fs: &F, cfg: &BidsConfig) -> BTreeMap<String, Vec<Collection>> {
     let mut out = BTreeMap::new();
     for entry in qmrust_core::registry::all() {

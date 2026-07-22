@@ -121,7 +121,7 @@ pub fn fit_bounded<F: Fn(&[f64; 6]) -> Vec<f64>>(
     (x, resnorm)
 }
 
-/// Ramani-specific wrapper (unchanged public behavior).
+/// Fit the Ramani sub-model: bounded LM over the Ramani CW-power signal model.
 pub fn fit_ramani(
     mtdata: &[f64],
     offsets: &[f64],
