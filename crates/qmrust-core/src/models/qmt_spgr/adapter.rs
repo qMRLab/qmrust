@@ -19,6 +19,10 @@ pub struct QmtModel {
     /// every volume's sidecar.
     trep: f64,
     tmt: f64,
+    /// Whether the fit constrains R1f from an observed R1 map. When set, the
+    /// fit uses R1 if present (never a hard requirement), but a simulation
+    /// must supply one — otherwise the constraint is silently inactive.
+    use_r1map: bool,
 }
 
 impl QmtModel {
@@ -28,6 +32,7 @@ impl QmtModel {
             protocol: cfg.protocol.mtdata.clone(),
             trep: cfg.protocol.timing.trep,
             tmt: cfg.protocol.timing.tmt,
+            use_r1map: cfg.fitting.use_r1map_to_constrain_r1f,
         }
     }
 }
@@ -113,6 +118,13 @@ impl Model for QmtModel {
                 }),
             },
         ]
+    }
+    fn sim_required_aux(&self) -> Vec<&'static str> {
+        if self.use_r1map {
+            vec!["R1map"]
+        } else {
+            vec![]
+        }
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {

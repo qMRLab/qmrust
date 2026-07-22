@@ -388,6 +388,15 @@ pub trait Model: Send + Sync {
     fn fixed_mask(&self) -> Vec<bool>;
     /// Auxiliary inputs this model consumes.
     fn required_inputs(&self) -> Vec<InputSpec>;
+    /// Auxiliary inputs (by logical name) that this *configured* model actively
+    /// uses, such that a simulation omitting them would silently fail to
+    /// exercise the model's real fitting behaviour. The sim layer requires the
+    /// sim block to supply each. Empty (the default) means no sim-critical aux.
+    /// Distinct from [`Model::required_inputs`]: an aux the fit uses only when
+    /// present (never a hard fit requirement) can still be sim-critical here.
+    fn sim_required_aux(&self) -> Vec<&'static str> {
+        vec![]
+    }
     /// The shape of measurement this model consumes and the identities it reads by.
     fn measurement(&self) -> MeasurementKind;
     /// Fit granularity. Defaults to voxelwise.

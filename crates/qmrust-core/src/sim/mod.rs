@@ -13,7 +13,7 @@ use rand_distr::{Distribution, Normal};
 
 use crate::config::Config;
 use crate::core::model::{Measurement, MeasurementKind, Model, Sample};
-use model::{build_model, param_vector, sim_aux};
+use model::{build_model, param_vector, sim_aux, validate_sim_inputs};
 use noise::{add_noise, seeded_rng, sigma_for, NoiseKind};
 use rand::rngs::StdRng;
 use report::{
@@ -338,7 +338,8 @@ pub fn run_sim(mode: &str, config: PathBuf, output: PathBuf, plot: Option<PathBu
         .sim
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("config has no 'sim:' block (required for sim)"))?;
-    sim.validate(&cfg.model, &raw)?;
+    sim.validate()?;
+    validate_sim_inputs(build_model(&cfg, &raw)?.as_ref(), sim)?;
 
     match mode {
         "signal" => {
