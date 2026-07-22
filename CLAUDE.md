@@ -144,7 +144,7 @@ cargo test  --workspace
 cargo fmt --all --check                                 # CI format gate
 cargo clippy --workspace --all-targets -- -D warnings   # CI lint gate (must be clean)
 cargo run -p qmrust-cli -- fit  --mat-dir <dir> --config recipes/non-bids/<cfg>.yaml --output-dir <out>
-cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config recipes/bids/irt1_config.yaml --output-dir <out>  # v1: no-aux, sequential (e.g. IRT1); writes derivatives/qmrust/...
+cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config recipes/bids/irt1_config.yaml --output-dir <out>  # protocol from sidecars, aux by suffix; writes derivatives/qmrust/...
 cargo run -p qmrust-cli -- fit  --bids-dir <dir> --config recipes/bids/irt1_config.yaml --grouping <file> --output-dir <out>  # override the built-in grouping manifest
 cargo run -p qmrust-cli -- bidsify --model inversion_recovery --mat-data <IRData.mat> --mask <Mask.mat> --config recipes/non-bids/irt1_config.yaml --subject 01 --out <ds-root>
 cargo run -p qmrust-cli -- sim  single-voxel --config recipes/sim/qmt_sim_ramani.yaml --output <out>.json

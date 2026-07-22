@@ -58,13 +58,15 @@ cargo run -p qmrust-cli -- fit \
 ```
 
 This scans the dataset, groups files into collections per the config's model
-(e.g. an inversion-time series for IRT1), and fits each subject (and session,
-if present), writing `<out>/<subject>[/<session>]/<map>.nii.gz`. v1 scope:
-sequential collections (IRT1-style) and models with no required auxiliary
-input — a model needing B1/B0/R1 maps or a named collection like MTS isn't
-BIDS-fittable yet; use `--mat-dir`/`--data` with explicit `--r1map`/`--b1map`/
-`--b0map` for those. See [BIDS](bids.md) for how `rust-bids` resolves the
-dataset layout.
+(e.g. an inversion-time series for IRT1, or an Angle/Offset series for
+QMTSPGR), and fits each subject (and session, if present), writing
+`<out>/<subject>[/<session>]/<map>.nii.gz`. Each model composes its
+acquisition protocol from the sidecars and resolves any auxiliary maps it
+declares (B1/B0/R1) from the dataset by suffix — so aux-requiring models like
+qMT fit through `--bids-dir` too. The one shape not yet BIDS-fittable is a
+*named* collection (fixed role slots, e.g. MTS's PDw/MTw/T1w); use
+`--mat-dir`/`--data` for those. See [BIDS](bids.md) for how `rust-bids`
+resolves the dataset layout.
 
 Notice `--config` above points at `recipes/bids/irt1_config.yaml`, not the
 non-BIDS one — a BIDS fit's config doesn't carry the inversion times: the

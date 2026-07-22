@@ -98,28 +98,57 @@ pub fn by_bids_suffix(suffix: &str) -> Option<&'static ModelEntry>;
 ```
 
 `by_name`/`by_bids_suffix` are the only lookups the CLI, sim, and wasm
-bindings use. `describe` is the structural-interrogation entry point — it
-builds the model from `--config` alone (no `Protocol`) so callers can read
-`protocol_schema()`/`bids_outputs()` before any data is resolved; `build`
-stays the fit-ready path that also validates the model against a real
-`Protocol`.
+bindings use.
+
+## The one build pipeline — `ModelConfig`
+
+You do **not** hand-write the parse/validate/protocol dance. `core::model`
+owns it once, for every model, via `build_model::<C>` / `describe_model::<C>`
+(`crates/qmrust-core/src/core/model.rs`):
+
+```
+parse config → validate_options → ingest_protocol → validate_protocol
+             → construct → validate_against_protocol
+```
+
+Your config implements `ModelConfig` and supplies only the config-shaped hooks:
+
+```rust
+pub trait ModelConfig: DeserializeOwned {
+    const NAME: &'static str;
+    const SUBKEY: Option<&'static str>;         // Some("qmt_spgr"), or None for top-level
+    fn validate_options(&mut self) -> Result<()>;               // config-intrinsic checks
+    fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> { Ok(()) }  // fold sidecars in
+    fn validate_protocol(&mut self) -> Result<()> { Ok(()) }    // completeness, post-ingest
+    fn into_model(self) -> Box<dyn Model>;
+}
+```
+
+`ingest_protocol` is where the model folds the BIDS-resolved per-volume
+protocol into its own acquisition arrays (IR: `InversionTime`s → `inversion_times`;
+qMT: `Angle`/`Offset` → `mtdata`). It runs in the shared pipeline for **every**
+model, so a model sources its acquisition from BIDS identically and none can
+be built without it — the non-BIDS path passes an empty `Protocol` and the
+config's own arrays are used unchanged. `describe` runs only `validate_options`
+(no protocol), so the BIDS shell can read `protocol_schema()`/`bids_outputs()`
+before any data is resolved; `build` is the fit-ready path.
 
 ## Checklist
 
 1. New dir `crates/qmrust-core/src/models/<name>/`:
-   - `config.rs` — a `serde`-deserializable struct for the model's own YAML
-     sub-tree + a `validate()` method.
+   - `config.rs` — a `serde`-deserializable, `Default` struct for the model's
+     own YAML sub-tree, with `validate_options()`/`validate_protocol()` methods.
    - pure math (signal equation + fitter).
-   - `model.rs` — `impl Model for <Name>Model` + `pub fn build(v:
-     &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>>` that:
-     parses `config.rs`'s struct from `v`, applies any protocol override,
-     calls `.validate()`, constructs the model, then calls
-     `validate_against_protocol(&model.measurement(), proto)?` before boxing
-     — fail loudly at build time, not per-voxel.
+   - `model.rs` — `impl Model for <Name>Model`, `impl ModelConfig for <Name>Config`
+     (the hooks above), and two one-line entry points:
+     `pub fn build(v, proto) { core::model::build_model::<C>(v, proto) }` and
+     `pub fn describe(v) { core::model::describe_model::<C>(v) }`.
 2. Register the module in `models/mod.rs`.
-3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs`.
-4. Tests: forward→fit round-trip; config parse/validate; if `bids_outputs()`
-   is non-empty, assert every entry names a real `output_names()` value.
+3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name +
+   BIDS suffix + `build` + `describe`).
+4. Tests: forward→fit round-trip; config parse/validate; `ingest_protocol`
+   composes from a resolved `Protocol`; if `bids_outputs()` is non-empty,
+   assert every entry names a real `output_names()` value.
 
 Reference models:
 - `models/inversion_recovery/` — minimal. `protocol_schema()` maps

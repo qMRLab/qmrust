@@ -184,12 +184,13 @@ function that builds it:
 
 ```rust
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
+pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
 
-pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder }
+pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder, pub describe: Describer }
 
 pub fn all() -> &'static [ModelEntry] { &[
-    ModelEntry { name: "inversion_recovery", bids_suffix: "IRT1", build: models::inversion_recovery::build },
-    ModelEntry { name: "qmt_spgr",           bids_suffix: "QMTSPGR", build: models::qmt_spgr::build },
+    ModelEntry { name: "inversion_recovery", bids_suffix: "IRT1", build: models::inversion_recovery::build, describe: models::inversion_recovery::describe },
+    ModelEntry { name: "qmt_spgr",           bids_suffix: "QMTSPGR", build: models::qmt_spgr::build, describe: models::qmt_spgr::describe },
 ]}
 
 pub fn by_name(name: &str) -> Option<&'static ModelEntry>;
@@ -197,6 +198,17 @@ pub fn by_bids_suffix(suffix: &str) -> Option<&'static ModelEntry>;
 ```
 
 The CLI, the simulator, and the wasm bindings all resolve models through `by_name`.
+
+Each model's `build`/`describe` are one-liners delegating to a **single shared
+build pipeline** in `core::model` (`build_model::<C>` / `describe_model::<C>`):
+parse the config → `validate_options` → `ingest_protocol` (fold the
+BIDS-resolved per-volume protocol into the model's acquisition arrays) →
+`validate_protocol` → construct → `validate_against_protocol`. Protocol
+ingestion lives in that one place, so **every** model sources its acquisition
+from BIDS identically — a model cannot be built skipping it, and there is no
+per-model protocol-folding to get wrong. `describe` runs only the
+config-intrinsic validation (no protocol), letting the BIDS shell read a
+model's `protocol_schema()`/`bids_outputs()` before any data is resolved.
 There is **no `match cfg.model { … }` scattered anywhere else** — adding a `ModelEntry`
 here is the only wiring a new model needs.
 
@@ -275,13 +287,14 @@ A model is a directory under `crates/qmrust-core/src/models/<name>/` with three 
 kept together:
 
 1. **Config** (`config.rs`) — a `serde`-deserializable struct for the model's own YAML
-   sub-tree, with a `validate()` method. Each model owns its config; the top-level
-   `Config` only knows the shared fields (`model`, `sim`) — there is no monolithic config
-   struct listing every model's fields.
+   sub-tree, `Default`, with `validate_options()`/`validate_protocol()` methods.
+   Each model owns its config; the top-level `Config` only knows the shared fields
+   (`model`, `sim`) — there is no monolithic config struct listing every model's fields.
 2. **Math** (`fit.rs`, and for qMT `lineshape.rs`/`ode.rs`/`pulse.rs`/`sf.rs`) — the pure
    signal equation and the fitter. No I/O, no config-file types.
 3. **Adapter + builder** (`model.rs` / `adapter.rs`) — an `impl Model` that delegates to
-   the math, and a `build` function the registry calls.
+   the math, an `impl ModelConfig` supplying the build-pipeline hooks, and one-line
+   `build`/`describe` entry points the registry calls.
 
 ### Worked example — inversion recovery
 
@@ -320,17 +333,28 @@ fn protocol_schema(&self) -> Vec<ProtoParam> {
     vec![ProtoParam { name: "InversionTime", source: Source::Field("InversionTime"), scope: Scope::PerVolume }]
 }
 
-// the registry builder: parse this model's config, apply any protocol override, validate, box it
+// The config implements ModelConfig; build/describe delegate to the shared
+// pipeline (core::model::build_model / describe_model). ingest_protocol is the
+// only model-specific step — it folds the BIDS-resolved Protocol into the
+// config's acquisition array; the shared driver handles the rest (validate
+// options → ingest → validate protocol → construct → validate_against_protocol).
+impl ModelConfig for IrConfig {
+    const NAME: &'static str = "inversion_recovery";
+    const SUBKEY: Option<&'static str> = None;                 // IR reads top-level keys
+    fn validate_options(&mut self) -> Result<()> { /* method, t1_range, zoom */ }
+    fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
+        // BIDS sidecars (or a .mat) supply the InversionTimes here.
+        if !proto.volumes.is_empty() { /* pull InversionTime values into self.inversion_times */ }
+        Ok(())
+    }
+    fn validate_protocol(&mut self) -> Result<()> { /* ≥3 TIs, sort ascending */ }
+    fn into_model(self) -> Box<dyn Model> { Box::new(IrModel::new(self)) }
+}
 pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    let mut cfg: IrConfig = serde_yaml::from_value(v.clone())?;
-    // e.g. a .mat file may override inversion times via the resolved Protocol
-    if !proto.volumes.is_empty() { /* pull InversionTime values from proto */ }
-    cfg.validate()?;
-    let model = IrModel::new(cfg);
-    // Fail loudly at build if `proto` is inconsistent with the model's own
-    // declared measurement, rather than per-voxel at fit time.
-    validate_against_protocol(&model.measurement(), proto)?;
-    Ok(Box::new(model))
+    crate::core::model::build_model::<IrConfig>(v, proto)
+}
+pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+    crate::core::model::describe_model::<IrConfig>(v)
 }
 ```
 
