@@ -8,9 +8,8 @@ pub fn adaptive_simpson<F: Fn(f64) -> f64>(f: &F, a: f64, b: f64, tol: f64) -> f
         let fm = f(m);
         ((b - a) / 6.0 * (f(a) + 4.0 * fm + f(b)), fm)
     }
-    // clippy: recursive adaptive-Simpson state (interval bounds, cached f-values,
-    // running estimate, tolerance, recursion depth) is inherent to the algorithm;
-    // splitting it into a struct would not change behavior but adds churn here.
+    // Recursive adaptive-Simpson state (interval bounds, cached f-values,
+    // running estimate, tolerance, recursion depth) is inherent to the algorithm.
     #[allow(clippy::too_many_arguments)]
     fn recurse<F: Fn(f64) -> f64>(
         f: &F,

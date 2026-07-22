@@ -240,7 +240,7 @@ qmrust fit --bids-dir <dir> ─► StdFs (native DatasetFs) ─► rust_bids::co
    for each Collection: resolve_protocol + load 4-D volumes
    resolve_aux_and_mask(table, model, identity, mask_spec) ─► AuxMaps + Option<mask>
    build_volume_ids(model.measurement(), protocol) ─► engine::run ─► FitResults
-   io::nifti writes output_dir/<subject>[/<session>]/<map>.nii.gz
+   io::nifti writes output_dir/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz
 ```
 
 A BIDS collection is just another way to arrive at a `Protocol` and an ordered volume

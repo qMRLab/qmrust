@@ -139,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_newly_covered_entity_keys() {
+    fn normalizes_aliased_entity_keys() {
         assert_eq!(full_key("ce"), "ceagent");
         assert_eq!(full_key("rec"), "reconstruction");
         assert_eq!(full_key("desc"), "description");

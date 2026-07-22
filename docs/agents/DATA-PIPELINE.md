@@ -16,7 +16,8 @@ subsystem in full.
 A dataset is data files plus metadata files. Getting from there to a fit
 means turning that pile into an **ordered, identity-keyed input** that a
 model can consume — without the model ever knowing whether the data came
-from a BIDS directory, a `.mat` file, or (soon) a browser file picker.
+from a BIDS directory, a `.mat` file, or any other source behind the
+`DatasetFs` seam.
 
 The contract that makes this possible lives entirely in the `Model` trait
 (`qmrust_core::core::model`):
@@ -278,7 +279,7 @@ becomes a dataset again, in BIDS-derivatives form.
   maps are listed. IR declares `[("T1", "T1map", "s")]` (its `a`/`b` fit
   coefficients aren't standalone qMRLab maps, so they're left out;
   `R1map`/`M0map` would need the model to produce them directly, which it
-  doesn't yet). qMT declares `[("F","Fmap",""), ("kr","kRmap","1/s"),
+  does not). qMT declares `[("F","Fmap",""), ("kr","kRmap","1/s"),
   ("R1f","R1Fmap","1/s"), ("R1r","R1Rmap","1/s"), ("T2f","T2Fmap","s"),
   ("T2r","T2Rmap","s")]`. Default is `vec![]` — additive, no behaviour
   change for a model that hasn't declared one.

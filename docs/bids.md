@@ -33,10 +33,9 @@ A `BidsConfig` has a `loop_over` (which entities define one "unit", e.g.
 - **`sequential_set`** — an ordered series along one or more entities, e.g.
   IRT1's inversion-recovery series ordered `by: [inv]`.
 
-Today the grouping config is a **bundled default** (`default_config()`,
-covering `IRT1`, `MTS`, and `QMTSPGR`) plus a programmatic `parse_config(yaml:
-&str)` for supplying your own. A discoverable, on-disk `rust-bids.yaml`
-convention is planned but not yet implemented.
+The grouping config is a **bundled default** (`default_config()`, covering
+`IRT1`, `MTS`, and `QMTSPGR`); supply your own on-disk manifest with
+`fit --grouping <file>`, or `parse_config(yaml: &str)` programmatically.
 
 `QMTSPGR` (qMT-SPGR) is a **custom, non-official** BIDS suffix — it isn't
 part of the BIDS-MRI spec, so a `QMTSPGR` dataset ships a root `.bidsignore`
@@ -77,8 +76,8 @@ in the raw tree or any `derivatives/<pipeline>/`. See
 
 All filesystem access goes through the `fs::DatasetFs` trait rather than
 `std::fs` directly. That's what lets the same resolver run against a native
-filesystem walker in the CLI today, and — unchanged — against a browser-side
-(e.g. Tauri/JS) directory listing in the future, alongside `qmrust-wasm`.
+filesystem walker in the CLI, and the same code runs unchanged against a
+browser-side (e.g. Tauri/JS) directory listing alongside `qmrust-wasm`.
 
 ## From sidecar metadata to `Protocol`
 

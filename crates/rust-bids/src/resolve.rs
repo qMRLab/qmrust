@@ -82,7 +82,7 @@ pub fn resolve_set(rows: &[BidsRow], cfg: &BidsConfig, set_name: &str) -> Result
                         let bv = b.entities.get(e);
                         let ord = match (av, bv) {
                             (Some(x), Some(y)) => crate::entities::entity_value_cmp(x, y),
-                            (x, y) => x.cmp(&y), // None sorts before Some, as before
+                            (x, y) => x.cmp(&y), // None sorts before Some
                         };
                         if ord != std::cmp::Ordering::Equal {
                             return ord;

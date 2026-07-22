@@ -17,19 +17,20 @@ exists.
   and a scalar `Aux` bundle (`aux.get("B1map")`) — never files, JSON, or a
   config format. That's what keeps it portable to wasm.
 - **The registry** (`registry::all()` in `registry.rs`) is the whole dispatch
-  point: a static list of `ModelEntry { name, bids_suffix, build }`. The CLI,
-  the simulator, and the wasm bindings all resolve a model by calling
-  `registry::by_name` — there is no `match cfg.model { ... }` anywhere else in
-  the codebase.
+  point: a static list of `ModelEntry { name, bids_suffix, build, describe,
+  dump }`. The CLI, the simulator, and the wasm bindings all resolve a model by
+  calling `registry::by_name` — there is no `match cfg.model { ... }` anywhere
+  else in the codebase.
 
 ## Checklist: add a model
 
 1. New directory `crates/qmrust-core/src/models/<name>/`: a `config.rs` (a
-   `serde` struct + a `validate()` method), the pure math, and a `model.rs`
-   (`impl Model` + a `pub fn build`).
+   `serde` struct implementing `ModelConfig`), the pure math, and a `model.rs`
+   (`impl Model` + the one-line `build`/`describe`/`dump` entry points that
+   delegate to the shared pipeline).
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name + BIDS
-   suffix + `build`).
+   suffix + `build` + `describe` + `dump`).
 4. Add tests: a forward → fit round-trip, and config parse/validate.
 
 That's it. Use `models/inversion_recovery/` as the minimal reference model

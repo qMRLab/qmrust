@@ -25,10 +25,9 @@ use rust_bids::{Collection, GroupedData};
 /// - `Named { roles }`: volume `i` takes role `roles[i]` (requires exactly
 ///   `roles.len()` volumes).
 /// - `Series { rows }`: prefer externally-resolved per-volume rows
-///   (`proto.volumes`, e.g. `.mat` sidecar TIs); otherwise fall back to the
-///   model's own canonical identity rows. Both carry populated params — an
-///   empty/positional row is never emitted. (The future BIDS shell supplies
-///   sidecar-derived rows here.)
+///   (`proto.volumes`, the BIDS sidecar-derived identities); otherwise fall
+///   back to the model's own canonical identity rows. Both carry populated
+///   params — an empty/positional row is never emitted.
 fn build_volume_ids(
     kind: MeasurementKind,
     proto: &Protocol,
@@ -228,9 +227,9 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 /// role-labeled volumes to a model's `required` axis order is not implemented,
 /// and silently mis-assigning volumes would be worse than refusing.
 ///
-/// An empty `schema` (a model that hasn't declared a `protocol_schema()`)
-/// resolves to an empty `Protocol` — the model falls back to reading its own
-/// `--config` in that case, matching the pre-schema behaviour.
+/// An empty `schema` (a model that declares no `protocol_schema()`) resolves to
+/// an empty `Protocol`; the model then reads its acquisition from its own
+/// `--config`.
 fn load_collection(
     fs: &StdFs,
     c: &Collection,
@@ -707,8 +706,8 @@ pub fn run_fit_bids(
         };
 
         // Only the expected, structural case is a skip: `Named` collections
-        // (e.g. MTsat-style MTS sets) aren't reorderable to a model's axis order
-        // yet (see `load_collection`). Anything else `load_collection` (or the
+        // (e.g. MTsat-style MTS sets) are not reorderable to a model's axis
+        // order (see `load_collection`). Anything else `load_collection` (or the
         // model build / run_model_fit / write_derivatives below) reports — a
         // corrupt NIfTI, a spatial-dims mismatch, a broken sidecar — is a real
         // failure and must propagate loudly (`?`), never be logged-and-skipped
@@ -1645,12 +1644,11 @@ mod tests {
     /// End-to-end validation: the QMTSPGR BIDS fit path (bidsify
     /// plus run_fit_bids) must reproduce the .mat fit path (run_fit against
     /// mat_data) exactly, mirroring `bids_fit_matches_mat_fit` above for qMT.
-    /// `run_fit_bids` doesn't yet resolve BIDS aux maps (see its doc
-    /// comment), so this test disables aux on both sides: run_fit is called
-    /// with no r1map/b1map/b0map and no mat_dir (so no aux .mat convenience
-    /// loading either), and run_fit_bids never resolves BIDS aux at all. Both
-    /// sides therefore fit with default aux (B1=1, B0=0, no R1), making this
-    /// an apples-to-apples comparison on byte-identical input.
+    /// The dataset is bidsified with no aux maps, so neither side has aux to
+    /// resolve: run_fit is called with no r1map/b1map/b0map and no mat_dir (no
+    /// aux .mat convenience loading), and run_fit_bids finds no declared aux in
+    /// the tree. Both sides therefore fit with default aux (B1=1, B0=0, no R1),
+    /// making this an apples-to-apples comparison on byte-identical input.
     ///
     /// Needs a *real* qMRLab OSF qMT dataset (`MTdata.mat`) supplied via an
     /// env var — no network access here, so it's `#[ignore]`d by default.

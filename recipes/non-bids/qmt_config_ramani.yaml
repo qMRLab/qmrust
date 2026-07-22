@@ -1,5 +1,5 @@
 # Fully-resolved config (all defaults materialized, validation applied).
-# Regenerate with: qmrust dump-config --config qmt_config.yaml
+# Regenerate with: qmrust dump-config --config qmt_config_ramani.yaml
 
 model: qmt_spgr
 qmt_spgr:

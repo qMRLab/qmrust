@@ -1,4 +1,4 @@
-//! qMT-SPGR config (moved out of the monolithic top-level config).
+//! qMT-SPGR config types (protocol, timing, pulse, lineshape, fitting bounds).
 
 use serde::{Deserialize, Serialize};
 

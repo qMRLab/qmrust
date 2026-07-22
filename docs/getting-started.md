@@ -67,7 +67,7 @@ QMTSPGR), and fits each subject (and session, if present), writing
 Each model composes its
 acquisition protocol from the sidecars and resolves any auxiliary maps it
 declares (B1/B0/R1) from the dataset by suffix — so aux-requiring models like
-qMT fit through `--bids-dir` too. The one shape not yet BIDS-fittable is a
+qMT fit through `--bids-dir` too. The one shape not BIDS-fittable is a
 *named* collection (fixed role slots, e.g. MTS's PDw/MTw/T1w); use
 `--mat-dir`/`--data` for those. See [BIDS](bids.md) for how `rust-bids`
 resolves the dataset layout.

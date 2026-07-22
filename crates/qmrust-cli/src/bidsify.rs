@@ -38,8 +38,8 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
     let (_cfg, raw) = qmrust_core::config::parse_config(&contents)?;
     let entry = qmrust_core::registry::by_name(&args.model)
         .ok_or_else(|| anyhow::anyhow!("Unknown model: '{}'", args.model))?;
-    // The recipe alone (no BIDS protocol yet — that's what we're about to
-    // write) fully describes the model's acquisition.
+    // The recipe supplies the acquisition: bidsify writes the BIDS sidecars
+    // from it, so there is no BIDS protocol to read here.
     let model = (entry.describe)(&raw)?;
 
     let mat_data_path = match args.mat_data.clone() {
@@ -467,8 +467,8 @@ mod tests {
     /// Non-square byte-identical round-trip: a 2x2x1 fixture can't
     /// distinguish a value-transpose from an nx<->ny shape-swap. A 3x2x1
     /// fixture pins both: read-back shape must stay (3,2,1) (not (2,3,1))
-    /// AND every voxel must match by (i,j,k), guarding the fix in
-    /// `io::nifti`'s 2D->3D reshape (see the commit that fixed it).
+    /// AND every voxel must match by (i,j,k), guarding `io::nifti`'s 2D->3D
+    /// reshape against an nx<->ny swap.
     #[test]
     fn write_inv_volume_is_byte_identical_non_square() {
         let dir = tmp_dir("roundtrip-nonsquare");
@@ -613,10 +613,10 @@ mod tests {
     /// Angle/Offset/RepetitionTime sidecar, and the `.bidsignore` line —
     /// while still asserting every voxel round-trips exactly.
     ///
-    /// The fixture's row order mirrors the real qMRLab qMT protocol quoted in
-    /// the task brief: [142,443],[426,443],[142,1088],[426,1088] = flip-1_mt-1,
-    /// flip-2_mt-1, flip-1_mt-2, flip-2_mt-2 (Angle varies fastest -> flip
-    /// index; Offset next -> mt index).
+    /// The fixture's row order mirrors the qMRLab qMT protocol:
+    /// [142,443],[426,443],[142,1088],[426,1088] = flip-1_mt-1, flip-2_mt-1,
+    /// flip-1_mt-2, flip-2_mt-2 (Angle varies fastest -> flip index; Offset
+    /// next -> mt index).
     #[test]
     fn bidsify_qmt_writes_expected_tree() {
         let dir = tmp_dir("qmt-structure");

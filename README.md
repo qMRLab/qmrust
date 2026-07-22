@@ -3,7 +3,7 @@
 It is qMRLab (https://qmrlab.org) written in Rust, so it is fast, and the fitting code is portable: the same routines run on the command line and, compiled to WebAssembly, inside a web browser with no server.
 
 qmrust is a growing library of models, each one self-contained so a new model
-can be added without disturbing the others. Today it fits:
+can be added without disturbing the others. It fits:
 
 - Inversion recovery T1
 - Quantitative magnetization transfer (qMT-SPGR), with the Ramani and
