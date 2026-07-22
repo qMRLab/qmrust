@@ -4,4 +4,4 @@ pub mod config;
 pub mod fit;
 pub mod model;
 
-pub use model::{build, describe};
+pub use model::{build, describe, dump};

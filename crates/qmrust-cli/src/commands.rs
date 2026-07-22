@@ -82,43 +82,9 @@ fn load_config_raw(
 /// block that a short config expands to.
 pub fn run_dump_config(config_path: PathBuf) -> Result<()> {
     let (cfg, raw) = load_config_raw(&config_path)?;
-    match cfg.model.as_str() {
-        "qmt_spgr" => {
-            let mut q: qmrust_core::models::qmt_spgr::config::QmtSpgrConfig =
-                match raw.get("qmt_spgr") {
-                    Some(sub) => serde_yaml::from_value(sub.clone())?,
-                    None => Default::default(),
-                };
-            q.validate_options()?;
-            if !q.protocol.mtdata.is_empty() {
-                q.validate_protocol()?;
-            }
-            println!("model: qmt_spgr");
-            println!("qmt_spgr:");
-            for line in serde_yaml::to_string(&q)?.lines() {
-                println!("  {}", line);
-            }
-        }
-        "inversion_recovery" => {
-            // Materialize defaults + validate via the typed config (matching the
-            // qmt_spgr branch and the command's "fully-resolved" contract),
-            // rather than echoing the raw file verbatim.
-            let mut ir: qmrust_core::models::inversion_recovery::config::IrConfig =
-                serde_yaml::from_value(raw.clone())?;
-            ir.validate_options()?;
-            if !ir.inversion_times.is_empty() {
-                ir.validate_protocol()?;
-            }
-            println!("model: inversion_recovery");
-            print!("{}", serde_yaml::to_string(&ir)?);
-        }
-        other => {
-            // Unknown models are rejected by validate() before reaching here;
-            // fall back to echoing the resolved raw tree (already carries `model:`).
-            print!("{}", serde_yaml::to_string(&raw)?);
-            let _ = other;
-        }
-    }
+    let entry = qmrust_core::registry::by_name(&cfg.model)
+        .ok_or_else(|| anyhow::anyhow!("Unknown model: '{}'", cfg.model))?;
+    print!("{}", (entry.dump)(&raw)?);
     Ok(())
 }
 
@@ -1845,10 +1811,12 @@ mod tests {
         run_dump_config(config_path).expect("BIDS-style IR config with no inversion_times");
     }
 
-    /// A non-BIDS IR config that DOES carry a protocol must still enforce the
-    /// >=3 inversion-times requirement.
+    /// `dump-config` validates options only, never protocol completeness (a
+    /// fit-time concern — see `dump_model`'s doc comment): an IR config with
+    /// too few inversion times to ever fit still dumps cleanly, echoing the
+    /// values back rather than rejecting them.
     #[test]
-    fn run_dump_config_rejects_too_few_inversion_times() {
+    fn run_dump_config_ignores_protocol_completeness() {
         let dir = TempDir::new("dump-config-too-few-tis");
         let config_path = dir.0.join("irt1_config.yaml");
         std::fs::write(
@@ -1856,7 +1824,6 @@ mod tests {
             "model: inversion_recovery\nmethod: magnitude\ninversion_times: [0.35, 0.5]\n",
         )
         .unwrap();
-        let err = run_dump_config(config_path).expect_err("too few inversion times must fail");
-        assert!(err.to_string().contains("inversion times"));
+        run_dump_config(config_path).expect("dump-config does not enforce protocol completeness");
     }
 }

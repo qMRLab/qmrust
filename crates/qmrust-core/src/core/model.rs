@@ -101,7 +101,7 @@ pub enum MeasurementKind {
 /// these config-shaped hooks. Protocol ingestion lives in [`build_model`] alone,
 /// so every model sources its acquisition from BIDS identically and none can be
 /// built without it.
-pub trait ModelConfig: DeserializeOwned {
+pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default {
     /// Model name, used for error context.
     const NAME: &'static str;
     /// YAML sub-key this config lives under (e.g. `Some("qmt_spgr")`), or `None`
@@ -129,7 +129,7 @@ pub trait ModelConfig: DeserializeOwned {
     fn into_model(self) -> Box<dyn Model>;
 }
 
-fn parse_model_config<C: ModelConfig + Default>(v: &serde_yaml::Value) -> AnyResult<C> {
+fn parse_model_config<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<C> {
     let cfg = match C::SUBKEY {
         Some(key) => match v.get(key) {
             Some(sub) => serde_yaml::from_value(sub.clone())?,
@@ -145,9 +145,7 @@ fn parse_model_config<C: ModelConfig + Default>(v: &serde_yaml::Value) -> AnyRes
 /// config-intrinsic validation — no protocol, no completeness check. Not
 /// fit-ready. The BIDS shell uses this to read a model's contract before it has
 /// resolved any protocol.
-pub fn describe_model<C: ModelConfig + Default>(
-    v: &serde_yaml::Value,
-) -> AnyResult<Box<dyn Model>> {
+pub fn describe_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<Box<dyn Model>> {
     let mut cfg = parse_model_config::<C>(v)?;
     cfg.validate_options()
         .with_context(|| format!("{}: invalid config", C::NAME))?;
@@ -157,7 +155,7 @@ pub fn describe_model<C: ModelConfig + Default>(
 /// The one build pipeline every model runs: parse → validate options → ingest
 /// the resolved BIDS protocol → validate protocol completeness → construct →
 /// check against the protocol. Returns a fit-ready model.
-pub fn build_model<C: ModelConfig + Default>(
+pub fn build_model<C: ModelConfig>(
     v: &serde_yaml::Value,
     proto: &Protocol,
 ) -> AnyResult<Box<dyn Model>> {
@@ -176,6 +174,33 @@ pub fn build_model<C: ModelConfig + Default>(
         )
     })?;
     Ok(model)
+}
+
+/// Print the fully-resolved effective config (defaults materialized, options
+/// validated) as YAML. Display validates options only — protocol completeness
+/// is a fit concern, not a display one.
+pub fn dump_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<String> {
+    let mut cfg = parse_model_config::<C>(v)?;
+    cfg.validate_options()
+        .with_context(|| format!("{}: invalid config", C::NAME))?;
+    let body = serde_yaml::to_string(&cfg)?;
+    let mut out = format!("model: {}\n", C::NAME);
+    match C::SUBKEY {
+        Some(key) => {
+            out.push_str(&format!("{key}:\n"));
+            for line in body.lines() {
+                if line.is_empty() {
+                    out.push('\n');
+                } else {
+                    out.push_str("  ");
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        None => out.push_str(&body),
+    }
+    Ok(out)
 }
 
 /// Fail loudly, at build time, if a supplied `Protocol` is inconsistent with a

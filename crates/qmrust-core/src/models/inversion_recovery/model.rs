@@ -167,6 +167,12 @@ pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> 
     crate::core::model::build_model::<IrConfig>(v, proto)
 }
 
+/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
+/// the fully-resolved effective config as YAML.
+pub fn dump(v: &serde_yaml::Value) -> Result<String> {
+    crate::core::model::dump_model::<IrConfig>(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
