@@ -4,13 +4,19 @@
 
 use std::collections::BTreeMap;
 
-/// Compare two BIDS entity *values*. Index entities may be zero-padded and the
-/// padding is not semantic, so compare numerically when both parse as integers;
-/// otherwise compare lexically (string labels like `off`, `brain`).
+/// Compare two BIDS entity *values* as a total order. Index entities may be
+/// zero-padded and the padding is not semantic, so two integers compare
+/// numerically and two non-integers compare lexically (string labels like
+/// `off`, `brain`); any integer sorts before any non-integer. The explicit
+/// class ordering keeps the comparator transitive, which the sequential-set
+/// sort relies on.
 pub(crate) fn entity_value_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
     match (a.parse::<i64>(), b.parse::<i64>()) {
         (Ok(x), Ok(y)) => x.cmp(&y),
-        _ => a.cmp(b),
+        (Ok(_), Err(_)) => Ordering::Less,
+        (Err(_), Ok(_)) => Ordering::Greater,
+        (Err(_), Err(_)) => a.cmp(b),
     }
 }
 
@@ -165,5 +171,6 @@ mod tests {
         assert_eq!(entity_value_cmp("off", "off"), Equal);
         assert_eq!(entity_value_cmp("off", "on"), Less);
         assert_eq!(entity_value_cmp("1a", "1"), Greater); // non-numeric → string compare
+        assert_eq!(entity_value_cmp("2", "1a"), Less); // any integer sorts before any non-integer
     }
 }

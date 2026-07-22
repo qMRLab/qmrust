@@ -1157,15 +1157,12 @@ mod tests {
     }
 
     /// A `--grouping` manifest overriding the built-in default is actually
-    /// threaded into collection resolution — not read and then ignored in
+    /// threaded into collection resolution, not read and then ignored in
     /// favor of `rust_bids::default_config()`. Proven by contrast: the same
     /// synthetic IRT1 dataset that resolves and fits under the default
     /// grouping (`run_fit_bids_recovers_t1_from_a_synthetic_dataset`) fails
     /// to resolve any `IRT1` collection under a custom manifest that omits
-    /// the `IRT1` set entirely. A regression that silently discarded the
-    /// custom grouping and fell back to the default would still resolve and
-    /// fit here, so this would catch it where the old (grouping-content-
-    /// insensitive) version of this test could not.
+    /// the `IRT1` set entirely.
     #[test]
     fn run_fit_bids_custom_grouping_changes_resolution() {
         let (bids_dir, config_path, out_dir, tmp) = synthetic_ir_dataset();

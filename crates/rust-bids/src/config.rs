@@ -111,12 +111,15 @@ pub fn parse_config(yaml: &str) -> Result<BidsConfig> {
                 let cons: EntityConstraints =
                     serde_yaml::from_value::<BTreeMap<String, String>>(gval)?
                         .into_iter()
-                        .filter(|(k, _)| k != "description")
                         .map(|(k, v)| {
                             let k = full_key(&k);
                             let v = strip_prefix_value(&k, &v);
                             (k, v)
                         })
+                        // Drop the human-readable label after normalization, so
+                        // both `desc` and `description` are excluded (they
+                        // canonicalize to the same `description` key).
+                        .filter(|(k, _)| k != "description")
                         .collect();
                 groups.insert(gname, cons);
             }
@@ -151,6 +154,26 @@ mod tests {
         assert_eq!(mts.required, vec!["PDw", "MTw", "T1w"]);
         assert_eq!(mts.groups["T1w"]["flip"], "2"); // "flip-2" → "2"
         assert_eq!(mts.groups["PDw"]["mtransfer"], "off");
+    }
+
+    #[test]
+    fn named_set_drops_both_short_and_full_description_keys() {
+        // `desc` and `description` are human-readable labels, not constraints;
+        // both must be dropped (they canonicalize to the same `description`).
+        let cfg = parse_config(
+            "loop_over: [sub]\nMTS:\n  named_set:\n    PDw:\n      flip: \"1\"\n      desc: short-label\n      description: full-label\n    required: [PDw]\n",
+        )
+        .unwrap();
+        let SetDef::Named(mts) = &cfg.sets["MTS"] else {
+            panic!("MTS should be a named set");
+        };
+        let cons = &mts.groups["PDw"];
+        assert!(
+            !cons.contains_key("description"),
+            "label key must be dropped"
+        );
+        assert_eq!(cons.get("flip").map(String::as_str), Some("1"));
+        assert_eq!(cons.len(), 1, "only the flip constraint remains");
     }
 
     #[test]

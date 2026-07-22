@@ -68,13 +68,10 @@ pub fn read_mat_file(path: &Path) -> Result<MatDataset> {
     // We need to reshape accounting for this.
     let data = match data_size.len() {
         2 => {
-            // (rows, cols) in MATLAB = (spatial, n_vol) — treat as (rows, 1, 1, cols)
-            // But more commonly the source data has shape (x, y, n_vol) stored as 2D
-            // Actually MATLAB 2D means (x*y, n_vol) or (x, n_vol)
             let (nrows, ncols) = (data_size[0], data_size[1]);
-            // Treat as (nrows, 1, 1, ncols) — each row is a voxel, cols are volumes
-            // MATLAB column-major: data is stored column by column
-            // Column j values are at indices j*nrows..(j+1)*nrows
+            // Treat as (nrows, 1, 1, ncols): each row is a voxel, cols are volumes.
+            // MATLAB stores column-major, so column j occupies indices
+            // j*nrows..(j+1)*nrows.
             let mut arr = Array4::<f64>::zeros((nrows, 1, 1, ncols));
             for j in 0..ncols {
                 for i in 0..nrows {
