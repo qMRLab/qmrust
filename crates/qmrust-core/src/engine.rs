@@ -275,6 +275,15 @@ mod tests {
                 aux.get("k").unwrap_or(-1.0),
             ]
         }
+        fn n_volumes(&self) -> usize {
+            sum_rows().len()
+        }
+        fn bids_volume(&self, index: usize) -> crate::core::model::BidsVolume {
+            crate::core::model::BidsVolume {
+                entities: vec![("t", index.to_string())],
+                sidecar: BTreeMap::new(),
+            }
+        }
     }
 
     #[test]

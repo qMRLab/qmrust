@@ -535,6 +535,16 @@ sim:
         fn fit(&self, _m: &Measurement, _aux: &crate::core::model::Aux) -> Vec<f64> {
             unimplemented!()
         }
+        fn n_volumes(&self) -> usize {
+            3
+        }
+        fn bids_volume(&self, index: usize) -> crate::core::model::BidsVolume {
+            let roles = ["T1w", "PDw", "MTw"];
+            crate::core::model::BidsVolume {
+                entities: vec![("role", roles[index].to_string())],
+                sidecar: std::collections::BTreeMap::new(),
+            }
+        }
     }
 
     #[test]

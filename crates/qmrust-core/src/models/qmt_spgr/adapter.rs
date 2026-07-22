@@ -1,12 +1,13 @@
 //! qMT-SPGR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsMap, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement,
+    MeasurementKind, Model, ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::qmt_spgr::config::QmtSpgrConfig;
 use crate::models::qmt_spgr::QmtSpgrFitter;
 use anyhow::Result;
+use serde_json::json;
 use std::collections::BTreeMap;
 
 pub struct QmtModel {
@@ -14,6 +15,10 @@ pub struct QmtModel {
     /// Per-volume saturation protocol rows `[Angle (deg), Offset (Hz)]`, in the
     /// order the fitter consumes them (mtdata order, incl. MToff rows).
     protocol: Vec<[f64; 2]>,
+    /// Saturation-pulse repetition time (s) and duration (s), shared across
+    /// every volume's sidecar.
+    trep: f64,
+    tmt: f64,
 }
 
 impl QmtModel {
@@ -21,6 +26,21 @@ impl QmtModel {
         Self {
             fitter: QmtSpgrFitter::new(cfg),
             protocol: cfg.protocol.mtdata.clone(),
+            trep: cfg.protocol.timing.trep,
+            tmt: cfg.protocol.timing.tmt,
+        }
+    }
+}
+
+/// Return `val`'s 1-based index in first-seen order within `seen`, appending
+/// it if not already present. Derives the qMRLab `flip-<f>`/`mt-<m>` BIDS
+/// entities from the protocol's raw Angle/Offset columns.
+fn first_seen_index(seen: &mut Vec<f64>, val: f64) -> usize {
+    match seen.iter().position(|&v| v == val) {
+        Some(idx) => idx + 1,
+        None => {
+            seen.push(val);
+            seen.len()
         }
     }
 }
@@ -156,6 +176,34 @@ impl Model for QmtModel {
             })
             .collect();
         self.fitter.fit_voxel(&signal, r1, b1, b0)
+    }
+    fn n_volumes(&self) -> usize {
+        self.protocol.len()
+    }
+    fn bids_volume(&self, index: usize) -> BidsVolume {
+        // flip-<f>/mt-<m> index the unique Angles/Offsets in first-seen order
+        // (1-based), reproducing qMRLab's qmt_spgr_batch file-naming
+        // convention; recomputed from the protocol prefix up to `index` so
+        // each volume's indices don't depend on any global mutable state.
+        let mut angles_seen: Vec<f64> = Vec::new();
+        let mut offsets_seen: Vec<f64> = Vec::new();
+        let mut flip_idx = 0;
+        let mut mt_idx = 0;
+        for row in &self.protocol[..=index] {
+            flip_idx = first_seen_index(&mut angles_seen, row[0]);
+            mt_idx = first_seen_index(&mut offsets_seen, row[1]);
+        }
+        let [angle, offset] = self.protocol[index];
+        let sidecar = BTreeMap::from([
+            ("Angle".to_string(), json!(angle)),
+            ("Offset".to_string(), json!(offset)),
+            ("RepetitionTime".to_string(), json!(self.trep)),
+            ("MTPulseDuration".to_string(), json!(self.tmt)),
+        ]);
+        BidsVolume {
+            entities: vec![("flip", flip_idx.to_string()), ("mt", mt_idx.to_string())],
+            sidecar,
+        }
     }
     fn bids(&self) -> Option<BidsSpec> {
         Some(BidsSpec {

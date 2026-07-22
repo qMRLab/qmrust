@@ -1,17 +1,19 @@
 //! IR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
-    ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
+    Model, ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::inversion_recovery::config::IrConfig;
 use crate::models::inversion_recovery::fit::IrFitter;
 use anyhow::Result;
+use serde_json::json;
 use std::collections::BTreeMap;
 
 pub struct IrModel {
     fitter: IrFitter,
     output_names: Vec<String>,
+    repetition_time: Option<f64>,
 }
 
 /// One `{"InversionTime": ti}` identity row per fitter TI, in canonical order.
@@ -25,6 +27,7 @@ fn ir_rows(fitter: &IrFitter) -> Vec<BTreeMap<String, f64>> {
 
 impl IrModel {
     pub fn new(cfg: IrConfig) -> Self {
+        let repetition_time = cfg.repetition_time;
         let fitter = IrFitter::new(&cfg);
         let output_names = fitter
             .output_names()
@@ -34,6 +37,7 @@ impl IrModel {
         Self {
             fitter,
             output_names,
+            repetition_time,
         }
     }
 }
@@ -100,6 +104,20 @@ impl Model for IrModel {
             })
             .collect();
         self.fitter.fit_voxel(&ndarray::Array1::from_vec(signal))
+    }
+    fn n_volumes(&self) -> usize {
+        self.fitter.ti().len()
+    }
+    fn bids_volume(&self, index: usize) -> BidsVolume {
+        let mut sidecar = BTreeMap::new();
+        sidecar.insert("InversionTime".to_string(), json!(self.fitter.ti()[index]));
+        if let Some(tr) = self.repetition_time {
+            sidecar.insert("RepetitionTime".to_string(), json!(tr));
+        }
+        BidsVolume {
+            entities: vec![("inv", (index + 1).to_string())],
+            sidecar,
+        }
     }
     fn bids(&self) -> Option<BidsSpec> {
         Some(BidsSpec {

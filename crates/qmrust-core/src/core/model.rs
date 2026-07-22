@@ -294,6 +294,17 @@ fn series_keys(rows: &[BTreeMap<String, f64>]) -> Vec<&str> {
     keys
 }
 
+/// One acquired volume's BIDS write descriptor: filename entities + sidecar
+/// metadata, computed by the model from its own protocol. The shell writes it
+/// verbatim, knowing nothing about the entity meanings.
+pub struct BidsVolume {
+    /// Filename entities as (key, value), in filename order:
+    /// e.g. [("inv", "1")] or [("flip", "1"), ("mt", "off")].
+    pub entities: Vec<(&'static str, String)>,
+    /// Per-volume sidecar metadata as BIDS JSON values.
+    pub sidecar: BTreeMap<String, serde_json::Value>,
+}
+
 /// One acquired volume's value with the metadata identifying it.
 pub struct Sample {
     pub params: BTreeMap<String, f64>,
@@ -387,6 +398,10 @@ pub trait Model: Send + Sync {
     fn forward(&self, params: &[f64], aux: &Aux) -> Measurement;
     /// Fit an identity-keyed measurement, returning values in `output_names` order.
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;
+    /// Number of acquired volumes this model's protocol describes.
+    fn n_volumes(&self) -> usize;
+    /// BIDS write descriptor for the i-th volume (0-based).
+    fn bids_volume(&self, index: usize) -> BidsVolume;
     /// BIDS identity, if this model maps to a BIDS grouping suffix.
     fn bids(&self) -> Option<BidsSpec> {
         None
@@ -553,6 +568,15 @@ mod tests {
         }
         fn fit(&self, _m: &Measurement, _aux: &Aux) -> Vec<f64> {
             vec![]
+        }
+        fn n_volumes(&self) -> usize {
+            0
+        }
+        fn bids_volume(&self, _index: usize) -> BidsVolume {
+            BidsVolume {
+                entities: vec![],
+                sidecar: BTreeMap::new(),
+            }
         }
     }
 
