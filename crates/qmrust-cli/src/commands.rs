@@ -150,16 +150,6 @@ struct InputData {
     data: Array4<f64>,
     mask: Option<Array3<bool>>,
     nifti_header: Option<NiftiHeader>,
-    ti_override: Option<Vec<f64>>,
-}
-
-/// qMRLab `.mat` inversion times are in milliseconds; `qmrust-core` is
-/// BIDS-native seconds (see CLAUDE.md "Units — BIDS-native"). This is the
-/// ms -> s conversion boundary for `.mat`-supplied TI: everything downstream
-/// (`ti_override`, the resolved `Protocol`, and the fitted model) must see
-/// seconds, never ms.
-pub(crate) fn mat_ti_to_seconds(ti: Option<Vec<f64>>) -> Option<Vec<f64>> {
-    ti.map(|ti| ti.iter().map(|t| t / 1000.0).collect())
 }
 
 fn load_input(
@@ -186,7 +176,6 @@ fn load_input(
                 data,
                 mask,
                 nifti_header: Some(header),
-                ti_override: None,
             })
         }
         (None, Some(mat_path)) => {
@@ -203,10 +192,9 @@ fn load_input(
             };
 
             Ok(InputData {
-                data: mat.ir_data,
+                data: mat.data,
                 mask,
                 nifti_header: None,
-                ti_override: mat_ti_to_seconds(mat.ti),
             })
         }
         (None, None) => bail!("Must provide either --data (NIfTI) or --mat-data (.mat)"),
@@ -359,23 +347,12 @@ pub fn run_fit(
         (data_path, mat_path, r1map, b1map, b0map, mask_path)
     };
 
-    let (mut cfg, raw) = load_config_raw(&config_path)?;
+    let (cfg, raw) = load_config_raw(&config_path)?;
     let input = load_input(data_path.as_ref(), mat_path.as_ref(), mask_path.as_ref())?;
 
-    // .mat may supply IR TI values as a protocol override.
-    let proto = qmrust_core::protocol::resolve(qmrust_core::protocol::ProtocolSource::Mat {
-        inversion_times: input.ti_override.clone(),
-    });
-    // Keep cfg.inversion_times in sync for the dump/eprintln summary below.
-    if let Some(ti) = input.ti_override.clone() {
-        cfg.inversion_times = ti;
-        cfg.inversion_times
-            .sort_by(|a, b| a.partial_cmp(b).unwrap());
-        eprintln!(
-            "  Using TI from .mat file ({} values)",
-            cfg.inversion_times.len()
-        );
-    }
+    // The mat/NIfTI path carries no BIDS sidecar metadata — the model reads
+    // its whole acquisition (TIs, flip angles, …) from `--config` directly.
+    let proto = Protocol::default();
 
     let entry = qmrust_core::registry::by_name(&cfg.model).ok_or_else(|| {
         anyhow::anyhow!(
@@ -1000,31 +977,6 @@ mod tests {
     /// engine round-trips against elsewhere in the workspace.
     fn ir_signal(ti: f64, t1: f64, a: f64, b: f64) -> f64 {
         a + b * (-ti / t1).exp()
-    }
-
-    /// A `.mat`-shaped ms TI vector (qMRLab convention) must reach the
-    /// fitting core as seconds — the ms -> s boundary conversion invariant
-    /// (CLAUDE.md "Units — BIDS-native").
-    #[test]
-    fn mat_ti_to_seconds_converts_ms_to_seconds() {
-        let ti_ms = vec![350.0_f64, 500.0, 900.0, 1250.0];
-        let ti_s = mat_ti_to_seconds(Some(ti_ms)).unwrap();
-        assert_eq!(ti_s, vec![0.35, 0.5, 0.9, 1.25]);
-
-        // Feeding the converted TIs through the same `ProtocolSource::Mat`
-        // path `load_input`/`run_fit` use must yield the seconds values, not
-        // the original ms ones.
-        let proto = qmrust_core::protocol::resolve(qmrust_core::protocol::ProtocolSource::Mat {
-            inversion_times: Some(ti_s.clone()),
-        });
-        let got: Vec<f64> = proto
-            .volumes
-            .iter()
-            .map(|v| *v.get("InversionTime").unwrap())
-            .collect();
-        assert_eq!(got, ti_s);
-
-        assert!(mat_ti_to_seconds(None).is_none());
     }
 
     #[test]
