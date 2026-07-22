@@ -24,7 +24,7 @@ The contract that makes this possible lives entirely in the `Model` trait
 - a model **declares** what shape of measurement it reads (`measurement()`)
   and where its acquisition parameters come from (`protocol_schema()`);
   auxiliary maps it needs are declared too (`required_inputs()`).
-- the shell (CLI today, browser/Tauri later) **fulfills** those declarations:
+- the shell (the CLI, or a browser/Tauri frontend) **fulfills** those declarations:
   it locates files, reads metadata, resolves values, and hands the model an
   identity-keyed `Measurement` plus a scalar `Aux` bundle.
 
@@ -59,7 +59,7 @@ fit.
   `BidsConfig`: `Sequential` sets (ordered by an entity, e.g. IRT1's `inv-`
   index, or qmt_spgr's custom `QMTSPGR` suffix ordered `by: [mt, flip]`),
   `Named` sets (fixed named slots matched by entity constraints, e.g. MTS's
-  PDw/MTw/T1w), and `Plain` sets (parse-only, not yet grouped). A registered
+  PDw/MTw/T1w), and `Plain` sets (parse-only, ungrouped). A registered
   model's suffix is discovered even if `.bidsignore`'d (`QMTSPGR` is a
   custom, non-official suffix, so its example dataset ships a `.bidsignore`
   entry for general-purpose BIDS validators — `rust-bids`'s own discovery
@@ -212,31 +212,33 @@ Putting the pieces together, per collection:
    contain). An empty `Protocol` (the model reads its own config) is always
    consistent.
 
-This is the same path regardless of source: a BIDS collection is just one
-way to arrive at a `Protocol` and an ordered volume set; a `.mat` file
-(`ProtocolSource::Mat` in `qmrust-core/src/protocol.rs`) is another.
+This resolved-`Protocol` path is specific to BIDS collections. A `.mat` file
+supplies no `Protocol` at all: it carries only voxel data and a mask (plus
+any aux as sibling files), and the model reads its acquisition parameters
+straight from `--config` — `build` is handed an empty `Protocol`.
 
 ---
 
 ## 5. The two feeders
 
-- **CLI, `qmrust fit --bids-dir <dir>`** — today's feeder. Builds a native
+- **CLI, `qmrust fit --bids-dir <dir>`** — the BIDS feeder. Builds a native
   `StdFs`, groups the dataset via `rust_bids::collections_for` keyed on the
   chosen model's registry `bids_suffix`, and for each collection calls
   `load_collection` (reads the NIfTI volumes + calls `resolve_protocol`),
   `resolve_aux_and_mask` (§1) to fill any `required_inputs()` and the
   configured mask, then `fit_and_write` (`build_volume_ids` → `engine::run` →
-  NIfTI output). v1 scope: `Sequential` collections only — `Named`
-  collections are logged and skipped for now (`commands.rs::run_fit_bids`/
+  NIfTI output). Only `Sequential` collections drive a fit — `Named`
+  collections are logged and skipped (`commands.rs::run_fit_bids`/
   `load_collection`).
-- **Browser/Tauri (future)** — same `DatasetFs` seam, a different
-  implementation backed by JS directory listings instead of `std::fs`; no
-  change to `rust-bids`'s resolution or protocol logic.
-- **Non-BIDS `--data`/`--mat`** — doesn't go through `rust-bids` at all.
-  Acquisition parameters come from the model's own `--config` YAML
-  (`ProtocolSource::Yaml`, an empty `Protocol`) or a `.mat` override
-  (`ProtocolSource::Mat`); a model's `Source::Option` schema entries are the
-  hook for reading a non-BIDS parameter out of `--config` under the same
+- **Browser/Tauri** — same `DatasetFs` seam, a different implementation
+  backed by JS directory listings instead of `std::fs`; no change to
+  `rust-bids`'s resolution or protocol logic.
+- **Non-BIDS `--data`/`--mat`** — doesn't go through `rust-bids` at all, and
+  supplies no `Protocol`: the `.mat` file carries only voxel data and a
+  mask (plus any aux as sibling files), and the model reads its acquisition
+  parameters from its own `--config` YAML; `build` is handed an empty
+  `Protocol`. A model's `Source::Option` schema entries are the hook for
+  reading a non-BIDS parameter out of `--config` under the same
   `protocol_schema()` contract.
 
 ---
@@ -245,9 +247,9 @@ way to arrive at a `Protocol` and an ordered volume set; a `.mat` file
 
 `qmrust-core` is BIDS-native (SI): sidecar/config timing fields (`InversionTime`,
 `RepetitionTime`, …) and fitted time-constant maps are in seconds, offsets in Hz, field in
-tesla, `FlipAngle` in degrees per BIDS-MRI. A non-BIDS source (`.mat` via
-`ProtocolSource::Mat`) converts to these units at the shell boundary before reaching a
-model; qMRLab-reference validation reconciles the resulting ×1000 (s vs. ms) factor rather
+tesla, `FlipAngle` in degrees per BIDS-MRI. A non-BIDS source (e.g. a qMRLab `.mat` in
+ms/degrees) is converted to these units at the shell boundary before reaching a model;
+qMRLab-reference validation reconciles the resulting ×1000 (s vs. ms) factor rather
 than expecting raw equality. See the "Units — BIDS-native (SI)" principle in
 [`CLAUDE.md`](../../CLAUDE.md) for the full rule.
 
@@ -256,10 +258,10 @@ than expecting raw equality. See the "Units — BIDS-native (SI)" principle in
 ## Deferred
 
 - Fitting `Named` collections, and mapping qMT/MP2RAGE-style protocols onto
-  them (today only `Sequential` collections drive a real fit).
+  them — only `Sequential` collections drive a real fit.
 - A real multi-field `Source::Derived` model (e.g. MP2RAGE) — the mechanism
-  is proven today only by IR's single-field `InversionTime` schema and a
-  stub `Derived` test.
+  is proven only by IR's single-field `InversionTime` schema and a stub
+  `Derived` test.
 
 ---
 

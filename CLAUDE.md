@@ -86,7 +86,7 @@ Convert non-BIDS sources (e.g. a qMRLab `.mat` in ms) to BIDS units **at the she
 1. New dir `crates/qmrust-core/src/models/<name>/`: `config.rs` (a `serde` struct +
    `validate()`), the pure math, and `model.rs` (`impl Model` + `pub fn build`).
 2. Register it in `models/mod.rs`.
-3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name + BIDS suffix + `build`).
+3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name + BIDS suffix + `build` + `describe` + `dump`).
 4. Add tests (forward→fit round-trip; config parse/validate).
 
 That's it — do **not** add `match cfg.model` branches in the CLI, engine, sim, or config.

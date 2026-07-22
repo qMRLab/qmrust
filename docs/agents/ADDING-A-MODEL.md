@@ -86,11 +86,13 @@ not reintroduce it.
 ```rust
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
 pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
+pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
 pub struct ModelEntry {
     pub name: &'static str,
     pub bids_suffix: &'static str,
     pub build: Builder,
     pub describe: Describer,
+    pub dump: Dumper,
 }
 pub fn all() -> &'static [ModelEntry];
 pub fn by_name(name: &str) -> Option<&'static ModelEntry>;
@@ -140,12 +142,14 @@ before any data is resolved; `build` is the fit-ready path.
      own YAML sub-tree, with `validate_options()`/`validate_protocol()` methods.
    - pure math (signal equation + fitter).
    - `model.rs` — `impl Model for <Name>Model`, `impl ModelConfig for <Name>Config`
-     (the hooks above), and two one-line entry points:
-     `pub fn build(v, proto) { core::model::build_model::<C>(v, proto) }` and
-     `pub fn describe(v) { core::model::describe_model::<C>(v) }`.
+     (the hooks above), and three one-line entry points:
+     `pub fn build(v, proto) { core::model::build_model::<C>(v, proto) }`,
+     `pub fn describe(v) { core::model::describe_model::<C>(v) }`, and
+     `pub fn dump(v) { core::model::dump_model::<C>(v) }`.
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name +
-   BIDS suffix + `build` + `describe`).
+   BIDS suffix + `build` + `describe` + `dump` — the three registry-facing
+   capabilities every model provides).
 4. Tests: forward→fit round-trip; config parse/validate; `ingest_protocol`
    composes from a resolved `Protocol`; if `bids_outputs()` is non-empty,
    assert every entry names a real `output_names()` value.

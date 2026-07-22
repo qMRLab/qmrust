@@ -53,7 +53,6 @@ crates/qmrust-core/src/
 ├── engine.rs          the parallel voxel-fitting engine (FitStrategy)
 ├── sim/               forward signal, noise, sim→fit round-trips, reports
 ├── config.rs          parse_config(&str) → (Config, Value)   (parsing only, no fs)
-├── protocol.rs        ProtocolSource → Protocol
 ├── fitting.rs         FitResults type
 └── quad.rs            numerical quadrature helper
 ```
@@ -185,12 +184,13 @@ function that builds it:
 ```rust
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
 pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
+pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
 
-pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder, pub describe: Describer }
+pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder, pub describe: Describer, pub dump: Dumper }
 
 pub fn all() -> &'static [ModelEntry] { &[
-    ModelEntry { name: "inversion_recovery", bids_suffix: "IRT1", build: models::inversion_recovery::build, describe: models::inversion_recovery::describe },
-    ModelEntry { name: "qmt_spgr",           bids_suffix: "QMTSPGR", build: models::qmt_spgr::build, describe: models::qmt_spgr::describe },
+    ModelEntry { name: "inversion_recovery", bids_suffix: "IRT1", build: models::inversion_recovery::build, describe: models::inversion_recovery::describe, dump: models::inversion_recovery::dump },
+    ModelEntry { name: "qmt_spgr",           bids_suffix: "QMTSPGR", build: models::qmt_spgr::build, describe: models::qmt_spgr::describe, dump: models::qmt_spgr::dump },
 ]}
 
 pub fn by_name(name: &str) -> Option<&'static ModelEntry>;
@@ -379,7 +379,8 @@ fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
 1. Create `crates/qmrust-core/src/models/<name>/` with `config.rs`, the math, and
    `model.rs` (`impl Model` + `pub fn build`).
 2. Register the module in `models/mod.rs`.
-3. Add **one** `ModelEntry` to `registry::all()` (name + BIDS suffix + `build`).
+3. Add **one** `ModelEntry` to `registry::all()` (name + BIDS suffix + `build` +
+   `describe` + `dump`).
 4. Add unit tests (forward→fit round-trip; config parse/validate).
 
 Nothing in `qmrust-cli`, `qmrust-wasm`, `engine`, or `config` needs to change. If the
