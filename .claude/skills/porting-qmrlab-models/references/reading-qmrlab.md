@@ -85,7 +85,8 @@ qMRLab's `Models/T1/IR.m` (Inversion Recovery) class members map onto
 
 | qMRLab `IR.m`                                                    | qmrust                                                                                   |
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `xnames = {'T1','b','a'}` (fit output order)                     | `IrFitter::param_names()` / `output_names()` in `crates/qmrust-core/src/models/inversion_recovery/fit.rs` |
+| `xnames = {'T1','b','a'}` (fit output order)                     | `IrFitter::output_names()` in `crates/qmrust-core/src/models/inversion_recovery/fit.rs` — `["T1","b","a",...]`, the per-voxel fit-output order; this is the qMRLab-equivalent name list, **not** `param_names()` |
+| (equation's own parameter order — qMRLab passes `x` positionally into `equation`, order implied by `st`/`lb`/`ub`) | `IrFitter::param_names()` in the same file — `["T1","a","b"]`, the `forward()`/equation argument order. Different from `output_names()`'s `a`/`b` order: a silent transposition between the two is exactly the hazard flagged above |
 | `Prot.IRData.Mat` (inversion times, ms)                          | `IrConfig.inversion_times: Vec<f64>` (seconds) in `crates/qmrust-core/src/models/inversion_recovery/config.rs`, surfaced via `protocol_schema()` / `IrModel::bids_volume` (`InversionTime` sidecar key) in `crates/qmrust-core/src/models/inversion_recovery/model.rs` |
 | `buttons` — fit method ("Magnitude"/"Complex"), T1 search range, zoom factor/points | `IrConfig.method: Option<FitMethod>`, `t1_range: T1Range`, `zoom: ZoomConfig` in `crates/qmrust-core/src/models/inversion_recovery/config.rs` |
 | `equation(obj, x)`: `S(TI) = a + b*exp(-TI/T1)`, `abs(...)` for magnitude | `IrFitter::forward` in `crates/qmrust-core/src/models/inversion_recovery/fit.rs` (same equation, seconds-native `TI`/`T1`) |
