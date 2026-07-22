@@ -68,6 +68,7 @@ QMT_MAT="$(find "$DATA/qmt" -name 'MTdata.mat' | head -1)"
 [ -n "$QMT_MAT" ] || { echo "MTdata.mat not found in qMT archive"; exit 1; }
 QMT_DIR="$(dirname "$QMT_MAT")"
 QMT_CONFIG="recipes/non-bids/qmt_config_ramani.yaml"
+QMT_BIDS_CONFIG="recipes/bids/qmt_config_ramani.yaml"
 
 echo "Converting qMT data to the same BIDS dataset at $BIDS_DIR (sub-02)..."
 "$BIN" bidsify --model qmt_spgr \
@@ -78,7 +79,7 @@ echo "BIDS dataset tree (with sub-02 appended):"
 find "$BIDS_DIR" -type f | sort
 
 echo "Fitting sub-02 (QMTSPGR) via the BIDS path..."
-"$BIN" fit --bids-dir "$BIDS_DIR" --config "$QMT_CONFIG" --output-dir "$BIDS_DIR/derivatives"
+"$BIN" fit --bids-dir "$BIDS_DIR" --config "$QMT_BIDS_CONFIG" --output-dir "$BIDS_DIR/derivatives"
 
 QMT_ANAT="$BIDS_DIR/derivatives/qmrust/sub-02/anat"
 for m in Fmap kRmap R1Fmap R1Rmap T2Fmap T2Rmap; do

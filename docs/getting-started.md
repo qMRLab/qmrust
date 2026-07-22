@@ -20,8 +20,11 @@ cargo install --path crates/qmrust-cli   # optional: onto your PATH
 ## Run a fit
 
 Every fit needs a **config** (protocol + fitting parameters) and some data.
-Example configs live in [`recipes/`](../recipes/) — they're fully explicit YAML,
-so a run is self-documenting.
+Example configs live in [`recipes/`](../recipes/), grouped by input type. The
+non-BIDS configs (`recipes/non-bids/`) are fully explicit YAML that list the
+whole acquisition protocol, so a run is self-documenting. BIDS configs
+(`recipes/bids/`) leave the protocol out; those values come from the dataset's
+JSON sidecars.
 
 ```bash
 cargo run -p qmrust-cli -- fit \
@@ -60,7 +63,8 @@ cargo run -p qmrust-cli -- fit \
 This scans the dataset, groups files into collections per the config's model
 (e.g. an inversion-time series for IRT1, or an Angle/Offset series for
 QMTSPGR), and fits each subject (and session, if present), writing
-`<out>/<subject>[/<session>]/<map>.nii.gz`. Each model composes its
+`<out>/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`.
+Each model composes its
 acquisition protocol from the sidecars and resolves any auxiliary maps it
 declares (B1/B0/R1) from the dataset by suffix — so aux-requiring models like
 qMT fit through `--bids-dir` too. The one shape not yet BIDS-fittable is a
@@ -136,7 +140,7 @@ Fitting the resulting `QMTSPGR` collection the same way as IRT1:
 ```bash
 cargo run -p qmrust-cli -- fit \
   --bids-dir ds-qmrust \
-  --config recipes/non-bids/qmt_config_ramani.yaml \
+  --config recipes/bids/qmt_config_ramani.yaml \
   --output-dir ds-qmrust/derivatives
 ```
 

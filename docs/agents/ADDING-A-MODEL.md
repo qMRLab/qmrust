@@ -116,7 +116,7 @@ parse config → validate_options → ingest_protocol → validate_protocol
 Your config implements `ModelConfig` and supplies only the config-shaped hooks:
 
 ```rust
-pub trait ModelConfig: DeserializeOwned {
+pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default {
     const NAME: &'static str;
     const SUBKEY: Option<&'static str>;         // Some("qmt_spgr"), or None for top-level
     fn validate_options(&mut self) -> Result<()>;               // config-intrinsic checks

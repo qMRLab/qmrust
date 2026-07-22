@@ -1,7 +1,7 @@
 model: inversion_recovery
 
-# BIDS input: InversionTime and RepetitionTime are read from JSON sidecars via
-# the model's protocol_schema(), so protocol arrays are NOT listed here.
+# BIDS input: InversionTime is read from the JSON sidecars via the model's
+# protocol_schema(), so the inversion-time list is NOT declared here.
 
 # Algorithm options (always used; not BIDS metadata).
 method: magnitude

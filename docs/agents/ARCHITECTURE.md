@@ -343,7 +343,7 @@ impl ModelConfig for IrConfig {
     const SUBKEY: Option<&'static str> = None;                 // IR reads top-level keys
     fn validate_options(&mut self) -> Result<()> { /* method, t1_range, zoom */ }
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        // BIDS sidecars (or a .mat) supply the InversionTimes here.
+        // BIDS sidecars supply the InversionTimes here.
         if !proto.volumes.is_empty() { /* pull InversionTime values into self.inversion_times */ }
         Ok(())
     }
