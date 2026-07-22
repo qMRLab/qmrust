@@ -29,6 +29,21 @@ prove equivalence.
 The skill is phase-gated: stop at each boundary for explicit human sign-off before
 proceeding. This catches wrong-math-that-runs while it is still cheap.
 
+**Ask before you assume.** A gate is not a rubber stamp. At each one, surface every
+unresolved assumption as an explicit question and get an answer before proceeding —
+never silently guess when a choice would change the math or the output maps and the
+qMRLab source does not settle it. The questions that most often decide a port:
+- which model variant / config is intended (many qMRLab models have several);
+- whether a quantity is in the units you assumed (ms vs s, degrees vs radians, Hz);
+- which parameters are fitted vs fixed, and their bounds/start values;
+- whether the model actually fits the voxelwise `forward`/`fit` paradigm, or needs a
+  different shape — if the abstraction does not fit, improve the abstraction, do not
+  special-case;
+- what tolerance counts as agreement with qMRLab (Tier 3).
+
+A wrong silent assumption here produces maps that look right and are wrong, so when in
+doubt, ask — that is cheaper at every phase than discovering it at validation.
+
 **Phase 0 — Setup.** Obtain the qMRLab source: ask for a local qMRLab checkout path
 (or read it from a configured location) and confirm the target model name. It reads
 `.m` files directly with Read/Grep. Record how this model fetches its example data
