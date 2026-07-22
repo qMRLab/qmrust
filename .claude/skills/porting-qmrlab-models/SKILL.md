@@ -12,7 +12,7 @@ translating one subclass into another.
 | ---------------------------------------- | ------------------------------------------------------------- |
 | `AbstractModel` (base class)             | the `Model` trait **and** the `ModelConfig` trait             |
 | `UpdateFields` / shared model machinery  | the `build_model::<C>` pipeline (the "template method")       |
-| class property `xnames`                  | `param_names()` / `output_names()`                            |
+| class property `xnames` (fit-output order) | `output_names()` (`param_names()` is the `forward`-arg order) |
 | `st`, `lb`/`ub`, `fx`                    | fitter start values, `param_bounds()`, `fixed_mask()`         |
 | `Prot` (protocol struct)                 | `protocol_schema()` + config arrays + `ingest_protocol`       |
 | `buttons` / options                      | the model's own `Config` struct (`ModelConfig`)               |

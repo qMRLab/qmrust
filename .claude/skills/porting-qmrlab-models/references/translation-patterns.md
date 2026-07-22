@@ -68,17 +68,14 @@ non-test, non-wasm-excluded path. Verify after every edit:
 cargo build -p qmrust-core --target wasm32-unknown-unknown
 ```
 
-The one place the reference tree touches a `.mat` file at all is
-`crates/qmrust-core/src/models/qmt_spgr/sf.rs`'s `load_reference_arrays`
-(reads a MATLAB-exported lineshape table to cross-check the Rust
-implementation) — and it is gated `#[cfg(test)]`, so it never compiles into
-a shipped build, wasm or native, and its own test module is further gated
-`#[cfg(all(test, not(target_arch = "wasm32")))]` because `matfile` itself
-isn't wasm-portable. That is the pattern: if a model port needs a MATLAB
-fixture to prove the port right, the code that reads it lives behind
-`#[cfg(test)]` (or, for non-test code that is genuinely native-only,
-`#[cfg(not(target_arch = "wasm32"))]`) — never unconditionally in the
-model's shipped path.
+The one place the reference tree reads a `.mat` file —
+`crates/qmrust-core/src/models/qmt_spgr/sf.rs`'s `load_reference_arrays`, which
+cross-checks the Rust lineshape against a MATLAB-exported table — is gated
+`#[cfg(test)]` (its test module further `#[cfg(all(test, not(target_arch =
+"wasm32")))]`, since `matfile` isn't wasm-portable). That is the pattern: code
+reading a MATLAB fixture to prove a port lives behind `#[cfg(test)]` (or
+`#[cfg(not(target_arch = "wasm32"))]` for genuinely native-only non-test code),
+never in the model's shipped path.
 
 ## Object safety: `Model` is `Box<dyn Model>`-safe by construction
 

@@ -132,13 +132,13 @@ config-gated aux wires this the same way: read the config's own flag inside
 ## The rule of judgment
 
 `required_inputs()`'s `required` flag and `sim_required_aux()`'s membership
-are independent decisions with different failure modes on either side —
-BIDS-fit hard error vs. sim configuration mismatch — and getting either one
-wrong reads as a plausible generalization right up until it breaks a test.
+are independent decisions with different failure modes — BIDS-fit hard error
+vs. sim configuration mismatch — and getting either wrong reads as a plausible
+generalization right up until it breaks a test.
 
 Before promoting an input to `required: true`, or writing any rule like "if
-config flag X is set, input Y is required," check it against the round-trip
-and oracle tests, not against intuition:
+config flag X is set, input Y is required," check it against the tests, not
+against intuition:
 
 - the `#[ignore]`d round-trip tests `bids_fit_matches_mat_fit` /
   `qmtspgr_bids_fit_matches_mat_fit` (`crates/qmrust-cli/src/commands.rs`),
@@ -146,9 +146,7 @@ and oracle tests, not against intuition:
 - `ci/integration_osf.sh`, which exercises the real pipelines against
   qMRLab's OSF datasets.
 
-The qMT R1 case is the concrete cautionary example: `use_r1map_to_constrain_r1f`
-defaults to `true`, so "require R1map whenever the flag is on" reads as a
-sound tightening — until you recall that `qmtspgr_bids_fit_matches_mat_fit`
-fits under that exact default with no R1map file present, and would start
-failing. The round-trip test is the arbiter, not the plausibility of the
-generalization.
+The qMT R1 case above is the cautionary example: "require R1map when the flag
+is on" looks sound until you recall `qmtspgr_bids_fit_matches_mat_fit` fits
+under that exact default with no R1map present. The test is the arbiter, not
+the plausibility of the generalization.

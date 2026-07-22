@@ -85,8 +85,7 @@ qMRLab's `Models/T1/IR.m` (Inversion Recovery) class members map onto
 
 | qMRLab `IR.m`                                                    | qmrust                                                                                   |
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `xnames = {'T1','b','a'}` (fit output order)                     | `IrFitter::output_names()` in `crates/qmrust-core/src/models/inversion_recovery/fit.rs` — `["T1","b","a",...]`, the per-voxel fit-output order; this is the qMRLab-equivalent name list, **not** `param_names()` |
-| (equation's own parameter order — qMRLab passes `x` positionally into `equation`, order implied by `st`/`lb`/`ub`) | `IrFitter::param_names()` in the same file — `["T1","a","b"]`, the `forward()`/equation argument order. Different from `output_names()`'s `a`/`b` order: a silent transposition between the two is exactly the hazard flagged above |
+| `xnames = {'T1','b','a'}` (fit-output order) | `IrFitter::output_names()` — `["T1","b","a",...]` — in `crates/qmrust-core/src/models/inversion_recovery/fit.rs`. **Not** `param_names()`: that is `["T1","a","b"]`, the `forward`/equation argument order. The `a`/`b` transposition between the two is the silent-wrong-port hazard flagged above. |
 | `Prot.IRData.Mat` (inversion times, ms)                          | `IrConfig.inversion_times: Vec<f64>` (seconds) in `crates/qmrust-core/src/models/inversion_recovery/config.rs`, surfaced via `protocol_schema()` / `IrModel::bids_volume` (`InversionTime` sidecar key) in `crates/qmrust-core/src/models/inversion_recovery/model.rs` |
 | `buttons` — fit method ("Magnitude"/"Complex"), T1 search range, zoom factor/points | `IrConfig.method: Option<FitMethod>`, `t1_range: T1Range`, `zoom: ZoomConfig` in `crates/qmrust-core/src/models/inversion_recovery/config.rs` |
 | `equation(obj, x)`: `S(TI) = a + b*exp(-TI/T1)`, `abs(...)` for magnitude | `IrFitter::forward` in `crates/qmrust-core/src/models/inversion_recovery/fit.rs` (same equation, seconds-native `TI`/`T1`) |
@@ -96,12 +95,9 @@ qMRLab's `Models/T1/IR.m` (Inversion Recovery) class members map onto
 | `voxelwise = 1`                                                   | `IrModel::strategy()` returns `FitStrategy::Voxelwise` |
 | `onlineData` URL (OSF IR dataset + `FitResults/T1.nii.gz`)        | fetched and converted by `qmrust bidsify`, then fit via `qmrust fit --bids-dir`; validated against `FitResults` in the `#[ignore]`d `bids_fit_matches_mat_fit` test (see `CLAUDE.md`) |
 
-Two unit conversions happen only at the shell boundary, never inside
-`fit.rs`/`model.rs`: qMRLab's inversion times and T1 search range are
-milliseconds; `IrConfig`'s `inversion_times`/`t1_range` are seconds. The
-core fit is scale-consistent (`build_nls_struct`'s doc comment in
-`crates/qmrust-core/src/models/inversion_recovery/fit.rs` notes this
-explicitly) — whatever unit TI and the T1 grid share is the unit the
-fitted T1 comes out in, so the conversion is a pure multiply-by-0.001
-done once when the config is built from a qMRLab `.mat`/sidecar source,
+The ms→s conversion (inversion times and T1 search range) happens only at the
+shell boundary, when the config is built from a qMRLab `.mat`/sidecar source —
+never inside `fit.rs`/`model.rs`. The core fit is scale-consistent
+(`build_nls_struct`'s doc comment notes this): TI and the T1 grid share a unit
+and the fitted T1 comes out in it, so the conversion is one multiply-by-0.001,
 not a per-voxel operation.
