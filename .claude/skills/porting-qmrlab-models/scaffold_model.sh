@@ -23,6 +23,13 @@ MODS="$CORE/models/mod.rs"
 [ -d "$SRC" ] || { echo "reference model not found: $SRC" >&2; exit 1; }
 [ -e "$DST" ] && { echo "target already exists: $DST" >&2; exit 1; }
 
+# Refuse if this model's identity is already registered anywhere — otherwise a
+# stale/partial prior run would get a duplicate registry entry or grouping block.
+# Checked before any file is mutated, so a rejected run leaves the tree untouched.
+grep -q "pub mod ${NAME};" "$MODS" && { echo "models/mod.rs already declares '${NAME}'" >&2; exit 1; }
+grep -q "name: \"${NAME}\"" "$REG" && { echo "registry already has a model named '${NAME}'" >&2; exit 1; }
+grep -q "^${SUFFIX}:" "$GROUP" && { echo "grouping already defines suffix '${SUFFIX}'" >&2; exit 1; }
+
 CAMEL="$(echo "$NAME" | awk -F_ '{for(i=1;i<=NF;i++) printf "%s%s", toupper(substr($i,1,1)), substr($i,2)}')"
 
 # 1. Clone the reference model.

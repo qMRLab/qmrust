@@ -8,9 +8,9 @@ MATLAB-to-Rust idioms.
 
 ## The pipeline the scaffold hands you
 
-`./scaffold_model.sh <name> <Suffix>` clones `inversion_recovery` (the living
-reference model) into `crates/qmrust-core/src/models/<name>/` and renames its
-symbols. The result is a three-file layout, each file with one job:
+`.claude/skills/porting-qmrlab-models/scaffold_model.sh <name> <Suffix>` (run from
+the repo root) clones `inversion_recovery` (the living reference model) into
+`crates/qmrust-core/src/models/<name>/` and renames its symbols. The result is a three-file layout, each file with one job:
 
 - **`config.rs`** — `<Camel>Config`, a plain data struct
   (`Deserialize + Serialize + Default`) holding every option and protocol

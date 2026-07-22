@@ -7,13 +7,27 @@ HERE="$ROOT/.claude/skills/porting-qmrlab-models"
 NAME="scaffold_probe"
 SUFFIX="ScaffoldProbe"
 CORE="$ROOT/crates/qmrust-core/src"
+DST="$CORE/models/$NAME"
+MODS="$CORE/models/mod.rs"
+REG="$CORE/registry.rs"
+GROUP="$ROOT/crates/rust-bids/src/default_grouping.yaml"
 
+# Refuse to run if the probe model already exists — never clobber it. Checked
+# before the trap is armed, so cleanup can't delete a pre-existing directory.
+[ -e "$DST" ] && { echo "refusing to run: $DST already exists" >&2; exit 1; }
+
+# Snapshot the files the scaffold mutates and restore them verbatim on exit.
+# (git checkout would discard any unrelated uncommitted edits to these files.)
+SNAP="$(mktemp -d)"
+cp "$MODS" "$SNAP/mod.rs"
+cp "$REG" "$SNAP/registry.rs"
+cp "$GROUP" "$SNAP/default_grouping.yaml"
 cleanup() {
-  rm -rf "$CORE/models/$NAME"
-  git -C "$ROOT" checkout -- \
-    crates/qmrust-core/src/models/mod.rs \
-    crates/qmrust-core/src/registry.rs \
-    crates/rust-bids/src/default_grouping.yaml 2>/dev/null || true
+  rm -rf "$DST"
+  cp "$SNAP/mod.rs" "$MODS"
+  cp "$SNAP/registry.rs" "$REG"
+  cp "$SNAP/default_grouping.yaml" "$GROUP"
+  rm -rf "$SNAP"
 }
 trap cleanup EXIT
 

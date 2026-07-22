@@ -39,36 +39,40 @@ path work for this model — not yet a numerical comparison against qMRLab.
 ## Tier 3 — Match qMRLab (when a reference result exists)
 
 When qMRLab publishes a reference result for the fetched dataset (e.g. a `FitResults`
-struct alongside the OSF data), the fitted maps must match it within a stated tolerance.
-The comparison must be unit-aware: qmrust is BIDS-native throughout, so a qMRLab quantity
-in non-BIDS units (e.g. milliseconds vs. seconds) needs an explicit conversion before
-comparison — never expect raw numerical equality across differing units.
+struct alongside the OSF data), the fitted maps must be compared against it **directly**,
+voxelwise, and match within a stated tolerance. There is no universal tolerance: choose a
+per-map absolute or relative bound from the map's units and qMRLab's own numerical
+precision, and record it in the port's notes. The comparison must be unit-aware — qmrust
+is BIDS-native throughout, so a qMRLab quantity in non-BIDS units (e.g. milliseconds vs.
+seconds) needs an explicit conversion before comparison; never expect raw numerical
+equality across differing units.
 
-This is not a one-off manual comparison; it must be wired into the harnesses the project
-already runs for this purpose:
+This direct `FitResults` comparison is the tier's actual requirement, and no harness
+performs it for a new model yet — you must add it. Two existing harnesses are
+**prerequisites**, not the comparison itself:
 
-- **`ci/integration_osf.sh`** — downloads qMRLab's own OSF datasets and runs the qmrust
-  fit pipelines against them end-to-end (mirrors qMRLab's `downloadData.m` sources). This
-  is the CI-side, always-on check that the full fetch → bidsify/mat → fit pipeline stays
-  green against real qMRLab data.
-- **The `#[ignore]`d round-trip tests in `crates/qmrust-cli/src/commands.rs`** —
-  `bids_fit_matches_mat_fit` and `qmtspgr_bids_fit_matches_mat_fit` assert that fitting a
-  dataset through the BIDS path produces maps that are exactly equal (voxelwise, values
-  and NaN footprint) to fitting the same dataset through the `.mat` path. They require a
-  local qMRLab dataset (via `QMRUST_IR_MAT`/`QMRUST_IR_MASK`-style env vars) and no
-  network access, so they are `#[ignore]`d by default:
+- **`ci/integration_osf.sh`** downloads qMRLab's OSF datasets and runs the fit pipelines
+  end-to-end (mirrors qMRLab's `downloadData.m` sources), asserting only that each output
+  map is produced and non-empty. It is a smoke check that the fetch → fit pipeline stays
+  green against real qMRLab data — it does **not** currently compare any map to
+  `FitResults`.
+- **The `#[ignore]`d tests in `crates/qmrust-cli/src/commands.rs`**
+  (`bids_fit_matches_mat_fit`, `qmtspgr_bids_fit_matches_mat_fit`) assert that fitting a
+  dataset through the BIDS path produces maps exactly equal (voxelwise, values and NaN
+  footprint) to fitting it through the `.mat` path. This is BIDS-vs-`.mat` **path parity**
+  — the precondition for a qMRLab-agreement claim made via one path to hold via the other
+  — not agreement with qMRLab. They need a local dataset and no network, so they run under
+  `--ignored`:
   ```bash
   QMRUST_IR_MAT=<path>/IRData.mat QMRUST_IR_MASK=<path>/Mask.mat \
     cargo test -p qmrust-cli --release bids_fit_matches_mat_fit -- --ignored --nocapture
   ```
-  These do not compare against qMRLab's `FitResults` directly — they guarantee the BIDS
-  and `.mat` ingestion paths agree with each other, which is the precondition for any
-  qMRLab-agreement claim made via the BIDS path to also hold via the `.mat` path (and
-  vice versa).
 
-A new model's Tier 3 validation means: extend `ci/integration_osf.sh` to fetch and fit
-this model's OSF dataset, and add an equivalent BIDS-vs-`.mat` round-trip test for it
-alongside the IR and qMT-SPGR ones in `crates/qmrust-cli/src/commands.rs`.
+A new model's Tier 3 therefore means: fetch qMRLab's `FitResults` for the model's dataset,
+extend `ci/integration_osf.sh` (or an equivalent test) to compare the produced maps to
+those `FitResults` voxelwise within the stated tolerance — going beyond its current
+non-empty assertion — and add a BIDS-vs-`.mat` parity test alongside the IR and qMT-SPGR
+ones in `crates/qmrust-cli/src/commands.rs`.
 
 (BIDS-grouping/resolver correctness — as opposed to model fitting — has its own golden
 oracle at `crates/rust-bids/tests/oracle.rs`; it is unrelated to numerical fit agreement

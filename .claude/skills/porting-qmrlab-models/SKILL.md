@@ -41,7 +41,7 @@ parameters, protocol, fit method, and every input (including optional image inpu
 with their units.
 → *Gate: confirm the equation and units.*
 
-**Phase 2 — Translate.** Run `./scaffold_model.sh <name> <Suffix>`, then fill the four
+**Phase 2 — Translate.** Run `.claude/skills/porting-qmrlab-models/scaffold_model.sh <name> <Suffix>` (from the repo root), then fill the four
 `TODO(port)` markers in `config.rs` (config fields), `fit.rs` (signal equation +
 fitter), `model.rs` (protocol mapping / `bids()`), and the `default_grouping.yaml`
 grouping block. Write the forward→fit round-trip test.
@@ -84,9 +84,10 @@ qMRLab model defines how to fetch it):
 
 Required when a qMRLab reference result exists (e.g. `FitResults` on OSF):
 
-- the fitted maps match qMRLab's `FitResults` within a stated tolerance, accounting
-  for unit differences (not raw numerical equality);
-- the comparison is wired into the `oracle` test and/or `ci/integration_osf.sh`.
+- the fitted maps are compared voxelwise to qMRLab's `FitResults` within a stated
+  tolerance, accounting for unit differences (not raw numerical equality);
+- that comparison is wired into `ci/integration_osf.sh` (beyond its current non-empty
+  check) — see `references/validation.md` for what counts and what does not.
 
 When no reference result exists:
 
