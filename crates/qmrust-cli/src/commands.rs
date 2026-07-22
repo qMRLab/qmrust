@@ -89,7 +89,10 @@ pub fn run_dump_config(config_path: PathBuf) -> Result<()> {
                     Some(sub) => serde_yaml::from_value(sub.clone())?,
                     None => Default::default(),
                 };
-            q.validate()?;
+            q.validate_options()?;
+            if !q.protocol.mtdata.is_empty() {
+                q.validate_protocol()?;
+            }
             println!("model: qmt_spgr");
             println!("qmt_spgr:");
             for line in serde_yaml::to_string(&q)?.lines() {
@@ -1396,39 +1399,30 @@ mod tests {
         );
     }
 
-    /// A qmt_spgr-targeted dataset must exit non-zero, not silently report
-    /// success having fit zero subjects. `QMTSPGR` has a `rust-bids` sequential
-    /// set definition, so this 3-volume dataset resolves into a real collection
-    /// — but it doesn't carry the model's expected 10-row series protocol, so
-    /// `validate_against_protocol` inside the model's `build` bails (wrapped in
-    /// a "protocol inconsistent" context). Check the full error chain (`{:?}`),
-    /// not just the outer `Display` message, for the underlying counts.
+    /// A qmt_spgr dataset that resolves but cannot supply the model's protocol
+    /// must exit non-zero, not silently report success. Each volume composes its
+    /// acquisition (Angle/Offset) from its sidecar; here the sidecars omit
+    /// `Offset`, so `resolve_protocol` bails on the missing field and the error
+    /// propagates through `run_fit_bids` rather than being logged-and-skipped.
     #[test]
-    fn run_fit_bids_bails_when_every_collection_is_skipped() {
-        let tmp = TempDir::new("fit-bids-all-named");
+    fn run_fit_bids_bails_when_sidecars_lack_required_protocol() {
+        let tmp = TempDir::new("fit-bids-missing-field");
         let bids_dir = tmp.0.join("dataset");
         let anat_dir = bids_dir.join("sub-01/anat");
         std::fs::create_dir_all(&anat_dir).unwrap();
 
         let header = make_minimal_header(1, 1, 1);
         let data = Array3::from_elem((1, 1, 1), 1.0_f64);
-        // Give each volume a valid Angle/Offset sidecar (qmt_spgr's
-        // `protocol_schema()` reads these) but only 3 of the model's 10
-        // expected mtdata rows, so the mismatch is caught by
-        // `validate_against_protocol`'s count check, not a missing-field error.
-        for (fname, angle, offset) in [
-            ("sub-01_flip-1_mt-off_QMTSPGR.nii.gz", 142.0, 443.0),
-            ("sub-01_flip-1_mt-on_QMTSPGR.nii.gz", 426.0, 443.0),
-            ("sub-01_flip-2_mt-off_QMTSPGR.nii.gz", 142.0, 1088.0),
+        // Sidecars carry Angle but omit the required Offset field.
+        for (fname, angle) in [
+            ("sub-01_flip-1_mt-off_QMTSPGR.nii.gz", 142.0),
+            ("sub-01_flip-1_mt-on_QMTSPGR.nii.gz", 426.0),
+            ("sub-01_flip-2_mt-off_QMTSPGR.nii.gz", 142.0),
         ] {
             let path = anat_dir.join(fname);
             io::nifti::write_3d_nifti(&data, &header, &path).unwrap();
             let json_path = anat_dir.join(fname.replace(".nii.gz", ".json"));
-            std::fs::write(
-                &json_path,
-                format!(r#"{{"Angle": {angle}, "Offset": {offset}}}"#),
-            )
-            .unwrap();
+            std::fs::write(&json_path, format!(r#"{{"Angle": {angle}}}"#)).unwrap();
         }
 
         let config_path = tmp.0.join("qmt.yaml");
@@ -1440,13 +1434,13 @@ mod tests {
 
         let out_dir = tmp.0.join("out");
         let err = match run_fit_bids(bids_dir, config_path, out_dir, None, None) {
-            Ok(()) => panic!("a protocol-mismatched QMTSPGR dataset must bail, not exit Ok"),
+            Ok(()) => panic!("a QMTSPGR dataset missing a required sidecar field must bail"),
             Err(e) => e,
         };
         let chain = format!("{err:?}");
         assert!(
-            chain.contains("expected 10 volumes") && chain.contains("supplies 3"),
-            "expected a volumes-vs-protocol-rows mismatch bail message, got: {chain}"
+            chain.contains("Offset"),
+            "expected an error naming the missing Offset field, got: {chain}"
         );
     }
 

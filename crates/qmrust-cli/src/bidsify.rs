@@ -134,7 +134,8 @@ fn run_bidsify_qmt(args: BidsifyArgs) -> Result<()> {
         Some(sub) => serde_yaml::from_value(sub.clone())?,
         None => Default::default(),
     };
-    q.validate()?;
+    q.validate_options()?;
+    q.validate_protocol()?;
 
     let mat = io::mat::read_mat_file(&mat_data_path)?;
 

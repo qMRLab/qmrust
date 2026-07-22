@@ -503,10 +503,10 @@ sim:
         );
     }
 
-    /// Minimal `Named` model stub, just to exercise `measurement_values`'
-    /// ordering — no shipping model uses `Named` today. Roles are chosen so
-    /// their declared order differs from alphabetical (BTreeMap iteration)
-    /// order, so a regression back to map-iteration order is detectable.
+    /// Minimal `Named` model stub that exercises `measurement_values`' ordering.
+    /// Roles are chosen so their declared order differs from alphabetical
+    /// (BTreeMap iteration) order, so a regression back to map-iteration order
+    /// is detectable.
     struct NamedStub;
     impl Model for NamedStub {
         fn param_names(&self) -> Vec<&'static str> {

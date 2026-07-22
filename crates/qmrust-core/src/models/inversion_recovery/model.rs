@@ -1,12 +1,12 @@
 //! IR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    validate_against_protocol, Aux, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement,
-    MeasurementKind, Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
+    ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::inversion_recovery::config::IrConfig;
 use crate::models::inversion_recovery::fit::IrFitter;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::BTreeMap;
 
 pub struct IrModel {
@@ -125,36 +125,46 @@ impl Model for IrModel {
     }
 }
 
-/// Parse the config and run config-intrinsic validation, without composing or
-/// validating a protocol. Used to read the model's structural declarations
-/// (`protocol_schema`, `bids_outputs`, `required_inputs`) before a protocol
-/// exists. Not fit-ready.
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    let cfg: IrConfig = serde_yaml::from_value(v.clone())?;
-    cfg.validate_options()?;
-    Ok(Box::new(IrModel::new(cfg)))
+impl crate::core::model::ModelConfig for IrConfig {
+    const NAME: &'static str = "inversion_recovery";
+    const SUBKEY: Option<&'static str> = None;
+
+    fn validate_options(&mut self) -> Result<()> {
+        IrConfig::validate_options(self)
+    }
+
+    fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
+        if !proto.volumes.is_empty() {
+            let tis: Vec<f64> = proto
+                .volumes
+                .iter()
+                .filter_map(|m| m.get("InversionTime").copied())
+                .collect();
+            if !tis.is_empty() {
+                self.inversion_times = tis;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_protocol(&mut self) -> Result<()> {
+        IrConfig::validate_protocol(self)
+    }
+
+    fn into_model(self) -> Box<dyn Model> {
+        Box::new(IrModel::new(self))
+    }
 }
 
-/// Registry builder: parse config, apply any protocol override (BIDS sidecars
-/// or `.mat` TIs), validate the finalized protocol, and box a fit-ready model.
+/// Structural interrogation entry point (see [`describe_model`]).
+pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+    crate::core::model::describe_model::<IrConfig>(v)
+}
+
+/// Registry builder (see [`build_model`]): the shared parse → ingest protocol →
+/// validate → construct pipeline.
 pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    let mut cfg: IrConfig = serde_yaml::from_value(v.clone())?;
-    cfg.validate_options()?;
-    if !proto.volumes.is_empty() {
-        let tis: Vec<f64> = proto
-            .volumes
-            .iter()
-            .filter_map(|m| m.get("InversionTime").copied())
-            .collect();
-        if !tis.is_empty() {
-            cfg.inversion_times = tis;
-        }
-    }
-    cfg.validate_protocol()?;
-    let model = IrModel::new(cfg);
-    validate_against_protocol(&model.measurement(), proto)
-        .context("inversion_recovery: protocol inconsistent with model's measurement")?;
-    Ok(Box::new(model))
+    crate::core::model::build_model::<IrConfig>(v, proto)
 }
 
 #[cfg(test)]

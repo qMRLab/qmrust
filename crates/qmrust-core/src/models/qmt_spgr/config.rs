@@ -169,7 +169,8 @@ impl Default for QmtSpgrConfig {
 use anyhow::{bail, Result};
 
 impl QmtSpgrConfig {
-    pub fn validate(&mut self) -> Result<()> {
+    /// Config-intrinsic validation: options that need no acquisition protocol.
+    pub fn validate_options(&mut self) -> Result<()> {
         if self.pulse.shape != "gausshann" {
             bail!(
                 "Only 'gausshann' pulse shape is supported, got '{}'",
@@ -188,9 +189,6 @@ impl QmtSpgrConfig {
                 self.model
             );
         }
-        if self.protocol.mtdata.is_empty() {
-            bail!("qmt_spgr protocol.mtdata must have at least one row");
-        }
         for i in 0..6 {
             if self.fitting.lb[i] >= self.fitting.ub[i] {
                 bail!("fitting.lb[{}] must be < fitting.ub[{}]", i, i);
@@ -201,6 +199,15 @@ impl QmtSpgrConfig {
         }
         if self.fitting.fix_r1r_eq_r1f {
             self.fitting.fx[3] = true;
+        }
+        Ok(())
+    }
+
+    /// Protocol-completeness validation: run once the acquisition is final
+    /// (from `--config` for non-BIDS, or composed from sidecars for BIDS).
+    pub fn validate_protocol(&mut self) -> Result<()> {
+        if self.protocol.mtdata.is_empty() {
+            bail!("qmt_spgr protocol.mtdata must have at least one row");
         }
         Ok(())
     }
@@ -230,7 +237,8 @@ mod tests {
     #[test]
     fn validation_forces_r1f_fixed_when_r1map_on() {
         let mut q = QmtSpgrConfig::default();
-        q.validate().unwrap();
+        q.validate_options().unwrap();
+        q.validate_protocol().unwrap();
         assert!(q.fitting.fx[2], "R1f must be fixed");
     }
 
@@ -238,7 +246,8 @@ mod tests {
     fn accepts_sledpikerp_model() {
         let yaml = "model: SledPikeRP\n";
         let mut q: QmtSpgrConfig = serde_yaml::from_str(yaml).unwrap();
-        q.validate().unwrap();
+        q.validate_options().unwrap();
+        q.validate_protocol().unwrap();
         assert_eq!(q.model, "SledPikeRP");
     }
 }

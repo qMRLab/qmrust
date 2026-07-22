@@ -4,7 +4,7 @@ use crate::config::{FitMethod, T1Range, ZoomConfig};
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct IrConfig {
     #[serde(default)]
     pub inversion_times: Vec<f64>,

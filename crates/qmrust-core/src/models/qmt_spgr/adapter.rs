@@ -1,12 +1,12 @@
 //! qMT-SPGR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    validate_against_protocol, Aux, BidsMap, BidsSpec, EntityRole, FitStrategy, InputSpec,
-    Measurement, MeasurementKind, Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsMap, BidsSpec, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
+    Model, ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::qmt_spgr::config::QmtSpgrConfig;
 use crate::models::qmt_spgr::QmtSpgrFitter;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::BTreeMap;
 
 pub struct QmtModel {
@@ -193,26 +193,49 @@ impl Model for QmtModel {
     }
 }
 
-/// Registry builder: parse `QmtSpgrConfig` from the `qmt_spgr` sub-key of the
-/// raw YAML tree, validate, and box the model. qMT reads its own acquisition
-/// protocol from its config today, so `proto` is expected empty; it is still
-/// checked for consistency in case a BIDS protocol source populates it later.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    let mut cfg: QmtSpgrConfig = match v.get("qmt_spgr") {
-        Some(sub) => serde_yaml::from_value(sub.clone())?,
-        None => QmtSpgrConfig::default(),
-    };
-    cfg.validate()?;
-    let model = QmtModel::new(&cfg);
-    validate_against_protocol(&model.measurement(), proto)
-        .context("qmt_spgr: protocol inconsistent with model's measurement")?;
-    Ok(Box::new(model))
+impl crate::core::model::ModelConfig for QmtSpgrConfig {
+    const NAME: &'static str = "qmt_spgr";
+    const SUBKEY: Option<&'static str> = Some("qmt_spgr");
+
+    fn validate_options(&mut self) -> Result<()> {
+        QmtSpgrConfig::validate_options(self)
+    }
+
+    fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
+        if !proto.volumes.is_empty() {
+            let rows: Vec<[f64; 2]> = proto
+                .volumes
+                .iter()
+                .filter_map(|m| Some([*m.get("Angle")?, *m.get("Offset")?]))
+                .collect();
+            if rows.len() == proto.volumes.len() {
+                self.protocol.mtdata = rows;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_protocol(&mut self) -> Result<()> {
+        QmtSpgrConfig::validate_protocol(self)
+    }
+
+    fn into_model(self) -> Box<dyn Model> {
+        Box::new(QmtModel::new(&self))
+    }
 }
 
-/// qMT reads its acquisition protocol from `--config`, so describing it is the
-/// same as building against an empty protocol.
+/// Structural interrogation entry point (see [`describe_model`]).
 pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    build(v, &Protocol::default())
+    crate::core::model::describe_model::<QmtSpgrConfig>(v)
+}
+
+/// Registry builder (see [`build_model`]): the shared parse → ingest protocol →
+/// validate → construct pipeline. On the BIDS path `proto` carries the
+/// sidecar-resolved `Angle`/`Offset` per volume, which `ingest_protocol` folds
+/// into `mtdata`; on the non-BIDS path `proto` is empty and `mtdata` comes from
+/// `--config`.
+pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
+    crate::core::model::build_model::<QmtSpgrConfig>(v, proto)
 }
 
 #[cfg(test)]
@@ -231,6 +254,41 @@ mod tests {
         assert_eq!(m.param_names().len(), 6);
         assert_eq!(m.output_names().len(), 8);
         assert_eq!(m.fixed_mask(), vec![false, false, true, true, false, false]);
+    }
+
+    #[test]
+    fn build_composes_mtdata_from_resolved_protocol() {
+        // The shared pipeline folds a BIDS-resolved protocol into qMT's mtdata,
+        // exactly as it does IR's inversion_times — so a two-volume sidecar
+        // protocol yields a two-row measurement, overriding the config default.
+        let proto = Protocol {
+            volumes: vec![
+                BTreeMap::from([("Angle".to_string(), 142.0), ("Offset".to_string(), 443.0)]),
+                BTreeMap::from([("Angle".to_string(), 426.0), ("Offset".to_string(), 1088.0)]),
+            ],
+            global: BTreeMap::new(),
+        };
+        let m = build(&qmt_value(), &proto).unwrap();
+        let MeasurementKind::Series { rows } = m.measurement() else {
+            panic!("qmt_spgr is a Series model");
+        };
+        assert_eq!(
+            rows.len(),
+            2,
+            "measurement must reflect the resolved protocol"
+        );
+        assert_eq!(rows[0]["Angle"], 142.0);
+        assert_eq!(rows[1]["Offset"], 1088.0);
+    }
+
+    #[test]
+    fn describe_reads_schema_without_a_protocol() {
+        // describe runs config-intrinsic validation only; it exposes the BIDS
+        // contract (Angle/Offset schema) before any protocol is resolved.
+        let m = describe(&qmt_value()).unwrap();
+        let schema = m.protocol_schema();
+        let names: Vec<&str> = schema.iter().map(|p| p.name).collect();
+        assert_eq!(names, vec!["Angle", "Offset"]);
     }
 
     fn qmt_series(value: f64) -> Measurement {

@@ -1,7 +1,7 @@
-//! Resolve an acquisition [`Protocol`] from a source. Today: `Yaml` (a model
-//! reads its protocol from its own config) and `Mat` (a `.mat` file supplies
-//! acquisition parameters). BIDS-sidecar protocols are produced by the
-//! separate `rust-bids` crate.
+//! Resolve an acquisition [`Protocol`] from a source: `Yaml` (a model reads its
+//! protocol from its own config) or `Mat` (a `.mat` file supplies acquisition
+//! parameters). BIDS-sidecar protocols are produced by the separate `rust-bids`
+//! crate.
 
 use crate::core::model::Protocol;
 use std::collections::BTreeMap;
