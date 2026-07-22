@@ -32,12 +32,17 @@ Part of the architecture. Do not violate.
 
 - **Core purity** — enforced by the wasm build above.
 - **`Model` stays object-safe** — enforced at compile time.
-- **Behaviour-preserving refactors do not change fitting results** — verify with:
+- **Behaviour-preserving refactors do not change fitting results.** Verify by fitting a
+  fixed dataset before and after the change and diffing the output maps voxelwise — they
+  must be identical (values and NaN footprint). The real pipelines are exercised by
+  `ci/integration_osf.sh` (CI, against qMRLab's OSF datasets) and the `#[ignore]`d
+  round-trip tests `bids_fit_matches_mat_fit` / `qmtspgr_bids_fit_matches_mat_fit`, which
+  assert the BIDS-path maps equal the `.mat`-path maps exactly:
   ```bash
-  # TODO: insert the snapshot/golden-output regression command
+  QMRUST_IR_MAT=<path>/IRData.mat QMRUST_IR_MASK=<path>/Mask.mat \
+    cargo test -p qmrust-cli --release bids_fit_matches_mat_fit -- --ignored --nocapture
   ```
-  Until this command is filled in, this invariant has no automated check; treat any diff in
-  fitting output as a regression regardless of intent.
+  Any diff in fitting output is a regression regardless of intent.
 - **Each model owns its own configuration.**
 - **Threaded WebAssembly is an optional feature** — must not affect default native or default
   wasm builds.
