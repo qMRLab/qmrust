@@ -47,14 +47,19 @@ pub trait Model: Send + Sync {
     fn forward(&self, params: &[f64], aux: &Aux) -> Measurement;
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;
 
+    fn n_volumes(&self) -> usize;
+    fn bids_volume(&self, index: usize) -> BidsVolume;
+
     fn bids(&self) -> Option<BidsSpec> { None }
     fn protocol_schema(&self) -> Vec<ProtoParam> { vec![] }
     fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> { vec![] }
 }
 ```
 
-There is **no `n_acquisitions`** — removed in favor of `measurement()`. Do
-not reintroduce it.
+`n_volumes()`/`bids_volume(i)` are the write side: `bidsify` and the
+BIDS-derivatives writer use them to lay out one file per acquired volume.
+There is **no `n_acquisitions`** — the acquisition count comes from
+`n_volumes()` and the measurement identities from `measurement()`.
 
 - `measurement() -> MeasurementKind`: `Named { roles: &'static [&'static
   str] }` for fixed role-labeled volumes, or `Series { rows: Vec<BTreeMap
@@ -150,7 +155,14 @@ before any data is resolved; `build` is the fit-ready path.
 3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name +
    BIDS suffix + `build` + `describe` + `dump` — the three registry-facing
    capabilities every model provides).
-4. Tests: forward→fit round-trip; config parse/validate; `ingest_protocol`
+4. If the model introduces a new BIDS suffix, add a grouping block for it to
+   `crates/rust-bids/src/default_grouping.yaml` — `sequential_set: { by: [...] }`
+   for an ordered series (like IRT1 `by: [inv]`) or `named_set` for fixed role
+   slots (like MTS). Without it, `qmrust fit --bids-dir` on the new suffix
+   errors ("no set definition named `<SUFFIX>`") unless the dataset ships its
+   own `--config` grouping. This is the one shell-side edit a new model needs;
+   the CLI/wasm/`bidsify`/engine paths are all registry-driven.
+5. Tests: forward→fit round-trip; config parse/validate; `ingest_protocol`
    composes from a resolved `Protocol`; if `bids_outputs()` is non-empty,
    assert every entry names a real `output_names()` value.
 
