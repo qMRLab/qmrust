@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::make_minimal_header;
 use crate::io;
-use qmrust_core::core::model::Model;
+use qmrust_core::core::model::{MeasurementKind, Model};
 
 /// Parsed CLI arguments for `qmrust bidsify`.
 pub struct BidsifyArgs {
@@ -89,28 +89,49 @@ type Source = (
 );
 
 /// Read a `.mat` measurement (+ optional mask + declared aux maps).
+///
+/// A `Series` model reads one stacked measurement array (`--mat-data`, or the
+/// lone measurement `.mat` in `--mat-dir`). A `Named` model instead reads one
+/// single-variable `<role>.mat` per role from `--mat-dir` (e.g. MTR's
+/// `MTon.mat`/`MToff.mat`), stacked in the model's declared role order.
 fn read_mat_source(args: &BidsifyArgs, model: &dyn Model) -> Result<Source> {
-    let mat_data_path = match args.mat_data.clone() {
-        Some(p) => p,
-        None => {
-            let dir = args.mat_dir.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("bidsify needs --mat-data, --mat-dir, or --nii-data")
-            })?;
-            measurement_in_dir(dir, model)?
-        }
-    };
-    let mat = io::mat::read_mat_file(&mat_data_path)?;
-
-    // --mask wins; then a Mask.mat found via --mat-dir; then one embedded in
-    // the source .mat itself.
+    // --mask wins; then a Mask.mat found via --mat-dir; then, for a stacked
+    // measurement, one embedded in the source .mat itself.
     let mat_dir_mask = args
         .mat_dir
         .as_ref()
         .map(|d| d.join("Mask.mat"))
         .filter(|p| p.exists());
-    let mask = match args.mask.as_ref().or(mat_dir_mask.as_ref()) {
+    let explicit_mask = args.mask.as_ref().or(mat_dir_mask.as_ref());
+
+    let (data, embedded_mask) = match model.measurement() {
+        MeasurementKind::Named { roles } => {
+            let dir = args.mat_dir.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "a named model reads one <role>.mat per role, so bidsify needs --mat-dir \
+                     (got --mat-data or nothing)"
+                )
+            })?;
+            (io::mat::read_named_mat_volumes(dir, roles)?, None)
+        }
+        MeasurementKind::Series { .. } => {
+            let mat_data_path = match args.mat_data.clone() {
+                Some(p) => p,
+                None => {
+                    let dir = args.mat_dir.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("bidsify needs --mat-data, --mat-dir, or --nii-data")
+                    })?;
+                    measurement_in_dir(dir, model)?
+                }
+            };
+            let mat = io::mat::read_mat_file(&mat_data_path)?;
+            (mat.data, mat.mask)
+        }
+    };
+
+    let mask = match explicit_mask {
         Some(p) => Some(io::mat::read_mask_mat(p)?),
-        None => mat.mask,
+        None => embedded_mask,
     };
 
     // Every auxiliary input the model declares (by logical name) is looked
@@ -128,7 +149,7 @@ fn read_mat_source(args: &BidsifyArgs, model: &dyn Model) -> Result<Source> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok((mat.data, mask, aux, None))
+    Ok((data, mask, aux, None))
 }
 
 /// Read a 4D NIfTI measurement (+ optional NIfTI mask), preserving its spatial

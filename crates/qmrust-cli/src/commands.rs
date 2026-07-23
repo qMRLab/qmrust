@@ -220,12 +220,19 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 }
 
 /// Load one resolved BIDS `Collection` into the `(data, protocol, header)`
-/// triple the engine needs: the volumes stacked in the collection's order as
-/// `[nx,ny,nz,nt]`, the per-volume sidecar `Protocol` (resolved against
-/// `schema`), and the first volume's header for output geometry. `Named`
-/// collections (e.g. MTsat-style MTS sets) bail loudly: reordering their
-/// role-labeled volumes to a model's `required` axis order is not implemented,
-/// and silently mis-assigning volumes would be worse than refusing.
+/// triple the engine needs: the volumes stacked as `[nx,ny,nz,nt]`, the
+/// per-volume sidecar `Protocol` (resolved against `schema`), and the first
+/// volume's header for output geometry.
+///
+/// A `Sequential` collection stacks in the collection's own order; the model
+/// re-identifies each volume from `proto` by value. A `Named` collection
+/// (e.g. an MTR set) is stacked in the model's declared role order (`roles`),
+/// so column `i` is the model's `roles[i]` and `build_volume_ids` can label it
+/// `VolumeId::Role(roles[i])` without any positional guesswork. The grouping's
+/// `named_set` role names must therefore match the model's `measurement()`
+/// roles; a role with no matching volume is a hard error, never a silent
+/// mis-assignment. `roles` is `None` when the model uses a `Series`
+/// measurement — a `Named` collection then has no axis to map onto and fails.
 ///
 /// An empty `schema` (a model that declares no `protocol_schema()`) resolves to
 /// an empty `Protocol`; the model then reads its acquisition from its own
@@ -235,11 +242,31 @@ fn load_collection(
     c: &Collection,
     schema: &[qmrust_core::core::model::ProtoParam],
     options: &std::collections::BTreeMap<String, f64>,
+    roles: Option<&[&'static str]>,
 ) -> Result<(Array4<f64>, Protocol, Option<NiftiHeader>)> {
-    let vols = match &c.data {
-        GroupedData::Sequential(vols) => vols,
-        GroupedData::Named(_) => {
-            bail!("named-collection fit not yet supported")
+    let vols: Vec<&rust_bids::VolumeRef> = match &c.data {
+        GroupedData::Sequential(vols) => vols.iter().collect(),
+        GroupedData::Named(map) => {
+            let roles = roles.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "collection for '{}' is a named set, but model uses a series measurement \
+                     with no role axis to map its volumes onto",
+                    c.suffix
+                )
+            })?;
+            roles
+                .iter()
+                .map(|&r| {
+                    map.get(r).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "named collection for '{}' is missing role '{}' (has {:?})",
+                            c.suffix,
+                            r,
+                            map.keys().collect::<Vec<_>>()
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
         }
     };
     if vols.is_empty() {
@@ -680,8 +707,15 @@ pub fn run_fit_bids(
         bids_dir
     );
 
+    // A `Named` model's declared role order — the axis `load_collection` stacks
+    // a named collection's role-labeled volumes onto. `None` for a `Series`
+    // model (its volumes are re-identified from `proto` by value instead).
+    let named_roles: Option<&'static [&'static str]> = match probe.measurement() {
+        MeasurementKind::Named { roles } => Some(roles),
+        MeasurementKind::Series { .. } => None,
+    };
+
     let mut fit_count = 0usize;
-    let mut skipped = 0usize;
     for c in &collections {
         for w in &c.warnings {
             eprintln!("  warning ({}): {}", c.subject, w.message);
@@ -692,24 +726,8 @@ pub fn run_fit_bids(
             None => c.subject.clone(),
         };
 
-        // Only the expected, structural case is a skip: `Named` collections
-        // (e.g. MTsat-style MTS sets) are not reorderable to a model's axis
-        // order (see `load_collection`). Anything else `load_collection` (or the
-        // model build / run_model_fit / write_derivatives below) reports — a
-        // corrupt NIfTI, a spatial-dims mismatch, a broken sidecar — is a real
-        // failure and must propagate loudly (`?`), never be logged-and-skipped
-        // alongside it.
-        if matches!(c.data, GroupedData::Named(_)) {
-            eprintln!(
-                "  skipping {}: named-collection fit not yet supported",
-                label
-            );
-            skipped += 1;
-            continue;
-        }
-
         eprintln!("Fitting {}...", label);
-        let (data, proto, header) = load_collection(&fs, c, &schema, &options)?;
+        let (data, proto, header) = load_collection(&fs, c, &schema, &options, named_roles)?;
 
         let model = (entry.build)(&raw, &proto)?;
         eprintln!("  Model: {}, {} volumes", cfg.model, data.dim().3);
@@ -761,14 +779,9 @@ pub fn run_fit_bids(
         fit_count += 1;
     }
 
-    eprintln!("Fit {} subject(s), skipped {}", fit_count, skipped);
+    eprintln!("Fit {} subject(s)", fit_count);
     if fit_count == 0 {
-        bail!(
-            "no {} collections were fit in {:?} ({} skipped)",
-            suffix,
-            bids_dir,
-            skipped
-        );
+        bail!("no {} collections were fit in {:?}", suffix, bids_dir);
     }
 
     Ok(())
@@ -1002,6 +1015,7 @@ mod tests {
             &cols[0],
             &ir_schema(),
             &std::collections::BTreeMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1248,8 +1262,8 @@ mod tests {
     }
 
     /// A real per-volume failure (here: a spatial-dims mismatch that
-    /// `load_collection` detects) must fail the whole run loudly — not be
-    /// logged as a "skip" alongside the deliberate Named-collection skip.
+    /// `load_collection` detects) must fail the whole run loudly, propagating
+    /// out of `run_fit_bids` rather than being logged and skipped.
     #[test]
     fn run_fit_bids_propagates_a_real_load_error_instead_of_skipping() {
         let tmp = TempDir::new("fit-bids-corrupt");
@@ -1383,26 +1397,33 @@ mod tests {
     }
 
     #[test]
-    fn load_collection_rejects_named_collections_for_now() {
+    fn load_collection_named_needs_role_axis_and_all_roles() {
         let c = Collection {
             subject: "sub-01".into(),
             session: None,
             run: None,
             task: None,
             entities: std::collections::BTreeMap::new(),
-            suffix: "MTS".into(),
+            suffix: "MTR".into(),
+            // An empty named set: no role volumes present.
             data: GroupedData::Named(Default::default()),
             warnings: vec![],
         };
         let fs = StdFs {
             root: std::env::temp_dir(),
         };
-        match load_collection(&fs, &c, &ir_schema(), &std::collections::BTreeMap::new()) {
-            Ok(_) => panic!("named collections must be rejected, not silently loaded"),
-            Err(e) => assert!(e
-                .to_string()
-                .contains("named-collection fit not yet supported")),
-        }
+        let opts = std::collections::BTreeMap::new();
+
+        // A series model (roles=None) has no axis to map a named set onto.
+        let err = load_collection(&fs, &c, &[], &opts, None).unwrap_err();
+        assert!(err.to_string().contains("series measurement"), "got: {err}");
+
+        // A named model whose required role is absent fails loudly, naming it —
+        // never a silent mis-assignment.
+        let err = load_collection(&fs, &c, &[], &opts, Some(&["MTon", "MToff"])).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("missing role"), "got: {msg}");
+        assert!(msg.contains("MTon"), "got: {msg}");
     }
 
     /// Input resolution is driven by a collection's *full* entity identity, not

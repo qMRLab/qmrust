@@ -228,9 +228,11 @@ straight from `--config` — `build` is handed an empty `Protocol`.
   `load_collection` (reads the NIfTI volumes + calls `resolve_protocol`),
   `resolve_aux_and_mask` (§1) to fill any `required_inputs()` and the
   configured mask, then `fit_and_write` (`build_volume_ids` → `engine::run` →
-  NIfTI output). Only `Sequential` collections drive a fit — `Named`
-  collections are logged and skipped (`commands.rs::run_fit_bids`/
-  `load_collection`).
+  NIfTI output). Both collection shapes fit: a `Sequential` collection is
+  re-identified from its `Protocol` by value; a `Named` collection is stacked
+  in the model's declared role order (`load_collection` maps each role to the
+  named set's like-named volume, so the grouping's `named_set` role names must
+  match the model's `measurement()` roles).
 - **Browser/Tauri** — same `DatasetFs` seam, a different implementation
   backed by JS directory listings instead of `std::fs`; no change to
   `rust-bids`'s resolution or protocol logic.
@@ -258,8 +260,6 @@ than expecting raw equality. See the "Units — BIDS-native (SI)" principle in
 
 ## Deferred
 
-- Fitting `Named` collections, and mapping qMT/MP2RAGE-style protocols onto
-  them — only `Sequential` collections drive a real fit.
 - A real multi-field `Source::Derived` model (e.g. MP2RAGE) — the mechanism
   is proven only by IR's single-field `InversionTime` schema and a stub
   `Derived` test.

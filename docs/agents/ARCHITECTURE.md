@@ -255,8 +255,11 @@ collection's full identity + declared BIDS suffix — found in raw *or* any
 `mask:` key (a suffix + entity constraints, e.g. `desc: brain`); an under-specified
 `mask:` matching several files is a hard error rather than a silent pick, and no
 `mask:` block means no masking. See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for how
-collections are resolved, how sidecars are merged, and the scope of BIDS fitting
-(`Sequential` collections; `Named`/MTS-style collections are not BIDS-fittable).
+collections are resolved and how sidecars are merged. Both collection shapes
+are BIDS-fittable: a `Sequential` collection is re-identified from its resolved
+`Protocol` by value; a `Named`/MTS-style collection is stacked in the model's
+declared role order (its grouping `named_set` role names must match the model's
+`measurement()` roles).
 
 Output is written in the BIDS-derivatives convention too — `output_dir/qmrust/<subject>
 [/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz`, per each model's declared

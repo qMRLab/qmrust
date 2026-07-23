@@ -255,6 +255,40 @@ pub fn read_map_mat(path: &Path) -> Result<Array3<f64>> {
     Ok(out)
 }
 
+/// Read a `Named` model's role volumes from a `--mat-dir`: one single-variable
+/// `<role>.mat` per role (each read like an auxiliary map), stacked into a 4D
+/// array in the given role order — column `i` is `roles[i]`. This is the
+/// `.mat` counterpart to a BIDS named set, where each role is a separate file
+/// rather than one stacked measurement array. Every role file must exist and
+/// share the same spatial dims.
+pub fn read_named_mat_volumes(dir: &Path, roles: &[&str]) -> Result<Array4<f64>> {
+    let mut vols: Vec<Array3<f64>> = Vec::with_capacity(roles.len());
+    let mut dims: Option<(usize, usize, usize)> = None;
+    for &role in roles {
+        let path = dir.join(format!("{role}.mat"));
+        let v = read_map_mat(&path)
+            .with_context(|| format!("reading named role '{role}' from {:?}", path))?;
+        let d = v.dim();
+        match dims {
+            None => dims = Some(d),
+            Some(expected) if expected != d => bail!(
+                "role '{}' has spatial dims {:?}, expected {:?} (from the first role)",
+                role,
+                d,
+                expected
+            ),
+            _ => {}
+        }
+        vols.push(v);
+    }
+    let (nx, ny, nz) = dims.with_context(|| "a named model must declare at least one role")?;
+    let mut out = Array4::<f64>::zeros((nx, ny, nz, roles.len()));
+    for (t, v) in vols.iter().enumerate() {
+        out.index_axis_mut(ndarray::Axis(3), t).assign(v);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod map_tests {
     use super::*;

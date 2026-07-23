@@ -1,0 +1,12 @@
+model: mt_ratio
+
+# MTR = 100 * (MToff - MTon) / MToff. No acquisition protocol and no fit
+# options: the MTon/MToff volumes are resolved from the BIDS MTR named set
+# (mt-on / mt-off) by the grouping manifest. Example:
+#
+#   qmrust fit --bids-dir <dataset> \
+#     --config recipes/bids/mt_ratio_config.yaml --output-dir out
+
+# BIDS mask selection — disambiguates which mask in the dataset to apply.
+mask:
+  desc: brain

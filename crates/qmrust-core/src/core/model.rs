@@ -185,6 +185,11 @@ pub fn dump_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<String> {
         .with_context(|| format!("{}: invalid config", C::NAME))?;
     let body = serde_yaml::to_string(&cfg)?;
     let mut out = format!("model: {}\n", C::NAME);
+    // A fieldless config serializes to the flow mapping `{}`; appending that
+    // after `model: <name>` would be invalid YAML, so emit just the model line.
+    if body.trim() == "{}" {
+        return Ok(out);
+    }
     match C::SUBKEY {
         Some(key) => {
             out.push_str(&format!("{key}:\n"));

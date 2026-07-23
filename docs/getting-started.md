@@ -67,10 +67,11 @@ QMTSPGR), and fits each subject (and session, if present), writing
 Each model composes its
 acquisition protocol from the sidecars and resolves any auxiliary maps it
 declares (B1/B0/R1) from the dataset by suffix — so aux-requiring models like
-qMT fit through `--bids-dir` too. The one shape not BIDS-fittable is a
-*named* collection (fixed role slots, e.g. MTS's PDw/MTw/T1w); use
-`--mat-dir`/`--data` for those. See [BIDS](bids.md) for how `rust-bids`
-resolves the dataset layout.
+qMT fit through `--bids-dir` too. *Named* collections (fixed role slots, e.g.
+MTR's mt-on/mt-off) fit as well: their role-labeled volumes are mapped onto the
+model's declared roles, so the grouping's `named_set` role names must match the
+model's `measurement()` roles. See [BIDS](bids.md) for how `rust-bids` resolves
+the dataset layout.
 
 Notice `--config` above points at `recipes/bids/irt1_config.yaml`, not the
 non-BIDS one — a BIDS fit's config doesn't carry the inversion times: the
