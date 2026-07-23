@@ -116,6 +116,16 @@ enum Commands {
         #[arg(long)]
         mat_dir: Option<PathBuf>,
 
+        /// Path to a 4D NIfTI measurement (echoes/TIs in the 4th axis), for
+        /// datasets that ship as NIfTI rather than qMLab .mat. Mutually
+        /// exclusive with --mat-data/--mat-dir.
+        #[arg(long)]
+        nii_data: Option<PathBuf>,
+
+        /// Path to a NIfTI mask, paired with --nii-data
+        #[arg(long)]
+        nii_mask: Option<PathBuf>,
+
         /// Path to a separate .mat mask file (overrides one embedded in mat_data
         /// or found in --mat-dir)
         #[arg(long)]
@@ -236,6 +246,8 @@ fn main() -> Result<()> {
             model,
             mat_data,
             mat_dir,
+            nii_data,
+            nii_mask,
             mask,
             config,
             subject,
@@ -244,6 +256,8 @@ fn main() -> Result<()> {
             model,
             mat_data,
             mat_dir,
+            nii_data,
+            nii_mask,
             mask,
             config,
             subject,

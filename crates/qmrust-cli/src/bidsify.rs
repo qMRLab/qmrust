@@ -1,6 +1,8 @@
-//! `qmrust bidsify`: convert a qMRLab `.mat` dataset into a BIDS layout whose
-//! voxel data is byte-identical to the source `.mat` (no rescale, no dtype
-//! narrowing — every volume is written as `f64`/datatype 64).
+//! `qmrust bidsify`: convert a qMRLab dataset — a `.mat` or a 4D NIfTI — into a
+//! BIDS layout whose voxel data is byte-identical to the source (no rescale, no
+//! dtype narrowing — every volume is written as `f64`/datatype 64). A NIfTI
+//! source's spatial header (affine/pixdim/qform/sform) is preserved; a `.mat`
+//! source, which carries no header, gets a minimal one.
 //!
 //! Model-agnostic: every write decision — the BIDS suffix, per-volume
 //! filename entities, sidecar metadata, and which auxiliary maps to look for
@@ -22,6 +24,8 @@ pub struct BidsifyArgs {
     pub model: String,
     pub mat_data: Option<PathBuf>,
     pub mat_dir: Option<PathBuf>,
+    pub nii_data: Option<PathBuf>,
+    pub nii_mask: Option<PathBuf>,
     pub mask: Option<PathBuf>,
     pub config: PathBuf,
     pub subject: String,
@@ -29,9 +33,9 @@ pub struct BidsifyArgs {
 }
 
 /// Entry point for the `bidsify` subcommand: resolves the model from the
-/// registry, reads the `.mat` dataset (+ optional mask + aux maps), and
-/// writes the BIDS tree the model's own `bids()`/`bids_volume()`/
-/// `required_inputs()` describe.
+/// registry, reads the source dataset (`.mat` or 4D NIfTI, + optional mask +
+/// aux maps), and writes the BIDS tree the model's own `bids()`/
+/// `bids_volume()`/`required_inputs()` describe.
 pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
     let contents = std::fs::read_to_string(&args.config)
         .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", args.config, e))?;
@@ -42,13 +46,47 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
     // from it, so there is no BIDS protocol to read here.
     let model = (entry.describe)(&raw)?;
 
+    // A NIfTI source carries a real spatial header (preserved); a `.mat` source
+    // carries none (a minimal header is synthesized in `write_bids_tree`).
+    let (data, mask, aux, source_header) = if let Some(nii) = args.nii_data.as_ref() {
+        anyhow::ensure!(
+            args.mat_data.is_none() && args.mat_dir.is_none(),
+            "--nii-data is mutually exclusive with --mat-data/--mat-dir"
+        );
+        read_nifti_source(nii, args.nii_mask.as_deref(), model.as_ref())?
+    } else {
+        read_mat_source(&args, model.as_ref())?
+    };
+
+    write_bids_tree(
+        model.as_ref(),
+        &data,
+        mask.as_ref(),
+        &aux,
+        &args.subject,
+        &args.out,
+        source_header.as_ref(),
+    )
+}
+
+/// A read measurement: 4D data, optional mask, declared aux maps, and the
+/// source spatial header (`Some` for a NIfTI source, `None` for a `.mat`).
+type Source = (
+    Array4<f64>,
+    Option<Array3<bool>>,
+    Vec<(String, Array3<f64>)>,
+    Option<NiftiHeader>,
+);
+
+/// Read a `.mat` measurement (+ optional mask + declared aux maps).
+fn read_mat_source(args: &BidsifyArgs, model: &dyn Model) -> Result<Source> {
     let mat_data_path = match args.mat_data.clone() {
         Some(p) => p,
         None => {
             let dir = args.mat_dir.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("bidsify needs --mat-data (or --mat-dir to locate it)")
+                anyhow::anyhow!("bidsify needs --mat-data, --mat-dir, or --nii-data")
             })?;
-            measurement_in_dir(dir, model.as_ref())?
+            measurement_in_dir(dir, model)?
         }
     };
     let mat = io::mat::read_mat_file(&mat_data_path)?;
@@ -80,14 +118,19 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    write_bids_tree(
-        model.as_ref(),
-        &mat.data,
-        mask.as_ref(),
-        &aux,
-        &args.subject,
-        &args.out,
-    )
+    Ok((mat.data, mask, aux, None))
+}
+
+/// Read a 4D NIfTI measurement (+ optional NIfTI mask), preserving its spatial
+/// header. Auxiliary NIfTI inputs are not resolved here — no NIfTI-shipped
+/// model currently declares any.
+fn read_nifti_source(nii: &Path, nii_mask: Option<&Path>, _model: &dyn Model) -> Result<Source> {
+    let (data, header) = io::nifti::read_4d_nifti(nii)?;
+    let mask = match nii_mask {
+        Some(p) => Some(io::nifti::read_mask_nifti(p)?),
+        None => None,
+    };
+    Ok((data, mask, Vec::new(), Some(header)))
 }
 
 /// Locate the measurement `.mat` in `dir`: the single top-level `.mat` file
@@ -134,7 +177,7 @@ fn measurement_in_dir(dir: &Path, model: &dyn Model) -> Result<PathBuf> {
     }
 }
 
-/// Write one `.mat`-sourced dataset as a BIDS tree rooted at `out`, driven by
+/// Write one dataset as a BIDS tree rooted at `out`, driven by
 /// `model`'s declared BIDS identity: `dataset_description.json`,
 /// `participants.tsv`, a `.bidsignore` entry if `model`'s suffix is
 /// non-canonical, one `sub-<subject>/anat/sub-<subject>[_<entity>-<val>...]_<suffix>.nii.gz`
@@ -149,6 +192,7 @@ pub fn write_bids_tree(
     aux: &[(String, Array3<f64>)],
     subject: &str,
     out: &Path,
+    source_header: Option<&NiftiHeader>,
 ) -> Result<()> {
     let spec = model
         .bids()
@@ -168,9 +212,14 @@ pub fn write_bids_tree(
 
     let anat_dir = out.join(format!("sub-{subject}")).join("anat");
     std::fs::create_dir_all(&anat_dir)?;
-    // .mat inputs carry no spatial header — emit qMRLab's make_nii-compatible
-    // minimal header (matches how `qmrust fit --mat-data` treats .mat input).
-    let header = make_minimal_header(nx, ny, nz);
+    // A NIfTI source's spatial header is preserved; a `.mat` source carries
+    // none, so emit qMRLab's make_nii-compatible minimal header (matches how
+    // `qmrust fit --mat-data` treats .mat input). The volume writers force
+    // datatype 64 regardless, so voxel data is always written as f64.
+    let header = match source_header {
+        Some(h) => h.clone(),
+        None => make_minimal_header(nx, ny, nz),
+    };
 
     for i in 0..n {
         let vol = data.index_axis(Axis(3), i).to_owned();
@@ -510,7 +559,7 @@ mod tests {
         let mask = Array3::from_shape_vec((2, 2, 1), vec![true, false, true, true]).unwrap();
         let model = ir_model(&ti, Some(2.5));
 
-        write_bids_tree(model.as_ref(), &ir_data, Some(&mask), &[], "01", &dir).unwrap();
+        write_bids_tree(model.as_ref(), &ir_data, Some(&mask), &[], "01", &dir, None).unwrap();
 
         assert!(dir.join("dataset_description.json").exists());
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
@@ -554,8 +603,8 @@ mod tests {
         let ti = vec![0.350, 0.650, 0.950];
         let model = ir_model(&ti, None);
 
-        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir).unwrap();
-        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir).unwrap();
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir, None).unwrap();
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir, None).unwrap();
 
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
         assert_eq!(participants.matches("sub-01").count(), 1);
@@ -579,7 +628,7 @@ mod tests {
         let ir_data = Array4::from_shape_fn((1, 1, 1, 3), |(_, _, _, t)| t as f64);
         let ti = vec![0.350, 0.650, 0.950];
         let model = ir_model(&ti, None);
-        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir).unwrap();
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir, None).unwrap();
 
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
         assert_eq!(participants.matches("sub-01").count(), 1);
@@ -596,7 +645,7 @@ mod tests {
         let ti = vec![0.350, 0.650, 0.950];
         let model = ir_model(&ti, None);
 
-        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir).unwrap();
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir, None).unwrap();
 
         let anat = dir.join("sub-01").join("anat");
         let json = std::fs::read_to_string(anat.join("sub-01_inv-1_IRT1.json")).unwrap();
@@ -633,7 +682,7 @@ mod tests {
         let tmt = 0.0102;
         let model = qmt_model(&protocol, tr, tmt);
 
-        write_bids_tree(model.as_ref(), &mt_data, None, &[], "02", &dir).unwrap();
+        write_bids_tree(model.as_ref(), &mt_data, None, &[], "02", &dir, None).unwrap();
 
         assert!(dir.join("dataset_description.json").exists());
         let participants = std::fs::read_to_string(dir.join("participants.tsv")).unwrap();
@@ -689,7 +738,16 @@ mod tests {
             ("B0map".to_string(), b0map.clone()),
         ];
 
-        write_bids_tree(model.as_ref(), &mt_data, Some(&mask), &aux, "02", &dir).unwrap();
+        write_bids_tree(
+            model.as_ref(),
+            &mt_data,
+            Some(&mask),
+            &aux,
+            "02",
+            &dir,
+            None,
+        )
+        .unwrap();
 
         let preproc = dir.join("derivatives").join("preprocessed");
         assert!(preproc.join("dataset_description.json").exists());
@@ -736,8 +794,8 @@ mod tests {
         let protocol = vec![[142.0, 443.0]];
         let model = qmt_model(&protocol, 0.025, 0.0102);
 
-        write_bids_tree(model.as_ref(), &mt_data, None, &[], "02", &dir).unwrap();
-        write_bids_tree(model.as_ref(), &mt_data, None, &[], "02", &dir).unwrap();
+        write_bids_tree(model.as_ref(), &mt_data, None, &[], "02", &dir, None).unwrap();
+        write_bids_tree(model.as_ref(), &mt_data, None, &[], "02", &dir, None).unwrap();
 
         let bidsignore = std::fs::read_to_string(dir.join(".bidsignore")).unwrap();
         assert_eq!(bidsignore.matches("*QMTSPGR*").count(), 1);

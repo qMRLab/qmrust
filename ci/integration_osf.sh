@@ -8,10 +8,12 @@ BIN="${QMRUST_BIN:-./target/release/qmrust}"
 mkdir -p "$DATA"
 
 echo "Downloading qMRLab OSF datasets..."
-curl -L --fail -o "$DATA/ir.zip"  "https://osf.io/cmg9z/download?version=3"
-curl -L --fail -o "$DATA/qmt.zip" "https://osf.io/pzqyn/download?version=2"
-unzip -o -q "$DATA/ir.zip"  -d "$DATA/ir"
-unzip -o -q "$DATA/qmt.zip" -d "$DATA/qmt"
+curl -L --fail -o "$DATA/ir.zip"       "https://osf.io/cmg9z/download?version=3"
+curl -L --fail -o "$DATA/qmt.zip"      "https://osf.io/pzqyn/download?version=2"
+curl -L --fail -o "$DATA/mono_t2.zip"  "https://osf.io/kujp3/download?version=3"
+unzip -o -q "$DATA/ir.zip"      -d "$DATA/ir"
+unzip -o -q "$DATA/qmt.zip"     -d "$DATA/qmt"
+unzip -o -q "$DATA/mono_t2.zip" -d "$DATA/mono_t2"
 
 # Locate the datasets by their key files (robust to archive folder layout).
 IR_MAT="$(find "$DATA/ir" -name 'IRData.mat' | head -1)"
@@ -26,6 +28,14 @@ QMT_DIR="$(dirname "$QMT_MAT")"
 IR_MASK="$(find "$DATA/ir" -name 'Mask.mat' | head -1)"
 [ -n "$IR_MASK" ] || { echo "Mask.mat not found in IR archive"; exit 1; }
 
+# mono_t2 ships as NIfTI (SEdata.nii.gz) with a qMRLab reference (FitResults/).
+MONO_SE="$(find "$DATA/mono_t2" -name 'SEdata.nii.gz' | head -1)"
+MONO_MASK="$(find "$DATA/mono_t2" -name 'Mask.nii.gz' | head -1)"
+MONO_REF_T2="$(find "$DATA/mono_t2" -path '*FitResults*' -name 'T2.nii.gz' | head -1)"
+[ -n "$MONO_SE" ]     || { echo "SEdata.nii.gz not found in mono_t2 archive"; exit 1; }
+[ -n "$MONO_MASK" ]   || { echo "Mask.nii.gz not found in mono_t2 archive"; exit 1; }
+[ -n "$MONO_REF_T2" ] || { echo "FitResults/T2.nii.gz not found in mono_t2 archive"; exit 1; }
+
 echo "Running IR fit..."
 "$BIN" fit --mat-data "$IR_MAT" --mask "$IR_MASK" \
   --config recipes/non-bids/irt1_config.yaml --output-dir "$DATA/out_ir"
@@ -38,8 +48,27 @@ echo "Running qMT SledPikeRP fit..."
 "$BIN" fit --mat-dir "$QMT_DIR" \
   --config recipes/non-bids/qmt_config_sledpikerp.yaml --output-dir "$DATA/out_srp"
 
+echo "Running mono_t2 bidsify + BIDS-path fit..."
+"$BIN" bidsify --model mono_t2 --nii-data "$MONO_SE" --nii-mask "$MONO_MASK" \
+  --config recipes/non-bids/mono_t2_config.yaml --subject 01 --out "$DATA/mono_t2_bids"
+"$BIN" fit --bids-dir "$DATA/mono_t2_bids" \
+  --config recipes/non-bids/mono_t2_config.yaml --output-dir "$DATA/out_mono_t2"
+
 echo "Asserting outputs..."
-for f in "$DATA/out_ir/T1.nii.gz" "$DATA/out_ramani/F.nii.gz" "$DATA/out_srp/F.nii.gz"; do
+for f in "$DATA/out_ir/T1.nii.gz" "$DATA/out_ramani/F.nii.gz" "$DATA/out_srp/F.nii.gz" \
+         "$DATA/out_mono_t2/qmrust/sub-01/anat/sub-01_T2map.nii.gz"; do
   test -s "$f" || { echo "MISSING or empty: $f"; exit 1; }
 done
+
+# Voxelwise agreement with qMRLab's own FitResults. qmrust reports T2 in
+# seconds, qMRLab in ms (--scale 1000). A long-T2 tail (T2 approaching the
+# 300 ms bound while the longest echo is 384 ms) is under-determined, so the
+# LM and qMRLab's trust-region-reflective diverge there; the bulk agrees to
+# machine precision. The threshold accepts that tail without masking a real
+# regression in the well-determined majority.
+echo "Comparing mono_t2 T2 map to qMRLab FitResults..."
+python3 ci/compare_maps.py \
+  "$DATA/out_mono_t2/qmrust/sub-01/anat/sub-01_T2map.nii.gz" "$MONO_REF_T2" \
+  --scale 1000 --rel-tol 0.01 --min-frac 0.90 --min-corr 0.95 --label mono_t2-T2
+
 echo "OSF integration OK"

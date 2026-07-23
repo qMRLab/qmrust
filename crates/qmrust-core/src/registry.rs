@@ -21,6 +21,13 @@ pub struct ModelEntry {
 pub fn all() -> &'static [ModelEntry] {
     &[
         ModelEntry {
+            name: "mono_t2",
+            bids_suffix: "MESE",
+            build: models::mono_t2::build,
+            describe: models::mono_t2::describe,
+            dump: models::mono_t2::dump,
+        },
+        ModelEntry {
             name: "inversion_recovery",
             bids_suffix: "IRT1",
             build: models::inversion_recovery::build,
