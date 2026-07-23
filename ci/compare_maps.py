@@ -23,6 +23,7 @@ def read_nii(path):
         b = f.read()
     dim = struct.unpack("<8h", b[40:56])
     datatype = struct.unpack("<h", b[70:72])[0]
+    scl_slope, scl_inter = struct.unpack("<2f", b[112:120])
     vox_offset = int(struct.unpack("<f", b[108:112])[0])
     n = 1
     for d in dim[1 : dim[0] + 1]:
@@ -32,7 +33,12 @@ def read_nii(path):
         sys.exit(f"unsupported NIfTI datatype {datatype} in {path}")
     size = struct.calcsize(fmt)
     raw = b[vox_offset : vox_offset + n * size]
-    return list(struct.unpack("<" + fmt * n, raw))
+    vals = struct.unpack("<" + fmt * n, raw)
+    # NIfTI intensity transform: displayed = slope * stored + intercept. A zero
+    # (unset) slope means no scaling, per the spec — treat it as identity.
+    if scl_slope not in (0.0, 1.0) or scl_inter != 0.0:
+        return [scl_slope * v + scl_inter for v in vals]
+    return list(vals)
 
 
 def finite_pos(x):

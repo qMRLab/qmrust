@@ -47,14 +47,24 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
     let model = (entry.describe)(&raw)?;
 
     // A NIfTI source carries a real spatial header (preserved); a `.mat` source
-    // carries none (a minimal header is synthesized in `write_bids_tree`).
+    // carries none (a minimal header is synthesized in `write_bids_tree`). Each
+    // source reads its mask from its own flag, so reject the other source's
+    // mask flag rather than silently ignoring it.
     let (data, mask, aux, source_header) = if let Some(nii) = args.nii_data.as_ref() {
         anyhow::ensure!(
             args.mat_data.is_none() && args.mat_dir.is_none(),
             "--nii-data is mutually exclusive with --mat-data/--mat-dir"
         );
+        anyhow::ensure!(
+            args.mask.is_none(),
+            "--mask is for a .mat source; pass --nii-mask with --nii-data"
+        );
         read_nifti_source(nii, args.nii_mask.as_deref(), model.as_ref())?
     } else {
+        anyhow::ensure!(
+            args.nii_mask.is_none(),
+            "--nii-mask is for a NIfTI source; pass --mask with --mat-data/--mat-dir"
+        );
         read_mat_source(&args, model.as_ref())?
     };
 
@@ -590,6 +600,43 @@ mod tests {
             .join("anat")
             .join("sub-01_desc-brain_mask.nii.gz");
         assert!(mask_path.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A NIfTI source's spatial header must be carried into the written volumes
+    /// (the orientation-preservation contract). With `Some(source_header)`, the
+    /// distinctive affine survives to the output; the `None` path (a synthesized
+    /// minimal header) is covered by the tests above.
+    #[test]
+    fn bidsify_preserves_source_header_affine() {
+        let dir = tmp_dir("source-header");
+        let ir_data = Array4::from_shape_fn((2, 2, 1, 3), |(i, j, _k, t)| {
+            (i * 10 + j) as f64 + t as f64 * 0.5
+        });
+        let model = ir_model(&[0.350, 0.650, 0.950], None);
+
+        // Distinctive affine, unlike anything make_minimal_header would produce.
+        let mut src = make_minimal_header(2, 2, 1);
+        src.srow_x = [2.5, 0.0, 0.0, -17.5];
+        src.srow_y = [0.0, 3.0, 0.0, -21.0];
+        src.srow_z = [0.0, 0.0, 4.0, 8.0];
+        src.pixdim = [1.0, 2.5, 3.0, 4.0, 0.0, 0.0, 0.0, 0.0];
+        src.sform_code = 2;
+
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir, Some(&src)).unwrap();
+
+        let nii = dir
+            .join("sub-01")
+            .join("anat")
+            .join("sub-01_inv-1_IRT1.nii.gz");
+        let (_data, out) = io::nifti::read_map_nifti_with_header(&nii).unwrap();
+        assert_eq!(out.srow_x, src.srow_x);
+        assert_eq!(out.srow_y, src.srow_y);
+        assert_eq!(out.srow_z, src.srow_z);
+        assert_eq!(out.pixdim[1], src.pixdim[1]);
+        assert_eq!(out.pixdim[2], src.pixdim[2]);
+        assert_eq!(out.sform_code, src.sform_code);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
