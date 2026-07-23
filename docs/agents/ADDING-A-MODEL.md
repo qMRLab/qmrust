@@ -165,6 +165,12 @@ before any data is resolved; `build` is the fit-ready path.
 5. Tests: forward→fit round-trip; config parse/validate; `ingest_protocol`
    composes from a resolved `Protocol`; if `bids_outputs()` is non-empty,
    assert every entry names a real `output_names()` value.
+6. Two `--config` recipes (`recipes/README.md`): `recipes/non-bids/<name>_config.yaml`
+   **with** the acquisition arrays (the non-BIDS/`--mat`/`bidsify` protocol source),
+   mask via the `--mask` flag; and `recipes/bids/<name>_config.yaml` **without** them
+   (the BIDS fit resolves the acquisition from sidecars), mask via a `mask:` block.
+   The output provenance's `Parameters` echoes the raw recipe, so a BIDS fit run with
+   the non-BIDS recipe duplicates the acquisition axis `Protocol` already records.
 
 Reference models:
 - `models/inversion_recovery/` — minimal. `protocol_schema()` maps

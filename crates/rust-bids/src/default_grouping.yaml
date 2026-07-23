@@ -20,3 +20,6 @@ MTS:
       flip: "2"
       mt: "off"
     required: [PDw, MTw, T1w]
+MESE:
+  sequential_set:
+    by: [echo]

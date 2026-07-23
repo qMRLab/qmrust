@@ -1,0 +1,13 @@
+model: mono_t2
+
+# BIDS input: EchoTime is read from the JSON sidecars via the model's
+# protocol_schema(), so the echo-time list is NOT declared here.
+
+# Algorithm options (always used; not BIDS metadata).
+fit_type: exponential
+drop_first_echo: false
+offset_term: false
+
+# BIDS mask selection — disambiguates which mask in the dataset to apply.
+mask:
+  desc: brain

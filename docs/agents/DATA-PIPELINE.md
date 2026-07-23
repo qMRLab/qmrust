@@ -304,15 +304,18 @@ becomes a dataset again, in BIDS-derivatives form.
   `qmrust fit --output-dir` (no `--bids-dir`) keeps its existing flat
   `output_dir/<map>.nii.gz` layout, with no sidecar, unchanged.
 
-## 7. `qmrust bidsify` — `.mat` → byte-identical BIDS (input provenance)
+## 7. `qmrust bidsify` — qMRLab dataset → byte-identical BIDS (input provenance)
 
 The BIDS pipeline needs example datasets to fit; `bidsify`
 (`qmrust-cli/src/bidsify.rs`) is how one is produced from qMRLab's own OSF
-`.mat` test data, so that fitting the BIDS version reproduces the `.mat` fit
-exactly.
+test data, so that fitting the BIDS version reproduces the source fit exactly.
+The source is either a `.mat` (`--mat-data`/`--mat-dir`) or a 4D NIfTI
+(`--nii-data`/`--nii-mask`, for datasets that ship as NIfTI, e.g. mono_t2's
+`SEdata.nii.gz`); a NIfTI source's spatial header is preserved, a `.mat`
+source gets a minimal one.
 
 - **Byte-identical is the guarantee**: each volume is sliced straight out of
-  the `.mat` `Array4<f64>` and written as `f64`/datatype-64 NIfTI — no
+  the source `Array4<f64>` and written as `f64`/datatype-64 NIfTI — no
   rescale, no dtype narrowing. `bidsify --model inversion_recovery` writes
   `sub-<subject>/anat/sub-<subject>_inv-<i>_IRT1.nii.gz` (1-based `<i>`,
   matching the `.mat`'s own TI order — never re-sorted) + a

@@ -1,0 +1,41 @@
+model: mono_t2
+
+# non-BIDS: protocol from this file; mask via --mask/--nii-mask.
+# All times are in seconds (BIDS/SI). qMRLab mono_t2 default protocol:
+# 30 spin echoes, 12.8 ms spacing (12.8..384 ms).
+echo_times:
+- 0.0128
+- 0.0256
+- 0.0384
+- 0.0512
+- 0.064
+- 0.0768
+- 0.0896
+- 0.1024
+- 0.1152
+- 0.128
+- 0.1408
+- 0.1536
+- 0.1664
+- 0.1792
+- 0.192
+- 0.2048
+- 0.2176
+- 0.2304
+- 0.2432
+- 0.256
+- 0.2688
+- 0.2816
+- 0.2944
+- 0.3072
+- 0.32
+- 0.3328
+- 0.3456
+- 0.3584
+- 0.3712
+- 0.384
+
+# Algorithm options (always used; not BIDS metadata).
+fit_type: exponential
+drop_first_echo: false
+offset_term: false
