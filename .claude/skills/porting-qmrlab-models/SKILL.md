@@ -39,6 +39,12 @@ qMRLab source does not settle it. The questions that most often decide a port:
 - whether the model actually fits the voxelwise `forward`/`fit` paradigm, or needs a
   different shape — if the abstraction does not fit, improve the abstraction, do not
   special-case;
+- which BIDS suffix and per-volume entities the inputs map to — settle this against the
+  **BIDS qMRI appendix** (https://bids-specification.readthedocs.io/en/stable/appendices/qmri.html),
+  the authority for qMRI grouping suffixes (`MTS`, `MTR`, `MP2RAGE`, `VFA`, …) and the
+  entities that index them (`mt-on`/`mt-off`, `flip`, `inv`, `echo`). Prefer a canonical
+  suffix over inventing one; a genuinely non-official suffix (like `QMTSPGR`) is the
+  exception, not the default;
 - what tolerance counts as agreement with qMRLab (Tier 3).
 
 A wrong silent assumption here produces maps that look right and are wrong, so when in
@@ -126,3 +132,7 @@ When no reference result exists:
 Mechanical file checklist: `docs/agents/ADDING-A-MODEL.md`. Deep dives:
 `references/reading-qmrlab.md`, `references/translation-patterns.md`,
 `references/optional-inputs.md`, `references/validation.md`.
+
+BIDS qMRI grouping suffixes and entities (the authority for the `bids()` /
+`bids_volume()` / grouping decisions in Phases 2–4):
+https://bids-specification.readthedocs.io/en/stable/appendices/qmri.html
