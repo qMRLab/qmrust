@@ -386,11 +386,10 @@ pub fn run_fit(
     }
     let aux = AuxMaps::new(aux_pairs);
 
-    // NIfTI inputs carry a real spatial header → preserve it (write_3d_nifti).
-    // .mat inputs have none → emit a make_nii-compatible header
-    // (write_map_nifti: 2D when z=1, sform origin at voxel (1,1,1)) so the
-    // maps overlay/subtract cleanly against qMRLab's FitResults.
-    let from_mat = input.nifti_header.is_none();
+    // NIfTI inputs carry a real spatial header → preserve it; .mat inputs have
+    // none → emit a make_nii-compatible minimal header. Either way the map
+    // writer collapses a singleton z to 2D so maps overlay/subtract cleanly
+    // against qMRLab's FitResults.
     let header = input.nifti_header.unwrap_or_else(|| {
         let (nx, ny, nz, _) = input.data.dim();
         make_minimal_header(nx, ny, nz)
@@ -403,7 +402,6 @@ pub fn run_fit(
         input.mask.as_ref(),
         &aux,
         &header,
-        from_mat,
         &output_dir,
     )
 }
@@ -451,7 +449,6 @@ fn fit_and_write(
     mask: Option<&Array3<bool>>,
     aux: &AuxMaps,
     header: &NiftiHeader,
-    from_mat: bool,
     output_dir: &Path,
 ) -> Result<()> {
     let results = run_model_fit(model, data, proto, mask, aux)?;
@@ -460,11 +457,7 @@ fn fit_and_write(
     eprintln!("Writing results to {:?}...", output_dir);
     for (name, map) in &results {
         let path = output_dir.join(format!("{}.nii.gz", name));
-        if from_mat {
-            io::nifti::write_map_nifti(map, header, &path)?;
-        } else {
-            io::nifti::write_3d_nifti(map, header, &path)?;
-        }
+        io::nifti::write_map_nifti(map, header, &path)?;
         let fname = format!("{}.nii.gz", name);
         eprintln!(
             "  {}",
@@ -528,14 +521,13 @@ fn collection_sources(c: &Collection, bids_dir: &Path) -> Vec<String> {
 /// Outputs `bids_outputs()` doesn't declare (diagnostics like
 /// `res`/`idx`/`kf`/`resnorm`) are never written —
 /// only real BIDS maps get exported to the derivatives layout. Uses the same
-/// writer `fit_and_write`'s flat output uses (`write_map_nifti` for
-/// `.mat`-sourced data, `write_3d_nifti` otherwise), so map values are
-/// byte-identical between the flat and derivatives layouts. Also ensures a
+/// writer `fit_and_write`'s flat output uses (`write_map_nifti`), so map values
+/// are byte-identical between the flat and derivatives layouts. Also ensures a
 /// `deriv_root/qmrust/dataset_description.json` exists (created once, never
 /// overwritten on subsequent subjects/sessions).
 // One parameter per independent piece of write context (map data, model,
-// BIDS entities, output root, header/source-format, provenance) — a params
-// struct would just relocate the same fields without reducing them.
+// BIDS entities, output root, header, provenance) — a params struct would
+// just relocate the same fields without reducing them.
 #[allow(clippy::too_many_arguments)]
 fn write_derivatives(
     results: &qmrust_core::fitting::FitResults,
@@ -544,7 +536,6 @@ fn write_derivatives(
     session: Option<&str>,
     deriv_root: &Path,
     header: &NiftiHeader,
-    from_mat: bool,
     prov: &crate::provenance::FitProvenance,
 ) -> Result<()> {
     let qmrust_root = deriv_root.join("qmrust");
@@ -578,11 +569,7 @@ fn write_derivatives(
         };
         let base = format!("{entity_stem}_{suffix}");
         let nii_path = anat_dir.join(format!("{base}.nii.gz"));
-        if from_mat {
-            io::nifti::write_map_nifti(map, header, &nii_path)?;
-        } else {
-            io::nifti::write_3d_nifti(map, header, &nii_path)?;
-        }
+        io::nifti::write_map_nifti(map, header, &nii_path)?;
         let json_path = anat_dir.join(format!("{base}.json"));
         std::fs::write(
             &json_path,
@@ -727,7 +714,6 @@ pub fn run_fit_bids(
         let model = (entry.build)(&raw, &proto)?;
         eprintln!("  Model: {}, {} volumes", cfg.model, data.dim().3);
 
-        let from_mat = header.is_none();
         let (nx, ny, nz, _) = data.dim();
         let header = header.unwrap_or_else(|| make_minimal_header(nx, ny, nz));
 
@@ -770,7 +756,6 @@ pub fn run_fit_bids(
             c.session.as_deref(),
             &output_dir,
             &header,
-            from_mat,
             &prov,
         )?;
         fit_count += 1;
@@ -1225,7 +1210,6 @@ mod tests {
             None,
             &deriv_root,
             &header,
-            true,
             &prov,
         )
         .unwrap();

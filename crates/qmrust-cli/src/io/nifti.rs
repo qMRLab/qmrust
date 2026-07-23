@@ -109,7 +109,9 @@ pub fn read_map_nifti_with_header(path: &Path) -> Result<(Array3<f64>, NiftiHead
     Ok((arr, header))
 }
 
-/// Create a 3D header from a 4D reference header.
+/// Create a 3D header from a 4D reference header. Test-only: production output
+/// goes through [`write_map_nifti`] (3D for z > 1, 2D for a single slice).
+#[cfg(test)]
 fn make_3d_header(header_4d: &NiftiHeader) -> NiftiHeader {
     let mut h = header_4d.clone();
     h.dim[0] = 3;
@@ -121,7 +123,10 @@ fn make_3d_header(header_4d: &NiftiHeader) -> NiftiHeader {
     h
 }
 
-/// Write a 3D f64 array as a NIfTI file, using a reference header for spatial metadata.
+/// Write a 3D f64 array as a NIfTI file, using a reference header for spatial
+/// metadata. Test-only helper for building 3D fixtures; production map output
+/// uses [`write_map_nifti`].
+#[cfg(test)]
 pub fn write_3d_nifti(
     data: &Array3<f64>,
     reference_header: &NiftiHeader,
@@ -154,6 +159,9 @@ pub fn write_map_nifti(
     header.datatype = 64;
     header.bitpix = 64;
     if nz == 1 {
+        // A 2D image has no temporal axis, so clear its spacing (qMRLab's
+        // make_nii leaves pixdim[4] = 0), matching reference maps field-for-field.
+        header.pixdim[4] = 0.0;
         // Drop the singleton z axis → 2D (nx, ny), preserving (i, j) order.
         let slice2d = data.index_axis(ndarray::Axis(2), 0).to_owned();
         WriterOptions::new(output_path)
