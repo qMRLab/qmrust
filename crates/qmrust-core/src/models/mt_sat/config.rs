@@ -1,0 +1,155 @@
+//! mt_sat config.
+//!
+//! The acquisition is per-weighting: each of MTw, PDw, T1w carries a nominal
+//! flip angle (degrees, BIDS `FlipAngle`) and a repetition time (seconds, BIDS
+//! `RepetitionTimeExcitation`). Non-BIDS fits declare these here; BIDS fits fold
+//! them from each role's sidecar via `ingest_protocol`. Plus two options: the
+//! empirical B1 correction factor and whether to export the MTR map.
+
+use anyhow::{bail, Result};
+use serde::{Deserialize, Serialize};
+
+/// One weighting's acquisition: flip angle in degrees, TR in seconds.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+pub struct Weighting {
+    #[serde(default)]
+    pub flip_angle: f64,
+    #[serde(default)]
+    pub repetition_time: f64,
+}
+
+fn default_b1_correction_factor() -> f64 {
+    0.4
+}
+
+fn default_export_mtr() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MtSatConfig {
+    #[serde(default)]
+    pub mtw: Weighting,
+    #[serde(default)]
+    pub pdw: Weighting,
+    #[serde(default)]
+    pub t1w: Weighting,
+    /// Empirical transmit-RF correction factor for MTsat (Helms 2015); only
+    /// applied when a B1 map is supplied. Default 0.4.
+    #[serde(default = "default_b1_correction_factor")]
+    pub b1_correction_factor: f64,
+    /// Export an MTR map alongside MTsat/T1. Requires TR_MT == TR_PD (MTR is a
+    /// ratio of the two same-TR volumes). Default true.
+    #[serde(default = "default_export_mtr")]
+    pub export_mtr: bool,
+}
+
+impl Default for MtSatConfig {
+    fn default() -> Self {
+        Self {
+            mtw: Weighting::default(),
+            pdw: Weighting::default(),
+            t1w: Weighting::default(),
+            b1_correction_factor: default_b1_correction_factor(),
+            export_mtr: default_export_mtr(),
+        }
+    }
+}
+
+impl MtSatConfig {
+    /// Config-intrinsic validation (no protocol needed).
+    pub fn validate_options(&self) -> Result<()> {
+        // The B1 correction divides by (1 - factor·B1); keep it in [0, 1) so a
+        // physical B1 ≈ 1 never drives the denominator to zero.
+        if !(0.0..1.0).contains(&self.b1_correction_factor) {
+            bail!(
+                "b1_correction_factor must be in [0, 1), got {}",
+                self.b1_correction_factor
+            );
+        }
+        Ok(())
+    }
+
+    /// Protocol-completeness validation, run after `ingest_protocol`.
+    pub fn validate_protocol(&self) -> Result<()> {
+        for (name, w) in [("mtw", self.mtw), ("pdw", self.pdw), ("t1w", self.t1w)] {
+            if w.flip_angle <= 0.0 {
+                bail!(
+                    "{name}.flip_angle must be > 0 (degrees), got {}",
+                    w.flip_angle
+                );
+            }
+            if w.repetition_time <= 0.0 {
+                bail!(
+                    "{name}.repetition_time must be > 0 (seconds), got {}",
+                    w.repetition_time
+                );
+            }
+        }
+        if self.export_mtr && self.mtw.repetition_time != self.pdw.repetition_time {
+            bail!(
+                "export_mtr requires TR_MT == TR_PD, got {} != {}",
+                self.mtw.repetition_time,
+                self.pdw.repetition_time
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_per_role_protocol_and_options() {
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: mt_sat\nmtw: {flip_angle: 6, repetition_time: 0.028}\npdw: {flip_angle: 6, repetition_time: 0.028}\nt1w: {flip_angle: 20, repetition_time: 0.018}\n",
+        )
+        .unwrap();
+        let cfg: MtSatConfig = serde_yaml::from_value(v).unwrap();
+        cfg.validate_options().unwrap();
+        cfg.validate_protocol().unwrap();
+        assert_eq!(cfg.b1_correction_factor, 0.4); // default
+        assert!(cfg.export_mtr); // default
+        assert_eq!(cfg.t1w.flip_angle, 20.0);
+    }
+
+    #[test]
+    fn validate_options_passes_without_protocol() {
+        let cfg = MtSatConfig::default();
+        cfg.validate_options().unwrap(); // config-intrinsic only
+        assert!(cfg.validate_protocol().is_err()); // zero flip angles rejected
+    }
+
+    #[test]
+    fn export_mtr_requires_matching_tr() {
+        let mut cfg = MtSatConfig {
+            mtw: Weighting {
+                flip_angle: 6.0,
+                repetition_time: 0.028,
+            },
+            pdw: Weighting {
+                flip_angle: 6.0,
+                repetition_time: 0.030,
+            },
+            t1w: Weighting {
+                flip_angle: 20.0,
+                repetition_time: 0.018,
+            },
+            ..Default::default()
+        };
+        assert!(cfg.validate_protocol().is_err());
+        cfg.export_mtr = false;
+        cfg.validate_protocol().unwrap();
+    }
+
+    #[test]
+    fn rejects_out_of_range_b1_factor() {
+        let cfg = MtSatConfig {
+            b1_correction_factor: 1.0,
+            ..Default::default()
+        };
+        assert!(cfg.validate_options().is_err());
+    }
+}

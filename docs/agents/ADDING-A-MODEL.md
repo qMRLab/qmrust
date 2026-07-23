@@ -178,6 +178,13 @@ Reference models:
   `fit`. Its `MTR` grouping is a `named_set` whose role names match its
   `measurement()` roles, so `load_collection` stacks a named collection in role
   order.
+- `models/mt_sat/` — a `Named` model *with* per-role acquisition: three roles
+  (`MTw`/`PDw`/`T1w`, the BIDS `MTS` set), an optional `B1map` aux, and a
+  `protocol_schema()` of `FlipAngle`/`RepetitionTimeExcitation` folded per role
+  in `ingest_protocol`. Shows that a Named measurement can also carry a
+  sidecar-resolved protocol (`validate_against_protocol` checks one row per
+  role), and a config-dependent `output_names()`/`bids_outputs()` (MTR exported
+  only when TR_MT == TR_PD).
 - `models/inversion_recovery/` — minimal `Series`. `protocol_schema()` maps
   `InversionTime` straight off the sidecar; no aux inputs; `Series`
   measurement.

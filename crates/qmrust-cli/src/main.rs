@@ -122,7 +122,13 @@ enum Commands {
         #[arg(long)]
         nii_data: Option<PathBuf>,
 
-        /// Path to a NIfTI mask, paired with --nii-data
+        /// Directory of per-role NIfTIs (`<role>.nii.gz`, e.g. MTS's
+        /// MTw/PDw/T1w) for a Named model. Mutually exclusive with the other
+        /// source flags.
+        #[arg(long)]
+        nii_dir: Option<PathBuf>,
+
+        /// Path to a NIfTI mask, paired with --nii-data/--nii-dir
         #[arg(long)]
         nii_mask: Option<PathBuf>,
 
@@ -247,6 +253,7 @@ fn main() -> Result<()> {
             mat_data,
             mat_dir,
             nii_data,
+            nii_dir,
             nii_mask,
             mask,
             config,
@@ -257,6 +264,7 @@ fn main() -> Result<()> {
             mat_data,
             mat_dir,
             nii_data,
+            nii_dir,
             nii_mask,
             mask,
             config,

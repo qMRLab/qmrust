@@ -314,7 +314,37 @@ fn load_collection(
     let proto = if schema.is_empty() {
         Protocol::default()
     } else {
-        rust_bids::resolve_protocol(fs, c, schema, options)?
+        let resolved = rust_bids::resolve_protocol(fs, c, schema, options)?;
+        match (&c.data, roles) {
+            // `resolve_protocol` walks a named set in `BTreeMap` (alphabetical
+            // role) order, which need not match the model's declared role
+            // order the data was just stacked in. Reorder — and select, if the
+            // model uses a subset of the set's roles — so `proto.volumes[i]` is
+            // `roles[i]`, letting a Named model's `ingest_protocol` fold each
+            // role's acquisition by position.
+            (GroupedData::Named(map), Some(roles)) => {
+                let alpha: Vec<&str> = map.keys().map(String::as_str).collect();
+                let mut by_role: std::collections::BTreeMap<&str, _> =
+                    alpha.into_iter().zip(resolved.volumes).collect();
+                let volumes = roles
+                    .iter()
+                    .map(|&r| {
+                        by_role.remove(r).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "named collection for '{}' resolved no protocol for role '{}'",
+                                c.suffix,
+                                r
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Protocol {
+                    volumes,
+                    global: resolved.global,
+                }
+            }
+            _ => resolved,
+        }
     };
     Ok((out, proto, header))
 }
@@ -1602,6 +1632,7 @@ mod tests {
             mat_data: Some(ir_mat),
             mat_dir: None,
             nii_data: None,
+            nii_dir: None,
             nii_mask: None,
             mask: Some(ir_mask),
             config: config.clone(),
@@ -1711,6 +1742,7 @@ mod tests {
             mat_data: Some(qmt_mat),
             mat_dir: None,
             nii_data: None,
+            nii_dir: None,
             nii_mask: None,
             mask: None,
             config: config.clone(),

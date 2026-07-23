@@ -25,6 +25,7 @@ pub struct BidsifyArgs {
     pub mat_data: Option<PathBuf>,
     pub mat_dir: Option<PathBuf>,
     pub nii_data: Option<PathBuf>,
+    pub nii_dir: Option<PathBuf>,
     pub nii_mask: Option<PathBuf>,
     pub mask: Option<PathBuf>,
     pub config: PathBuf,
@@ -50,7 +51,17 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
     // carries none (a minimal header is synthesized in `write_bids_tree`). Each
     // source reads its mask from its own flag, so reject the other source's
     // mask flag rather than silently ignoring it.
-    let (data, mask, aux, source_header) = if let Some(nii) = args.nii_data.as_ref() {
+    let (data, mask, aux, source_header) = if let Some(dir) = args.nii_dir.as_ref() {
+        anyhow::ensure!(
+            args.nii_data.is_none() && args.mat_data.is_none() && args.mat_dir.is_none(),
+            "--nii-dir is mutually exclusive with --nii-data/--mat-data/--mat-dir"
+        );
+        anyhow::ensure!(
+            args.mask.is_none(),
+            "--mask is for a .mat source; pass --nii-mask with --nii-dir"
+        );
+        read_named_nifti_source(dir, args.nii_mask.as_deref(), model.as_ref())?
+    } else if let Some(nii) = args.nii_data.as_ref() {
         anyhow::ensure!(
             args.mat_data.is_none() && args.mat_dir.is_none(),
             "--nii-data is mutually exclusive with --mat-data/--mat-dir"
@@ -157,6 +168,26 @@ fn read_mat_source(args: &BidsifyArgs, model: &dyn Model) -> Result<Source> {
 /// model currently declares any.
 fn read_nifti_source(nii: &Path, nii_mask: Option<&Path>, _model: &dyn Model) -> Result<Source> {
     let (data, header) = io::nifti::read_4d_nifti(nii)?;
+    let mask = match nii_mask {
+        Some(p) => Some(io::nifti::read_mask_nifti(p)?),
+        None => None,
+    };
+    Ok((data, mask, Vec::new(), Some(header)))
+}
+
+/// Read a `Named` model's per-role NIfTIs from `dir` (`<role>.nii.gz`),
+/// stacked in the model's declared role order, preserving the first role's
+/// spatial header. Only Named models have a role axis; a Series model has no
+/// `<role>.nii.gz` layout to read from a directory.
+fn read_named_nifti_source(
+    dir: &Path,
+    nii_mask: Option<&Path>,
+    model: &dyn Model,
+) -> Result<Source> {
+    let MeasurementKind::Named { roles } = model.measurement() else {
+        anyhow::bail!("--nii-dir is only for Named models (one <role>.nii.gz per role)");
+    };
+    let (data, header) = io::nifti::read_named_nii_volumes(dir, roles)?;
     let mask = match nii_mask {
         Some(p) => Some(io::nifti::read_mask_nifti(p)?),
         None => None,

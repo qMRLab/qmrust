@@ -232,7 +232,11 @@ straight from `--config` — `build` is handed an empty `Protocol`.
   re-identified from its `Protocol` by value; a `Named` collection is stacked
   in the model's declared role order (`load_collection` maps each role to the
   named set's like-named volume, so the grouping's `named_set` role names must
-  match the model's `measurement()` roles).
+  match the model's `measurement()` roles). A Named model that needs per-role
+  acquisition (e.g. MTsat's FlipAngle/RepetitionTimeExcitation) declares it in
+  `protocol_schema()`; `load_collection` resolves it per volume and reorders
+  the rows to the model's role order, so `ingest_protocol` folds each role's
+  sidecar values by position.
 - **Browser/Tauri** — same `DatasetFs` seam, a different implementation
   backed by JS directory listings instead of `std::fs`; no change to
   `rust-bids`'s resolution or protocol logic.
