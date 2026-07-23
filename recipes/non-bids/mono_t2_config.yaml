@@ -1,6 +1,6 @@
 model: mono_t2
 
-# non-BIDS: protocol from this file; mask via --nii-mask.
+# non-BIDS: protocol from this file; mask via --mask/--nii-mask.
 # All times are in seconds (BIDS/SI). qMRLab mono_t2 default protocol:
 # 30 spin echoes, 12.8 ms spacing (12.8..384 ms).
 echo_times:
@@ -39,8 +39,3 @@ echo_times:
 fit_type: exponential
 drop_first_echo: false
 offset_term: false
-
-# For the BIDS-path fit: restrict to the brain-mask derivative bidsify writes.
-# (Ignored by bidsify, which resolves the mask from --nii-mask/--mask.)
-mask:
-  desc: brain

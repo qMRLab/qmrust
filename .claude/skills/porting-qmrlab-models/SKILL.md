@@ -72,11 +72,20 @@ green.*
 **Phase 4 — Fetch and bidsify example data.** Using the fetch mechanism from Phase 0,
 download the model's example dataset and run `qmrust bidsify`; this exercises `bids()`,
 `bids_volume()`, `required_inputs()`, and the `default_grouping.yaml` block, and
-produces the dataset Phase 5 validates.
-→ *Gate: bidsify succeeds and the BIDS layout is correct.*
+produces the dataset Phase 5 validates. Write **both** `--config` recipes now (see
+`recipes/README.md`): `recipes/non-bids/<name>_config.yaml` **carries** the acquisition
+arrays (bidsify reads them as the protocol fallback to write the sidecars; the non-BIDS
+fit path reads them directly) and takes its mask via the `--mask` flag, while
+`recipes/bids/<name>_config.yaml` **omits** them (the BIDS fit resolves the acquisition
+from sidecars) and selects its mask with a `mask:` block. The distinction is not
+cosmetic: the output provenance's `Parameters` block echoes the raw recipe verbatim, so
+a BIDS fit run with a recipe that still lists the acquisition arrays duplicates the
+per-volume axis that `Protocol` already records from the sidecars.
+→ *Gate: bidsify succeeds, the BIDS layout is correct, and both recipes exist.*
 
 **Phase 5 — Validate against qMRLab.** Fit the bidsified data via `qmrust fit
---bids-dir` and compare the maps to qMRLab's `FitResults` for the same dataset.
+--bids-dir --config recipes/bids/<name>_config.yaml` and compare the maps to qMRLab's
+`FitResults` for the same dataset.
 → *Gate: human reviews the delta and signs off.*
 
 ## Definition of done
@@ -92,10 +101,13 @@ Always required:
 Required whenever the model's example data is fetchable (the normal case, since every
 qMRLab model defines how to fetch it):
 
+- both `recipes/non-bids/<name>_config.yaml` (acquisition arrays present, `--mask` flag)
+  and `recipes/bids/<name>_config.yaml` (acquisition arrays omitted, `mask:` block) exist;
 - `qmrust bidsify` converts the fetched example data into a correct BIDS layout —
   suffix, per-volume entities, and sidecars match `bids()`/`bids_volume()`, voxel data
   byte-identical to source;
-- the model fits that bidsified data via `qmrust fit --bids-dir`.
+- the model fits that bidsified data via `qmrust fit --bids-dir` with the BIDS recipe,
+  and its output provenance does not duplicate the acquisition axis into `Parameters`.
 
 Required when a qMRLab reference result exists (e.g. `FitResults` on OSF):
 

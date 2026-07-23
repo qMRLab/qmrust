@@ -49,10 +49,14 @@ echo "Running qMT SledPikeRP fit..."
   --config recipes/non-bids/qmt_config_sledpikerp.yaml --output-dir "$DATA/out_srp"
 
 echo "Running mono_t2 bidsify + BIDS-path fit..."
+# bidsify uses the non-BIDS recipe (its echo_times are the protocol fallback,
+# written into the sidecars); the BIDS-path fit then reads those sidecars and
+# uses the BIDS recipe (no echo_times — avoids duplicating the acquisition axis
+# into the output provenance's Parameters block).
 "$BIN" bidsify --model mono_t2 --nii-data "$MONO_SE" --nii-mask "$MONO_MASK" \
   --config recipes/non-bids/mono_t2_config.yaml --subject 01 --out "$DATA/mono_t2_bids"
 "$BIN" fit --bids-dir "$DATA/mono_t2_bids" \
-  --config recipes/non-bids/mono_t2_config.yaml --output-dir "$DATA/out_mono_t2"
+  --config recipes/bids/mono_t2_config.yaml --output-dir "$DATA/out_mono_t2"
 
 echo "Asserting outputs..."
 for f in "$DATA/out_ir/T1.nii.gz" "$DATA/out_ramani/F.nii.gz" "$DATA/out_srp/F.nii.gz" \
