@@ -86,11 +86,32 @@ impl MtSatConfig {
                 );
             }
         }
-        if self.export_mtr && self.mtw.repetition_time != self.pdw.repetition_time {
+        // PDw and T1w must differ in flip angle — that difference is what
+        // separates R1 from the signal amplitude. Which of the two is T1w is
+        // decided later by flip-angle value (the higher one), not by the
+        // flip-1/flip-2 label, so a mislabeled pair is corrected rather than
+        // rejected (see `MtSatModel::new`); an equal pair is genuinely
+        // ambiguous and cannot be.
+        if self.pdw.flip_angle == self.t1w.flip_angle {
             bail!(
-                "export_mtr requires TR_MT == TR_PD, got {} != {}",
+                "PDw and T1w must have different flip angles (both {}°); the pair cannot be \
+                 disambiguated",
+                self.pdw.flip_angle
+            );
+        }
+        // MTR is a ratio of the MT-off/MT-on pair, so it needs the PD-weighted
+        // image (the lower-flip-angle MT-off volume, acquired like MTw). Its TR
+        // must match MTw's.
+        let pd_tr = if self.pdw.flip_angle < self.t1w.flip_angle {
+            self.pdw.repetition_time
+        } else {
+            self.t1w.repetition_time
+        };
+        if self.export_mtr && self.mtw.repetition_time != pd_tr {
+            bail!(
+                "export_mtr requires the PD-weighted volume's TR to match MTw's ({} s), got {} s",
                 self.mtw.repetition_time,
-                self.pdw.repetition_time
+                pd_tr
             );
         }
         Ok(())
@@ -142,6 +163,30 @@ mod tests {
         assert!(cfg.validate_protocol().is_err());
         cfg.export_mtr = false;
         cfg.validate_protocol().unwrap();
+    }
+
+    #[test]
+    fn rejects_equal_pdw_t1w_flip_angles() {
+        // Equal flip angles cannot be split into a PD/T1 pair (that difference
+        // is what separates R1 from amplitude) — genuinely ambiguous, unlike a
+        // merely swapped label, which `MtSatModel::new` corrects by FA value.
+        let cfg = MtSatConfig {
+            mtw: Weighting {
+                flip_angle: 6.0,
+                repetition_time: 0.028,
+            },
+            pdw: Weighting {
+                flip_angle: 6.0,
+                repetition_time: 0.028,
+            },
+            t1w: Weighting {
+                flip_angle: 6.0,
+                repetition_time: 0.018,
+            },
+            ..Default::default()
+        };
+        let err = cfg.validate_protocol().unwrap_err();
+        assert!(err.to_string().contains("different flip angles"), "{err}");
     }
 
     #[test]

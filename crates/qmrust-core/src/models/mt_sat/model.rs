@@ -20,6 +20,12 @@ pub struct MtSatModel {
     acq: Acq,
     b1_correction_factor: f64,
     export_mtr: bool,
+    /// Measurement role names carrying the physical PD- and T1-weighted signals
+    /// — normally `"PDw"`/`"T1w"`, but swapped when the flip-1/flip-2 labels do
+    /// not reflect the flip angles (see `new`). Each stays paired with its own
+    /// entry in `acq`.
+    pd_role: &'static str,
+    t1_role: &'static str,
     /// FA (degrees) / TR (s) per role, retained for `bids_volume` sidecars.
     cfg: MtSatConfig,
     output_names: Vec<String>,
@@ -37,13 +43,31 @@ fn deg2rad(d: f64) -> f64 {
 
 impl MtSatModel {
     pub fn new(cfg: MtSatConfig) -> Self {
+        // T1w is the higher-flip-angle MT-off image; PDw the lower. The
+        // flip-1/flip-2 labels only order the volumes, so decide PD vs T1 by
+        // the flip-angle *value* and keep each signal paired with its own
+        // FA/TR. R1/A/MTsat are invariant to this choice; MTR needs the true
+        // PD, so a mislabeled pair is corrected here (with a warning) rather
+        // than fit wrong. `validate_protocol` has already rejected an equal
+        // (ambiguous) pair.
+        let ((pd_role, pd_w), (t1_role, t1_w)) = if cfg.pdw.flip_angle < cfg.t1w.flip_angle {
+            (("PDw", cfg.pdw), ("T1w", cfg.t1w))
+        } else {
+            eprintln!(
+                "  warning (mt_sat): the PDw-labeled volume's flip angle ({}°) exceeds the \
+                 T1w-labeled one's ({}°); reassigning by flip angle (T1w = higher FA). Verify \
+                 the flip-1/flip-2 entities are correct.",
+                cfg.pdw.flip_angle, cfg.t1w.flip_angle
+            );
+            (("T1w", cfg.t1w), ("PDw", cfg.pdw))
+        };
         let acq = Acq {
             alpha_mt: deg2rad(cfg.mtw.flip_angle),
             tr_mt: cfg.mtw.repetition_time,
-            alpha_pd: deg2rad(cfg.pdw.flip_angle),
-            tr_pd: cfg.pdw.repetition_time,
-            alpha_t1: deg2rad(cfg.t1w.flip_angle),
-            tr_t1: cfg.t1w.repetition_time,
+            alpha_pd: deg2rad(pd_w.flip_angle),
+            tr_pd: pd_w.repetition_time,
+            alpha_t1: deg2rad(t1_w.flip_angle),
+            tr_t1: t1_w.repetition_time,
         };
         let mut output_names = vec!["MTSAT".to_string(), "T1".to_string()];
         if cfg.export_mtr {
@@ -53,6 +77,8 @@ impl MtSatModel {
             acq,
             b1_correction_factor: cfg.b1_correction_factor,
             export_mtr: cfg.export_mtr,
+            pd_role,
+            t1_role,
             cfg,
             output_names,
         }
@@ -88,18 +114,29 @@ impl Model for MtSatModel {
         MeasurementKind::Named { roles: ROLES }
     }
     fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
-        let (mtw, pdw, t1w) = fit::forward_signals(&self.acq, params[0], params[1], params[2]);
-        Measurement::Named(BTreeMap::from([("MTw", mtw), ("PDw", pdw), ("T1w", t1w)]))
+        // `forward_signals` returns (MTw, physical-PD, physical-T1); tag the
+        // latter two with the role names that carry them (swapped iff the
+        // labels were).
+        let (mtw, pd, t1) = fit::forward_signals(&self.acq, params[0], params[1], params[2]);
+        Measurement::Named(BTreeMap::from([
+            ("MTw", mtw),
+            (self.pd_role, pd),
+            (self.t1_role, t1),
+        ]))
     }
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
-        let mtw = m.role("MTw").expect("Named measurement has no MTw volume");
-        let pdw = m.role("PDw").expect("Named measurement has no PDw volume");
-        let t1w = m.role("T1w").expect("Named measurement has no T1w volume");
+        let role = |r: &str| {
+            m.role(r)
+                .unwrap_or_else(|| panic!("measurement has no {r} volume"))
+        };
+        let mtw = role("MTw");
+        let pd = role(self.pd_role);
+        let t1 = role(self.t1_role);
         let b1 = aux.get("B1map");
-        let (mtsat, r1) = fit::mtsat(&self.acq, mtw, pdw, t1w, b1, self.b1_correction_factor);
+        let (mtsat, r1) = fit::mtsat(&self.acq, mtw, pd, t1, b1, self.b1_correction_factor);
         let mut out = vec![mtsat, 1.0 / r1];
         if self.export_mtr {
-            out.push(fit::mtr(pdw, mtw));
+            out.push(fit::mtr(pd, mtw));
         }
         out
     }
@@ -276,6 +313,33 @@ mod tests {
         );
         assert_eq!(t1w.sidecar["FlipAngle"], json!(20.0));
         assert_eq!(t1w.sidecar["RepetitionTimeExcitation"], json!(0.018));
+    }
+
+    #[test]
+    fn corrects_swapped_flip_labels() {
+        let normal = build(&mtsat_value(), &Protocol::default()).unwrap();
+        // Same physical acquisition, but the flip-1/flip-2 labels — hence the
+        // pdw/t1w config roles — are swapped: the PDw-labeled volume carries
+        // FA20/18ms (really T1w) and the T1w-labeled one FA6/28ms (really PDw).
+        let swapped_v: serde_yaml::Value = serde_yaml::from_str(
+            "model: mt_sat\nmtw: {flip_angle: 6, repetition_time: 0.028}\npdw: {flip_angle: 20, repetition_time: 0.018}\nt1w: {flip_angle: 6, repetition_time: 0.028}\n",
+        )
+        .unwrap();
+        let swapped = build(&swapped_v, &Protocol::default()).unwrap();
+        let p = [1000.0, 0.9, 1.5];
+        let a = normal.fit(&normal.forward(&p, &Aux::new()), &Aux::new());
+        let b = swapped.fit(&swapped.forward(&p, &Aux::new()), &Aux::new());
+        for (x, y) in a.iter().zip(&b) {
+            assert!(
+                (x - y).abs() < 1e-9,
+                "reassignment changed the maps: {a:?} vs {b:?}"
+            );
+        }
+        // The corrected model still recovers the truth (MTSAT, T1).
+        assert!(
+            (b[0] - 1.5).abs() < 1e-6 && (b[1] - 0.9).abs() < 1e-6,
+            "{b:?}"
+        );
     }
 
     #[test]
