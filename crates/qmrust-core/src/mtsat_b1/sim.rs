@@ -128,7 +128,7 @@ pub fn mamt_signal_with_step(
                 let check = m[0];
                 let diff = (check - prev).abs() * 100.0;
                 if i >= 3 && (diff < SS_THRESHOLD || i == loops) {
-                    return check * (p.flip_angle * std::f64::consts::PI / 180.0).sin();
+                    return check * (flip_deg * std::f64::consts::PI / 180.0).sin();
                 }
                 prev = check;
             }
@@ -143,7 +143,12 @@ pub fn mamt_signal_with_step(
         // TR fill.
         m = propagate(&m, 0.0, 0.0, tr_fill);
     }
-    m[0] * (p.flip_angle * std::f64::consts::PI / 180.0).sin()
+    // Read out with the excitation flip actually applied this call (`flip_deg`),
+    // NOT the model's MTw flip: the VFA companion drives this at 5°/20°, and
+    // projecting by a fixed `p.flip_angle` would corrupt R1app/Aapp (and the
+    // whole surface). MATLAB sets Params.flipAngle to the VFA flip before each
+    // call, so its `sin(flipAngle)` is this same excitation flip.
+    m[0] * (flip_deg * std::f64::consts::PI / 180.0).sin()
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -259,6 +264,28 @@ mod tests {
         let (r1, a) = vfa_apparent(&p, &vfa, 0.1, 1.0);
         assert!(r1 > 0.0 && r1 < 5.0, "R1app {r1}");
         assert!(a > 0.0, "Aapp {a}");
+    }
+
+    #[test]
+    fn vfa_recovers_physical_r1_and_amplitude() {
+        // Regression for the readout-flip-projection bug: `mamt_signal` must
+        // read out with the flip it was CALLED with (5°/20° in the VFA
+        // companion), not the model's MTw flip. With a fixed-flip projection,
+        // the two VFA signals are scaled inconsistently, corrupting R1app/Aapp
+        // (the whole surface then under-saturates ~5×). Physically, a small
+        // bound pool leaves R1app just below the input raobs and Aapp ≈ M0a.
+        // Reference values from an independent Python re-implementation of
+        // MAMT_model_2007_5 (raobs = 1/1.2 s⁻¹).
+        let p = sample_params(); // MTw excitation flip = 9°
+        let vfa = VfaParams {
+            fa1_deg: 5.0,
+            fa2_deg: 20.0,
+            tr1: 30e-3,
+            tr2: 30e-3,
+        };
+        let (r1, a) = vfa_apparent(&p, &vfa, 0.1, 1.0 / 1.2);
+        assert!((r1 - 0.781).abs() < 0.02, "R1app {r1} (expected ~0.78)");
+        assert!((a - 1.02).abs() < 0.03, "Aapp {a} (expected ~1.0)");
     }
 
     #[test]
