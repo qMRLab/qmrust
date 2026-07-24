@@ -61,5 +61,10 @@ mod tests {
         let back: FitValues = serde_yaml::from_str(&s).unwrap();
         assert!((back.b1_ref - 6.8).abs() < 1e-12);
         assert!((back.m0b_vs_r1.slope - 0.1).abs() < 1e-12);
+        assert!((back.seq.r1b - fv.seq.r1b).abs() < 1e-12);
+        assert!((back.seq.bw - fv.seq.bw).abs() < 1e-12);
+        assert!((back.seq.mt_grad_time - fv.seq.mt_grad_time).abs() < 1e-12);
+        assert_eq!(back.seq.n_avg, fv.seq.n_avg);
+        assert_eq!(back.seq.freq_pattern, fv.seq.freq_pattern);
     }
 }

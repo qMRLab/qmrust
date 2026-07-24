@@ -163,4 +163,17 @@ b1_ref: 9.0
         let grid = cfg.build_grid();
         assert!(!grid.is_empty());
     }
+
+    /// Guards the shipped recipe against `SeqParams` field drift: a stale
+    /// recipe fails this test at build time instead of the CLI at runtime.
+    #[test]
+    fn shipped_recipe_parses() {
+        let yaml = include_str!("../../../recipes/mtsat_b1_seq.yaml");
+        let cfg: SeqConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.seq.n_avg, 20);
+        assert_eq!(
+            cfg.seq.freq_pattern,
+            qmrust_core::mtsat_b1::sim::FreqPattern::DualAlternate
+        );
+    }
 }
