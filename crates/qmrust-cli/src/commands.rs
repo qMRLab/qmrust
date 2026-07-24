@@ -92,6 +92,16 @@ fn inject_mt_sat_b1_correction(raw: &mut serde_yaml::Value) -> Result<()> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading fitvalues {path}"))?;
     let fv: qmrust_core::mtsat_b1::fitvalues::FitValues = serde_yaml::from_str(&text)?;
+    if let Some(recipe_b1_ref) = b1c.get("b1_ref").and_then(|v| v.as_f64()) {
+        if (recipe_b1_ref - fv.b1_ref).abs() > 1e-9 {
+            eprintln!(
+                "  warning (mt_sat): recipe b1_correction.b1_ref ({recipe_b1_ref}) does not match \
+                 the fitvalues artifact's b1_ref ({}); the artifact's value is authoritative and \
+                 is what is used.",
+                fv.b1_ref
+            );
+        }
+    }
     if let serde_yaml::Value::Mapping(m) = raw {
         m.insert("b1_correction".into(), serde_yaml::to_value(fv)?);
     }
@@ -894,7 +904,11 @@ pub fn collect_mtsat_r1_b1(bids_dir: &Path) -> Result<Vec<(f64, f64, f64)>> {
 
     let options: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
     let (data, proto, _header) = load_collection(&fs, c, &schema, &options, named_roles)?;
-    let model = (entry.build)(&raw, &proto)?;
+    // Calibration mode: fit() must return raw MTsat + B1-corrected R1 (no
+    // empirical Helms factor, no Tardif CF) — the exact coordinates the
+    // correction path (Tardif active) later queries, so calibrating and
+    // correcting agree. This helper only ever calibrates `mt_sat`.
+    let model = qmrust_core::models::mt_sat::build_calibration(&raw, &proto)?;
     let (aux, mask, _sources) =
         resolve_aux_and_mask(&table, model.as_ref(), &c.entities, None, bids_dir)?;
     let b1 = aux.get_map("B1map").ok_or_else(|| {
@@ -2014,6 +2028,31 @@ mod tests {
             (with_b1 - no_b1).abs() > 1e-9,
             "recipe-loaded FitValues had no effect: {no_b1} vs {with_b1}"
         );
+    }
+
+    #[test]
+    fn mt_sat_recipe_b1_ref_mismatch_warns_but_uses_artifact_value() {
+        // A recipe `b1_ref` that disagrees with the artifact's own must not
+        // error — it's a spec-mandated warning, and the artifact's `b1_ref`
+        // (6.8 here) remains authoritative regardless of what the recipe says.
+        let dir = TempDir::new("mtsat-b1-ref-mismatch");
+        let fv_path = dir.0.join("fv.yaml");
+        std::fs::write(&fv_path, sample_fitvalues_yaml()).unwrap();
+        let recipe = format!(
+            "model: mt_sat\nmtw: {{flip_angle: 6, repetition_time: 0.028}}\npdw: {{flip_angle: 6, repetition_time: 0.028}}\nt1w: {{flip_angle: 20, repetition_time: 0.018}}\nb1_correction: {{ fitvalues: {:?}, b1_ref: 9.9 }}\n",
+            fv_path
+        );
+        let raw: serde_yaml::Value = serde_yaml::from_str(&recipe).unwrap();
+        let mut raw_mut = raw.clone();
+        inject_mt_sat_b1_correction(&mut raw_mut).expect("mismatched b1_ref must warn, not error");
+        // The inlined b1_correction carries the artifact's b1_ref (6.8), not
+        // the recipe's mismatched 9.9.
+        let inlined_b1_ref = raw_mut
+            .get("b1_correction")
+            .and_then(|v| v.get("b1_ref"))
+            .and_then(|v| v.as_f64())
+            .unwrap();
+        assert!((inlined_b1_ref - 6.8).abs() < 1e-9, "{inlined_b1_ref}");
     }
 
     #[test]

@@ -22,16 +22,21 @@ pub struct Acq {
 }
 
 /// MTsat (percent) and R1 (1/s) from the three signals, with an optional
-/// multiplicative B1 map (`FA_actual = B1·FA_nominal`) and its empirical
-/// correction factor. Mirrors `MTSAT_exec.m`: outside the region where all
-/// three signals are nonzero, R1 and MTsat are 0 (so T1 = 1/R1 is infinite,
-/// as in qMRLab). The B1 correction is applied only when a B1 map is present.
+/// multiplicative B1 map (`FA_actual = B1·FA_nominal`). Mirrors `MTSAT_exec.m`:
+/// outside the region where all three signals are nonzero, R1 and MTsat are 0
+/// (so T1 = 1/R1 is infinite, as in qMRLab). B1-correction of R1/A is applied
+/// whenever `b1` is `Some`; the empirical Helms multiplicative factor
+/// `(1-f)/(1-f·b1)` is a separate, independent knob applied to MTsat only when
+/// `apply_helms` is true (and a B1 map is present) — the two paths that feed a
+/// B1-vs-R1 calibration surface must use the same R1/MTsat coordinates, so
+/// only one of them should set `apply_helms`.
 pub fn mtsat(
     acq: &Acq,
     mtw: f64,
     pdw: f64,
     t1w: f64,
     b1: Option<f64>,
+    apply_helms: bool,
     b1_factor: f64,
 ) -> (f64, f64) {
     if mtw == 0.0 || pdw == 0.0 || t1w == 0.0 {
@@ -46,8 +51,10 @@ pub fn mtsat(
         / (acq.tr_pd * acq.alpha_t1 * t1w - acq.tr_t1 * acq.alpha_pd * pdw);
     let mut mtsat = 100.0
         * (acq.tr_mt * (acq.alpha_mt * (a / mtw) - 1.0) * r1 - acq.alpha_mt * acq.alpha_mt / 2.0);
-    if let Some(b1v) = b1 {
-        mtsat *= (1.0 - b1_factor) / (1.0 - b1_factor * b1v);
+    if apply_helms {
+        if let Some(b1v) = b1 {
+            mtsat *= (1.0 - b1_factor) / (1.0 - b1_factor * b1v);
+        }
     }
     (mtsat, r1)
 }
@@ -101,7 +108,7 @@ mod tests {
         let acq = acq();
         for &(a, t1, sat) in &[(1000.0, 0.9, 1.5), (500.0, 1.2, 3.0), (2000.0, 0.6, 0.8)] {
             let (mtw, pdw, t1w) = forward_signals(&acq, a, t1, sat);
-            let (mtsat_out, r1) = mtsat(&acq, mtw, pdw, t1w, None, 0.4);
+            let (mtsat_out, r1) = mtsat(&acq, mtw, pdw, t1w, None, false, 0.4);
             assert!((1.0 / r1 - t1).abs() < 1e-9, "T1: {} vs {}", 1.0 / r1, t1);
             assert!(
                 (mtsat_out - sat).abs() < 1e-9,
@@ -113,18 +120,39 @@ mod tests {
     #[test]
     fn degenerate_voxel_is_zero() {
         let acq = acq();
-        assert_eq!(mtsat(&acq, 0.0, 1.0, 1.0, None, 0.4), (0.0, 0.0));
-        assert_eq!(mtsat(&acq, 1.0, 0.0, 1.0, None, 0.4), (0.0, 0.0));
+        assert_eq!(mtsat(&acq, 0.0, 1.0, 1.0, None, false, 0.4), (0.0, 0.0));
+        assert_eq!(mtsat(&acq, 1.0, 0.0, 1.0, None, false, 0.4), (0.0, 0.0));
     }
 
     #[test]
     fn b1_of_one_matches_no_b1() {
         let acq = acq();
         let (mtw, pdw, t1w) = forward_signals(&acq, 1000.0, 0.9, 1.5);
-        let none = mtsat(&acq, mtw, pdw, t1w, None, 0.4);
+        let none = mtsat(&acq, mtw, pdw, t1w, None, false, 0.4);
         // B1 = 1 with any factor: R1·1, A·1, and (1-f)/(1-f·1) = 1 → identical.
-        let unit = mtsat(&acq, mtw, pdw, t1w, Some(1.0), 0.4);
+        let unit = mtsat(&acq, mtw, pdw, t1w, Some(1.0), true, 0.4);
         assert!((none.0 - unit.0).abs() < 1e-9 && (none.1 - unit.1).abs() < 1e-12);
+    }
+
+    #[test]
+    fn apply_helms_toggles_mtsat_but_not_r1() {
+        let acq = acq();
+        let (mtw, pdw, t1w) = forward_signals(&acq, 1000.0, 0.9, 1.5);
+        let b1 = Some(1.2);
+        let raw = mtsat(&acq, mtw, pdw, t1w, b1, false, 0.4);
+        let helms = mtsat(&acq, mtw, pdw, t1w, b1, true, 0.4);
+        assert!(
+            (raw.0 - helms.0).abs() > 1e-6,
+            "empirical Helms factor should change MTsat: raw {} vs helms {}",
+            raw.0,
+            helms.0
+        );
+        assert!(
+            (raw.1 - helms.1).abs() < 1e-12,
+            "R1 must be identical regardless of apply_helms: {} vs {}",
+            raw.1,
+            helms.1
+        );
     }
 
     #[test]

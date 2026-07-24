@@ -8,7 +8,7 @@
 
 use crate::core::model::{
     Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, InputSpec, Measurement, MeasurementKind, Model,
-    ProtoParam, Protocol, Scope, Source,
+    ModelConfig, ProtoParam, Protocol, Scope, Source,
 };
 use crate::models::mt_sat::config::MtSatConfig;
 use crate::models::mt_sat::fit::{self, Acq};
@@ -30,6 +30,11 @@ pub struct MtSatModel {
     /// FA (degrees) / TR (s) per role, retained for `bids_volume` sidecars.
     cfg: MtSatConfig,
     output_names: Vec<String>,
+    /// When true, `fit` emits raw (pre-empirical-factor, pre-Tardif-CF) MTsat
+    /// alongside B1-corrected R1 — the coordinates a B1-vs-R1 calibration
+    /// surface is built in, matching the correction path exactly. Used only
+    /// by the calibration builder ([`new_calibration`](Self::new_calibration)).
+    calibration_mode: bool,
 }
 
 /// Volume roles, in acquisition order — index `i` maps to `bids_volume(i)`, to
@@ -84,7 +89,18 @@ impl MtSatModel {
             t1_role,
             cfg,
             output_names,
+            calibration_mode: false,
         }
+    }
+
+    /// Build `mt_sat` in calibration mode: `fit` emits raw (pre-empirical-
+    /// factor, pre-CF) MTsat + B1-corrected R1, regardless of any configured
+    /// `b1_correction` — the coordinates a B1-vs-R1 calibration surface is
+    /// built in.
+    pub fn new_calibration(cfg: MtSatConfig) -> Self {
+        let mut m = Self::new(cfg);
+        m.calibration_mode = true;
+        m
     }
 }
 
@@ -135,18 +151,32 @@ impl Model for MtSatModel {
         let mtw = role("MTw");
         let pd = role(self.pd_role);
         let t1 = role(self.t1_role);
-        let helms_b1 = if self.b1_correction.is_some() {
-            None
+        let b1 = aux.get("B1map");
+        // The empirical Helms multiplicative factor is qMRLab-faithful default
+        // behavior for the plain path (no Tardif artifact configured, not
+        // calibrating); the Tardif correction path and calibration both need
+        // raw MTsat instead, so their B1-vs-R1 coordinates agree. B1-correction
+        // of R1/A happens whenever a B1 map is present, independent of this.
+        let apply_helms = !self.calibration_mode && self.b1_correction.is_none();
+        let (mtsat0, r1) = fit::mtsat(
+            &self.acq,
+            mtw,
+            pd,
+            t1,
+            b1,
+            apply_helms,
+            self.b1_correction_factor,
+        );
+        let mtsat = if self.calibration_mode {
+            mtsat0
         } else {
-            aux.get("B1map")
-        };
-        let (mtsat0, r1) = fit::mtsat(&self.acq, mtw, pd, t1, helms_b1, self.b1_correction_factor);
-        let mtsat = match (&self.b1_correction, aux.get("B1map")) {
-            (Some(fv), Some(b1)) => crate::mtsat_b1::correct::correct(
-                mtsat0,
-                crate::mtsat_b1::correct::correction_factor(fv, b1, r1),
-            ),
-            _ => mtsat0,
+            match (&self.b1_correction, b1) {
+                (Some(fv), Some(b1v)) => crate::mtsat_b1::correct::correct(
+                    mtsat0,
+                    crate::mtsat_b1::correct::correction_factor(fv, b1v, r1),
+                ),
+                _ => mtsat0,
+            }
         };
         let mut out = vec![mtsat, 1.0 / r1];
         if self.export_mtr {
@@ -249,6 +279,21 @@ pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
 /// Registry builder (see [`build_model`](crate::core::model::build_model)).
 pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
     crate::core::model::build_model::<MtSatConfig>(v, proto)
+}
+
+/// Build `mt_sat` in calibration mode: `fit` emits raw (pre-empirical-factor,
+/// pre-CF) MTsat + B1-corrected R1, applying neither the empirical Helms
+/// factor nor the Tardif CF — the coordinates the correction surface is
+/// calibrated in. Mirrors [`build`] (and `core::model::build_model`) except
+/// for the final construction step.
+pub fn build_calibration(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
+    let mut cfg: MtSatConfig = serde_yaml::from_value(v.clone())?;
+    cfg.validate_options()?;
+    cfg.ingest_protocol(proto)?;
+    cfg.validate_protocol()?;
+    let model: Box<dyn Model> = Box::new(MtSatModel::new_calibration(cfg));
+    crate::core::model::validate_against_protocol(&model.measurement(), proto)?;
+    Ok(model)
 }
 
 /// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
@@ -440,6 +485,34 @@ mod tests {
         assert!(
             (corrected - uncorrected).abs() > 1e-9,
             "correction had no effect"
+        );
+    }
+
+    #[test]
+    fn calibration_mode_agrees_with_plain_model_on_r1_but_not_helms_mtsat() {
+        // Calibration must produce the SAME B1-corrected R1 (→ T1) as the plain
+        // (no-fitvalues) qMRLab-faithful path, but RAW MTsat instead of the
+        // empirical-Helms-corrected value — the coordinates the correction
+        // surface (and the Tardif path) are built/queried in.
+        let plain = build(&mtsat_value(), &Protocol::default()).unwrap();
+        let calibration =
+            MtSatModel::new_calibration(serde_yaml::from_value(mtsat_value()).unwrap());
+        let sig = plain.forward(&[1000.0, 0.9, 1.5], &Aux::new());
+        let mut aux = Aux::new();
+        aux.set("B1map", 1.2);
+        let plain_out = plain.fit(&sig, &aux);
+        let calib_out = calibration.fit(&sig, &aux);
+        assert!(
+            (plain_out[0] - calib_out[0]).abs() > 1e-9,
+            "calibration MTSAT should differ from the Helms-corrected plain MTSAT: {} vs {}",
+            plain_out[0],
+            calib_out[0]
+        );
+        assert!(
+            (plain_out[1] - calib_out[1]).abs() < 1e-12,
+            "T1 (from B1-corrected R1) must agree between plain and calibration: {} vs {}",
+            plain_out[1],
+            calib_out[1]
         );
     }
 }
