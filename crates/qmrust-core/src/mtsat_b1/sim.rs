@@ -1,66 +1,23 @@
-//! Steady-state 3-pool MT-SPGR signal, ported from
-//! <ref>/functions/MAMT_model_2007_5.m. Time-steps `dM/dt = A·M + B` with the
-//! exact update `M ← e^{A·t}·M + (e^{A·t} − I)·A⁻¹·B` through the saturation
-//! pulse train, inter-pulse gaps, the sinc water excitation, and TR-fill, until
-//! the post-saturation Mza settles (<0.05% change). Returns `Mza·sin(flip)`.
+//! 5-state Bloch–McConnell FLASH signal engine, ported from
+//! <ref>/functions/Bloch_McConnell_wDipolar.m and the surrounding MTsat B1+
+//! simulation. Time-steps `dM/dt = A·M + B` (state `[Wx, Wy, Wz, Bz, D]`)
+//! through the gausshann saturation-pulse train, inter-pulse gaps, the MT
+//! spoiler gradient, the water excitation, and the TR fill, spoiling the
+//! transverse magnetisation to zero at each gradient. The FLASH signal is the
+//! transverse magnitude at excitation, averaged over the last `n_avg` TRs.
+//!
+//! `vfa_apparent` runs the un-saturated FLASH pair through the Helms VFA
+//! formulas for the apparent R1/amplitude, and `mtsat_sim` combines the
+//! MT-weighted signal with those to give the Helms MTsat (percent).
 
-use crate::models::qmt_spgr::lineshape::super_lorentzian_g;
-use crate::mtsat_b1::mat3::{expm3, ident3, matvec3, solve3, sub3, Mat3, Vec3};
-use crate::mtsat_b1::pulse::{sat_pulse, sinc_exc_pulse, SatShape};
-use std::f64::consts::PI;
-
-// transitional: replaced when sim.rs adopts the 5-state engine. This is the
-// pre-5-state 3-pool (free/bound/dipolar) rate matrix, ported from
-// <ref>/functions/calc_RF_matrix_wDipolar2.m (Lee 2011 dipolar form).
-struct Pool3 {
-    ra: f64,
-    rb: f64,
-    r: f64,
-    m0a: f64,
-    m0b: f64,
-    t2a: f64,
-    t2b: f64,
-    t1d: f64,
-}
-
-/// Rate matrix `A` for `dM/dt = A·M + B`, state `[Mza, Mzb, Bpr]`. `w1` in
-/// rad/s, `delta` in Hz. `dual_continuous` uncouples the dipolar pool. The
-/// bound-pool absorption uses the in-tree 2π super-Lorentzian lineshape
-/// (`super_lorentzian_g`): `Rrfb = π·w1²·G(δ, T2b)`.
-fn rate_matrix_3pool(p: &Pool3, w1: f64, delta: f64, dual_continuous: bool) -> Mat3 {
-    let rrfa = (w1 * w1 * p.t2a) / (1.0 + (2.0 * PI * delta * p.t2a).powi(2));
-    let rrfb = PI * w1 * w1 * super_lorentzian_g(delta.abs(), p.t2b);
-    let wloc = (1.0 / (15.0 * p.t2b * p.t2b)).sqrt();
-
-    if dual_continuous {
-        [
-            [-(p.ra + p.r * p.m0b + rrfa), p.r * p.m0a, 0.0],
-            [p.r * p.m0b, -(p.rb + rrfb + p.r * p.m0a), 0.0],
-            [0.0, 0.0, -1.0 / p.t1d],
-        ]
-    } else {
-        let two_pi_delta = 2.0 * PI * delta;
-        [
-            [-(p.ra + p.r * p.m0b + rrfa), p.r * p.m0a, 0.0],
-            [
-                p.r * p.m0b,
-                -(p.rb + rrfb + p.r * p.m0a),
-                two_pi_delta * rrfb / wloc,
-            ],
-            [
-                0.0,
-                rrfb * (two_pi_delta / wloc),
-                -(rrfb * (two_pi_delta / wloc).powi(2) + 1.0 / p.t1d),
-            ],
-        ]
-    }
-}
+use crate::mtsat_b1::mat5::{expm5, ident5, matvec5, solve5, sub5, Mat5, Vec5};
+use crate::mtsat_b1::pulse::gausshann_omega;
+use crate::mtsat_b1::rate::{bound_exc_sat, excitation_matrix, rate_matrix, PoolParams};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FreqPattern {
     Single,
     DualAlternate,
-    DualContinuous,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -70,48 +27,63 @@ pub struct SeqParams {
     pub pulse_gap_dur: f64,
     pub tr: f64,
     pub w_exc_dur: f64,
-    pub num_excitation: usize,
     pub freq_pattern: FreqPattern,
     pub delta: f64,
     pub flip_angle: f64,
-    pub sat_shape: SatShape,
     pub r: f64,
     pub t2a: f64,
     pub t1d: f64,
     pub m0a: f64,
-    pub rb: f64,
+    pub r1b: f64,
     pub t2b: f64,
+    pub bw: f64,
+    pub mt_grad_time: f64,
+    pub n_avg: usize,
 }
 
-const GAMMA: f64 = 42.57747892; // MHz/T = Hz/µT
-const SS_TIME: f64 = 5.0; // seconds to steady state
-const SS_THRESHOLD: f64 = 0.05; // percent change in Mza
+const DEFAULT_STEP: f64 = 50e-6;
 
-pub fn mamt_signal(p: &SeqParams, m0b: f64, raobs: f64, flip_deg: f64, b1_sat: f64) -> f64 {
-    mamt_signal_with_step(p, m0b, raobs, flip_deg, b1_sat, 50e-6)
-}
-
-pub fn mamt_signal_with_step(
+/// FLASH signal (transverse magnitude at excitation, averaged over the last
+/// `n_avg` TRs) for the given `(M0b, Raobs, flip_deg, b1_sat)`, using the
+/// default 50 µs integration step. When `mtc` is false the saturation train is
+/// skipped entirely (a plain FLASH readout).
+pub fn flash_signal(
     p: &SeqParams,
     m0b: f64,
     raobs: f64,
     flip_deg: f64,
     b1_sat: f64,
+    mtc: bool,
+) -> f64 {
+    flash_signal_with_step(p, m0b, raobs, flip_deg, b1_sat, mtc, DEFAULT_STEP)
+}
+
+/// FLASH signal with an explicit integration `step` (s). `flash_signal` is the
+/// 50 µs entry point; this variant exists so the step size can be varied for
+/// convergence checks.
+#[allow(clippy::too_many_arguments)]
+pub fn flash_signal_with_step(
+    p: &SeqParams,
+    m0b: f64,
+    raobs: f64,
+    flip_deg: f64,
+    b1_sat: f64,
+    mtc: bool,
     step: f64,
 ) -> f64 {
     // Ra from Raobs (MAMT_model_2007_5 lines 53-58).
     let ra = {
-        let denom = p.rb - raobs + p.r;
-        let val = raobs - (p.r * m0b * (p.rb - raobs)) / denom;
+        let denom = p.r1b - raobs + p.r;
+        let val = raobs - (p.r * m0b * (p.r1b - raobs)) / denom;
         if val.is_nan() {
             1.0
         } else {
             val
         }
     };
-    let pool = Pool3 {
+    let pool = PoolParams {
         ra,
-        rb: p.rb,
+        r1b: p.r1b,
         r: p.r,
         m0a: p.m0a,
         m0b,
@@ -119,81 +91,107 @@ pub fn mamt_signal_with_step(
         t2b: p.t2b,
         t1d: p.t1d,
     };
-    let b: Vec3 = [ra * p.m0a, p.rb * m0b, 0.0];
-    let ident = ident3();
-    let dual_cont = p.freq_pattern == FreqPattern::DualContinuous;
+    let b: Vec5 = [0.0, 0.0, ra * p.m0a, p.r1b * m0b, 0.0];
+    let ident = ident5();
 
-    // Precompute the discretized pulses.
-    let sat = sat_pulse(p.sat_shape, b1_sat, p.pulse_dur, step);
-    let exc = sinc_exc_pulse(flip_deg, p.w_exc_dur, step);
+    // Per-step saturation rate matrices for the two frequency offsets. Only
+    // needed with saturation; skip the fill entirely for the VFA calls.
+    let (a_sat, a_sat2): (Vec<Mat5>, Vec<Mat5>) = if mtc {
+        let omega = gausshann_omega(b1_sat, p.pulse_dur, p.bw, step);
+        (
+            omega
+                .iter()
+                .map(|&w| rate_matrix(&pool, w, p.delta))
+                .collect(),
+            omega
+                .iter()
+                .map(|&w| rate_matrix(&pool, w, -p.delta))
+                .collect(),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let pulse_steps = (p.pulse_dur / step).ceil() as usize;
-    let exc_steps = (p.w_exc_dur / step).ceil() as usize;
-    let tr_fill = p.tr
-        - (p.num_sat_pulse as f64) * (p.pulse_dur + p.pulse_gap_dur)
-        - (p.num_excitation as f64) * p.w_exc_dur;
 
-    let mut loops = (SS_TIME / p.tr).ceil() as usize;
-    if loops < 50 {
-        loops *= 10;
-    }
+    // Free-relaxation propagator matrix (w1 = 0, delta = 0), reused for gaps
+    // and TR fill.
+    let a_relax = rate_matrix(&pool, 0.0, 0.0);
 
-    // Propagate one interval of constant (w1, delta) for duration `t`.
-    let propagate = |m: &Vec3, w1: f64, delta: f64, t: f64| -> Vec3 {
-        let a: Mat3 = rate_matrix_3pool(&pool, w1, delta, dual_cont);
-        let scaled = [
-            [a[0][0] * t, a[0][1] * t, a[0][2] * t],
-            [a[1][0] * t, a[1][1] * t, a[1][2] * t],
-            [a[2][0] * t, a[2][1] * t, a[2][2] * t],
-        ];
-        let e = expm3(&scaled);
-        // e·m + (e − I)·A⁻¹·b
-        let ab = solve3(&a, &b);
-        let em = matvec3(&e, m);
-        let e_minus_i = sub3(&e, &ident);
-        let corr = matvec3(&e_minus_i, &ab);
-        [em[0] + corr[0], em[1] + corr[1], em[2] + corr[2]]
+    // Water excitation propagator (rotation + bound/dipolar saturation decay).
+    let (rrfb_exc, rrfd_exc) = bound_exc_sat(flip_deg, p.w_exc_dur, p.t2b);
+    let rexc = excitation_matrix(
+        flip_deg * std::f64::consts::PI / 180.0,
+        0.0,
+        rrfb_exc,
+        rrfd_exc,
+        p.w_exc_dur,
+    );
+
+    // Propagate one interval of constant dynamics `A` for duration `t`:
+    // M ← e^{A·t}·M + (e^{A·t} − I)·A⁻¹·B.
+    let propagate = |m: &Vec5, a: &Mat5, t: f64| -> Vec5 {
+        let mut scaled = *a;
+        for row in &mut scaled {
+            for x in row {
+                *x *= t;
+            }
+        }
+        let e = expm5(&scaled);
+        let em = matvec5(&e, m);
+        let ab = solve5(a, &b);
+        let corr = matvec5(&sub5(&e, &ident), &ab);
+        let mut out = [0.0; 5];
+        for i in 0..5 {
+            out[i] = em[i] + corr[i];
+        }
+        out
     };
 
-    let mut m: Vec3 = [p.m0a, m0b, 0.0];
-    let mut prev = 0.0;
+    let tr_fill =
+        p.tr - (if mtc {
+            (p.num_sat_pulse as f64) * (p.pulse_dur + p.pulse_gap_dur) + p.mt_grad_time
+        } else {
+            0.0
+        }) - p.w_exc_dur;
+
+    let loops = (6.0 / p.tr).ceil() as usize + p.n_avg;
+    let mut m: Vec5 = [0.0, 0.0, p.m0a, m0b, 0.0];
+    let mut acc = 0.0;
     for i in 1..=loops {
-        for j in 1..=p.num_sat_pulse {
-            // Saturation pulse: time-varying w1.
-            let delta = match p.freq_pattern {
-                FreqPattern::DualAlternate if j % 2 == 0 => -p.delta,
-                _ => p.delta,
-            };
-            for k in 0..pulse_steps {
-                let w1 = 2.0 * std::f64::consts::PI * sat[k.min(sat.len() - 1)] * GAMMA;
-                m = propagate(&m, w1, delta, step);
-            }
-            // Inter-pulse gap (relaxation).
-            m = propagate(&m, 0.0, 0.0, p.pulse_gap_dur);
-            if j == p.num_sat_pulse {
-                let check = m[0];
-                let diff = (check - prev).abs() * 100.0;
-                if i >= 3 && (diff < SS_THRESHOLD || i == loops) {
-                    return check * (flip_deg * std::f64::consts::PI / 180.0).sin();
+        if mtc {
+            for j in 1..=p.num_sat_pulse {
+                // dualAlternate flips the offset sign on even pulses.
+                let mats = match p.freq_pattern {
+                    FreqPattern::DualAlternate if j % 2 == 0 => &a_sat2,
+                    _ => &a_sat,
+                };
+                for k in 0..pulse_steps {
+                    let a = &mats[k.min(mats.len() - 1)];
+                    m = propagate(&m, a, step);
                 }
-                prev = check;
+                // Inter-pulse gap, then perfect spoiling.
+                m = propagate(&m, &a_relax, p.pulse_gap_dur);
+                m[0] = 0.0;
+                m[1] = 0.0;
             }
+            // MT spoiler gradient, then perfect spoiling.
+            m = propagate(&m, &a_relax, p.mt_grad_time);
+            m[0] = 0.0;
+            m[1] = 0.0;
         }
-        // Water excitation(s).
-        for _ in 0..p.num_excitation {
-            for k in 0..exc_steps {
-                let w1 = exc[k.min(exc.len() - 1)] * GAMMA;
-                m = propagate(&m, w1, 0.0, step);
-            }
+        // Water excitation and readout.
+        m = matvec5(&rexc, &m);
+        let sig = m[0].hypot(m[1]);
+        // TR fill, then perfect spoiling.
+        m = propagate(&m, &a_relax, tr_fill);
+        m[0] = 0.0;
+        m[1] = 0.0;
+
+        if i > loops - p.n_avg {
+            acc += sig;
         }
-        // TR fill.
-        m = propagate(&m, 0.0, 0.0, tr_fill);
     }
-    // Read out with the excitation flip actually applied this call (`flip_deg`),
-    // NOT the model's MTw flip: the VFA companion drives this at 5°/20°, and
-    // projecting by a fixed `p.flip_angle` would corrupt R1app/Aapp (and the
-    // whole surface). MATLAB sets Params.flipAngle to the VFA flip before each
-    // call, so its `sin(flipAngle)` is this same excitation flip.
-    m[0] * (flip_deg * std::f64::consts::PI / 180.0).sin()
+    acc / p.n_avg as f64
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -204,23 +202,16 @@ pub struct VfaParams {
     pub tr2: f64,
 }
 
-/// Apparent R1 (1/s) and amplitude from the simulated VFA pair (b1_sat = 0),
-/// via the Helms VFA formulas. Ports MAMT_model_simVFA.m. The VFA sim uses its
-/// own short pulse/gap timing (pulse_dur = 1 ms, gap = 0.3 ms, 1 sat pulse).
+/// Apparent R1 (1/s) and amplitude from the simulated un-saturated VFA pair,
+/// via the Helms VFA formulas. The pair varies only TR and flip angle; there is
+/// no saturation block (`mtc = false`, `b1_sat = 0`).
 pub fn vfa_apparent(p: &SeqParams, vfa: &VfaParams, m0b: f64, raobs: f64) -> (f64, f64) {
-    let mut vp = *p;
-    vp.num_sat_pulse = 1;
-    vp.pulse_dur = 1e-3;
-    vp.pulse_gap_dur = 0.3e-3;
-    vp.num_excitation = 1;
-    vp.w_exc_dur = 3e-3;
-
-    let mut vp1 = vp;
+    let mut vp1 = *p;
     vp1.tr = vfa.tr1;
-    let lfa = mamt_signal(&vp1, m0b, raobs, vfa.fa1_deg, 0.0);
-    let mut vp2 = vp;
+    let lfa = flash_signal(&vp1, m0b, raobs, vfa.fa1_deg, 0.0, false);
+    let mut vp2 = *p;
     vp2.tr = vfa.tr2;
-    let hfa = mamt_signal(&vp2, m0b, raobs, vfa.fa2_deg, 0.0);
+    let hfa = flash_signal(&vp2, m0b, raobs, vfa.fa2_deg, 0.0, false);
 
     let a1 = vfa.fa1_deg * std::f64::consts::PI / 180.0;
     let a2 = vfa.fa2_deg * std::f64::consts::PI / 180.0;
@@ -230,36 +221,36 @@ pub fn vfa_apparent(p: &SeqParams, vfa: &VfaParams, m0b: f64, raobs: f64) -> (f6
     (r1, aapp)
 }
 
-/// Simulated MTsat (percent) for the given (M0b, Raobs, b1_sat): the MTsat
-/// formula applied to the simulated MT-weighted signal and the VFA apparent
-/// values, using the NOMINAL excitation flip (simSeq_M0b_R1obs.m line 100).
+/// Simulated MTsat (percent) for the given `(M0b, Raobs, b1_sat)`: the Helms
+/// MTsat formula applied to the MT-weighted FLASH signal and the VFA apparent
+/// values, using the nominal excitation flip.
 pub fn mtsat_sim(p: &SeqParams, vfa: &VfaParams, m0b: f64, raobs: f64, b1_sat: f64) -> f64 {
     let (r1app, aapp) = vfa_apparent(p, vfa, m0b, raobs);
-    let gre = mamt_signal(p, m0b, raobs, p.flip_angle, b1_sat);
+    let gre = flash_signal(p, m0b, raobs, p.flip_angle, b1_sat, true);
     let flip_rad = p.flip_angle * std::f64::consts::PI / 180.0;
     100.0 * ((aapp * flip_rad / gre - 1.0) * r1app * p.tr - flip_rad * flip_rad / 2.0)
 }
 
 #[cfg(test)]
 pub fn tests_sample_params() -> SeqParams {
-    use crate::mtsat_b1::pulse::SatShape;
     SeqParams {
         num_sat_pulse: 2,
         pulse_dur: 0.768e-3,
         pulse_gap_dur: 0.6e-3,
         tr: 28e-3,
         w_exc_dur: 3e-3,
-        num_excitation: 1,
         freq_pattern: FreqPattern::DualAlternate,
         delta: 7000.0,
-        flip_angle: 9.0,
-        sat_shape: SatShape::Hanning,
+        flip_angle: 6.0,
         r: 26.0,
         t2a: 70e-3,
         t1d: 6e-3,
         m0a: 1.0,
-        rb: 1.0,
+        r1b: 1.0,
         t2b: 12e-6,
+        bw: 0.3 / 0.768e-3,
+        mt_grad_time: 0.0,
+        n_avg: 20,
     }
 }
 
@@ -271,77 +262,60 @@ mod tests {
         tests_sample_params()
     }
 
+    fn vfa() -> VfaParams {
+        VfaParams {
+            fa1_deg: 5.0,
+            fa2_deg: 20.0,
+            tr1: 30e-3,
+            tr2: 30e-3,
+        }
+    }
+
     #[test]
     fn signal_is_positive_and_bounded() {
-        let s = mamt_signal(&sample_params(), 0.1, 1.0, 9.0, 9.0);
-        assert!(s > 0.0 && s < 1.0, "signal {s}");
+        let p = sample_params();
+        let s = flash_signal(&p, 0.1, 1.0, p.flip_angle, 9.0, true);
+        assert!(s > 0.0 && s < p.m0a, "signal {s}");
     }
 
     #[test]
     fn saturation_reduces_signal() {
-        // More MT saturation (higher b1_sat) lowers the steady-state Mza.
+        // Higher b1_sat drives more MT saturation and lowers the FLASH signal.
+        // With b1_sat = 0 the gausshann omega is all zeros, so there is no
+        // saturation.
         let p = sample_params();
-        let no_sat = mamt_signal(&p, 0.1, 1.0, 9.0, 0.0);
-        let with_sat = mamt_signal(&p, 0.1, 1.0, 9.0, 9.0);
+        let no_sat = flash_signal(&p, 0.1, 1.0, p.flip_angle, 0.0, true);
+        let with_sat = flash_signal(&p, 0.1, 1.0, p.flip_angle, 9.0, true);
         assert!(with_sat < no_sat, "{with_sat} !< {no_sat}");
     }
 
     #[test]
     fn step_size_halving_is_stable() {
-        // The 50 µs default result should be close to a 25 µs re-run (<1%).
         let p = sample_params();
-        let a = mamt_signal_with_step(&p, 0.1, 1.0, 9.0, 9.0, 50e-6);
-        let b = mamt_signal_with_step(&p, 0.1, 1.0, 9.0, 9.0, 25e-6);
+        let a = flash_signal_with_step(&p, 0.1, 1.0, p.flip_angle, 9.0, true, 50e-6);
+        let b = flash_signal_with_step(&p, 0.1, 1.0, p.flip_angle, 9.0, true, 25e-6);
         assert!((a - b).abs() / b < 0.01, "{a} vs {b}");
     }
 
     #[test]
     fn vfa_recovers_positive_r1_and_amplitude() {
+        // A small bound pool leaves R1app positive and just below the input
+        // raobs, and Aapp ≈ M0a.
         let p = sample_params();
-        let vfa = VfaParams {
-            fa1_deg: 5.0,
-            fa2_deg: 20.0,
-            tr1: 30e-3,
-            tr2: 30e-3,
-        };
-        let (r1, a) = vfa_apparent(&p, &vfa, 0.1, 1.0);
-        assert!(r1 > 0.0 && r1 < 5.0, "R1app {r1}");
-        assert!(a > 0.0, "Aapp {a}");
-    }
-
-    #[test]
-    fn vfa_recovers_physical_r1_and_amplitude() {
-        // Regression for the readout-flip-projection bug: `mamt_signal` must
-        // read out with the flip it was CALLED with (5°/20° in the VFA
-        // companion), not the model's MTw flip. With a fixed-flip projection,
-        // the two VFA signals are scaled inconsistently, corrupting R1app/Aapp
-        // (the whole surface then under-saturates ~5×). Physically, a small
-        // bound pool leaves R1app just below the input raobs and Aapp ≈ M0a.
-        // Reference values from an independent Python re-implementation of
-        // MAMT_model_2007_5 (raobs = 1/1.2 s⁻¹).
-        let p = sample_params(); // MTw excitation flip = 9°
-        let vfa = VfaParams {
-            fa1_deg: 5.0,
-            fa2_deg: 20.0,
-            tr1: 30e-3,
-            tr2: 30e-3,
-        };
-        let (r1, a) = vfa_apparent(&p, &vfa, 0.1, 1.0 / 1.2);
-        assert!((r1 - 0.781).abs() < 0.02, "R1app {r1} (expected ~0.78)");
-        assert!((a - 1.02).abs() < 0.03, "Aapp {a} (expected ~1.0)");
+        let raobs = 1.0 / 1.2;
+        let (r1, a) = vfa_apparent(&p, &vfa(), 0.1, raobs);
+        assert!(
+            r1 > 0.0 && r1 < raobs,
+            "R1app {r1} (expected 0 < r1 < {raobs})"
+        );
+        assert!((a - p.m0a).abs() < 0.1, "Aapp {a} (expected ≈ {})", p.m0a);
     }
 
     #[test]
     fn mtsat_sim_increases_with_bound_pool() {
         let p = sample_params();
-        let vfa = VfaParams {
-            fa1_deg: 5.0,
-            fa2_deg: 20.0,
-            tr1: 30e-3,
-            tr2: 30e-3,
-        };
-        let low = mtsat_sim(&p, &vfa, 0.05, 1.0, 9.0);
-        let high = mtsat_sim(&p, &vfa, 0.15, 1.0, 9.0);
+        let low = mtsat_sim(&p, &vfa(), 0.05, 1.0, 9.0);
+        let high = mtsat_sim(&p, &vfa(), 0.15, 1.0, 9.0);
         assert!(high > low, "{high} !> {low}");
     }
 }

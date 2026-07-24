@@ -137,17 +137,18 @@ seq:
   pulse_gap_dur: 0.0006
   tr: 0.028
   w_exc_dur: 0.003
-  num_excitation: 1
   freq_pattern: DualAlternate
   delta: 7000
   flip_angle: 9
-  sat_shape: Hanning
   r: 26
   t2a: 0.07
   t1d: 0.006
   m0a: 1
-  rb: 1
+  r1b: 1
   t2b: 0.000012
+  bw: 390.625
+  mt_grad_time: 0.0
+  n_avg: 20
 vfa: { fa1_deg: 5, fa2_deg: 20, tr1: 0.03, tr2: 0.03 }
 grid:
   m0b: { start: 0.0, step: 0.025, stop: 0.20 }

@@ -6,7 +6,7 @@
 //! `Rrfb = π·w1²·G(δ, T2b)`.
 
 use crate::models::qmt_spgr::lineshape::super_lorentzian_g;
-use crate::mtsat_b1::mat3::Mat5;
+use crate::mtsat_b1::mat5::Mat5;
 use std::f64::consts::PI;
 
 pub struct PoolParams {
@@ -53,7 +53,7 @@ pub fn rate_matrix(p: &PoolParams, w1: f64, delta: f64) -> Mat5 {
 /// on-resonance (`delta = 0`). `Rrfd_exc` is always zero: the excitation
 /// pulse is on-resonance and does not drive dipolar order.
 pub fn bound_exc_sat(flip_deg: f64, w_exc_dur: f64, t2b: f64) -> (f64, f64) {
-    let gamma = 42.577478518;
+    let gamma = crate::mtsat_b1::GAMMA;
     let b1 = flip_deg / (360.0 * gamma * w_exc_dur);
     let w1 = 2.0 * PI * gamma * b1;
     let rrfb = PI * w1 * w1 * super_lorentzian_g(0.0, t2b);
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn bound_exc_sat_matches_reference_formula() {
         let (flip_deg, w_exc_dur, t2b) = (90.0, 100e-6, 12e-6);
-        let gamma = 42.577478518;
+        let gamma = crate::mtsat_b1::GAMMA;
         let b1 = flip_deg / (360.0 * gamma * w_exc_dur);
         let w1 = 2.0 * PI * gamma * b1;
         let expected_rrfb = PI * w1 * w1 * super_lorentzian_g(0.0, t2b);
