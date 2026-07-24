@@ -10,12 +10,74 @@ pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
 pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
 pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
 
+/// Method family a model belongs to. Determines its documentation directory,
+/// so the generated URL is derived from the registry, never hand-chosen. Add a
+/// variant only when a model needs it — an empty category has no page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Category {
+    Relaxometry,
+    MagnetizationTransfer,
+}
+
+impl Category {
+    /// URL/directory slug beneath the documentation's `models/` root.
+    pub fn slug(&self) -> &'static str {
+        match self {
+            Category::Relaxometry => "relaxometry",
+            Category::MagnetizationTransfer => "magnetization-transfer",
+        }
+    }
+
+    /// Human-readable heading for the model gallery.
+    pub fn title(&self) -> &'static str {
+        match self {
+            Category::Relaxometry => "Relaxometry",
+            Category::MagnetizationTransfer => "Magnetization transfer",
+        }
+    }
+}
+
+/// Canonical example configs for a model, repo-relative.
+pub struct Recipes {
+    /// Config for the `--bids-dir` path; omits the acquisition arrays, which
+    /// come from sidecars.
+    pub bids: &'static str,
+    /// Config for the `--data`/`--mat-data` path. This one carries the full
+    /// acquisition, so it is also what a model is *described* from when
+    /// interrogating its measurement axis.
+    pub non_bids: &'static str,
+    /// Config for `qmrust sim`, when the model ships one.
+    pub sim: Option<&'static str>,
+}
+
+/// Documentation metadata: the facts about a model that code cannot introspect.
+/// Everything else on a generated documentation page comes from the `Model`
+/// trait itself.
+pub struct ModelDoc {
+    /// Display name, e.g. "qMT-SPGR".
+    pub title: &'static str,
+    pub category: Category,
+    /// One paragraph: what the model measures, and how.
+    pub summary: &'static str,
+    /// Signal model as LaTeX, without `$` delimiters.
+    pub equation: &'static str,
+    /// `(param_name, meaning, unit)`. Each `param_name` must appear in the
+    /// model's `param_names()`; unitless quantities use `""`.
+    pub symbols: &'static [(&'static str, &'static str, &'static str)],
+    /// BibTeX keys, resolved against `docs/references.bib`.
+    pub citations: &'static [&'static str],
+    /// Repo-relative module directory, for source links.
+    pub source_dir: &'static str,
+    pub recipes: Recipes,
+}
+
 pub struct ModelEntry {
     pub name: &'static str,
     pub bids_suffix: &'static str,
     pub build: Builder,
     pub describe: Describer,
     pub dump: Dumper,
+    pub doc: ModelDoc,
 }
 
 pub fn all() -> &'static [ModelEntry] {
@@ -26,6 +88,25 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::mt_ratio::build,
             describe: models::mt_ratio::describe,
             dump: models::mt_ratio::dump,
+            doc: ModelDoc {
+                title: "Magnetization transfer ratio",
+                category: Category::MagnetizationTransfer,
+                summary: "Computes the magnetization transfer ratio from two \
+                    images: one acquired with an off-resonance saturation pulse \
+                    and one without. MTR is a semi-quantitative percentage that \
+                    reflects the pool of macromolecule-bound protons, but it \
+                    depends on the saturation pulse and sequence timing, so \
+                    values are not comparable across protocols.",
+                equation: r"\mathrm{MTR} = 100 \times \frac{S_\mathrm{off} - S_\mathrm{on}}{S_\mathrm{off}}",
+                symbols: &[("MTR", "Magnetization transfer ratio", "%")],
+                citations: &["wolff1989"],
+                source_dir: "crates/qmrust-core/src/models/mt_ratio",
+                recipes: Recipes {
+                    bids: "recipes/bids/mt_ratio_config.yaml",
+                    non_bids: "recipes/non-bids/mt_ratio_config.yaml",
+                    sim: None,
+                },
+            },
         },
         ModelEntry {
             name: "mt_sat",
@@ -33,6 +114,30 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::mt_sat::build,
             describe: models::mt_sat::describe,
             dump: models::mt_sat::dump,
+            doc: ModelDoc {
+                title: "MT saturation",
+                category: Category::MagnetizationTransfer,
+                summary: "Derives the MT saturation parameter from three spoiled \
+                    gradient-echo volumes — MT-weighted, PD-weighted and \
+                    T1-weighted. Unlike MTR, MTsat removes the leading-order \
+                    dependence on T1 and on transmit-field inhomogeneity, making \
+                    it far more comparable across sites; supplying a B1 map \
+                    applies the residual correction. T1 (and optionally MTR) \
+                    fall out of the same three volumes.",
+                equation: r"\delta = \left(\frac{A\,\alpha_\mathrm{MT}}{S_\mathrm{MT}} - 1\right)\frac{\mathrm{TR}_\mathrm{MT}}{T_1} - \frac{\alpha_\mathrm{MT}^{2}}{2}",
+                symbols: &[
+                    ("A", "Apparent signal amplitude", ""),
+                    ("T1", "Longitudinal relaxation time", "s"),
+                    ("MTSAT", "MT saturation", "%"),
+                ],
+                citations: &["helms2008"],
+                source_dir: "crates/qmrust-core/src/models/mt_sat",
+                recipes: Recipes {
+                    bids: "recipes/bids/mt_sat_config.yaml",
+                    non_bids: "recipes/non-bids/mt_sat_config.yaml",
+                    sim: None,
+                },
+            },
         },
         ModelEntry {
             name: "mono_t2",
@@ -40,6 +145,29 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::mono_t2::build,
             describe: models::mono_t2::describe,
             dump: models::mono_t2::dump,
+            doc: ModelDoc {
+                title: "Mono-exponential T2",
+                category: Category::Relaxometry,
+                summary: "Fits the transverse relaxation time T2 from a \
+                    multi-echo spin-echo series as a mono-exponential decay with \
+                    a free amplitude. The fit runs either as a log-linear \
+                    least-squares solve or as a bounded non-linear exponential \
+                    fit, optionally dropping the first echo — commonly \
+                    contaminated by stimulated-echo effects — or adding a \
+                    constant offset term to absorb noise-floor bias.",
+                equation: r"S(\mathrm{TE}) = M_0\,\exp\!\left(-\mathrm{TE}/T_2\right)",
+                symbols: &[
+                    ("T2", "Transverse relaxation time", "s"),
+                    ("M0", "Signal amplitude at TE = 0 (arbitrary units)", ""),
+                ],
+                citations: &["milford2015"],
+                source_dir: "crates/qmrust-core/src/models/mono_t2",
+                recipes: Recipes {
+                    bids: "recipes/bids/mono_t2_config.yaml",
+                    non_bids: "recipes/non-bids/mono_t2_config.yaml",
+                    sim: None,
+                },
+            },
         },
         ModelEntry {
             name: "inversion_recovery",
@@ -47,6 +175,31 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::inversion_recovery::build,
             describe: models::inversion_recovery::describe,
             dump: models::inversion_recovery::dump,
+            doc: ModelDoc {
+                title: "Inversion recovery T1",
+                category: Category::Relaxometry,
+                summary: "Fits the longitudinal relaxation time T1 from a series \
+                    of inversion-recovery images acquired at different inversion \
+                    times. The magnitude signal is modelled as an exponential \
+                    recovery with a free amplitude and offset, which together \
+                    absorb imperfect inversion efficiency, so no assumption \
+                    about a perfect 180° pulse is needed. T1 is recovered by a \
+                    grid search over the configured range followed by a local \
+                    zoom refinement.",
+                equation: r"S(\mathrm{TI}) = a\,\exp\!\left(-\mathrm{TI}/T_1\right) + b",
+                symbols: &[
+                    ("T1", "Longitudinal relaxation time", "s"),
+                    ("a", "Recovery amplitude (absorbs inversion efficiency)", ""),
+                    ("b", "Signal offset", ""),
+                ],
+                citations: &["barral2010"],
+                source_dir: "crates/qmrust-core/src/models/inversion_recovery",
+                recipes: Recipes {
+                    bids: "recipes/bids/irt1_config.yaml",
+                    non_bids: "recipes/non-bids/irt1_config.yaml",
+                    sim: None,
+                },
+            },
         },
         ModelEntry {
             name: "qmt_spgr",
@@ -54,6 +207,40 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::qmt_spgr::build,
             describe: models::qmt_spgr::describe,
             dump: models::qmt_spgr::dump,
+            doc: ModelDoc {
+                title: "qMT-SPGR",
+                category: Category::MagnetizationTransfer,
+                summary: "Two-pool quantitative magnetization transfer from a \
+                    spoiled gradient-echo sequence with off-resonance saturation \
+                    sampled across a grid of saturation flip angles and \
+                    frequency offsets. A free-water pool exchanges magnetization \
+                    with a restricted macromolecular pool; fitting the sampled \
+                    Z-spectrum recovers the bound-pool fraction and the exchange \
+                    rate. Two steady-state solutions are available — Ramani's \
+                    closed form and the Sled–Pike rectangular-pulse \
+                    approximation — and B1, B0 and R1 maps constrain the fit \
+                    when supplied.",
+                equation: r"\begin{aligned}
+\frac{dM_f}{dt} &= R_{1f}\left(M_{0f} - M_f\right) - k_f M_f + k_r M_r - W_f(\Delta, \alpha)\,M_f \\
+\frac{dM_r}{dt} &= R_{1r}\left(M_{0r} - M_r\right) + k_f M_f - k_r M_r - W_r(\Delta, \alpha)\,M_r \\
+F &= M_{0r}/M_{0f}, \qquad k_f F = k_r
+\end{aligned}",
+                symbols: &[
+                    ("F", "Bound-pool fraction M0r/M0f", ""),
+                    ("kr", "Exchange rate, restricted to free pool", "1/s"),
+                    ("R1f", "Free-pool longitudinal relaxation rate", "1/s"),
+                    ("R1r", "Restricted-pool longitudinal relaxation rate", "1/s"),
+                    ("T2f", "Free-pool transverse relaxation time", "s"),
+                    ("T2r", "Restricted-pool transverse relaxation time", "s"),
+                ],
+                citations: &["ramani2002", "sled2001", "cabana2015"],
+                source_dir: "crates/qmrust-core/src/models/qmt_spgr",
+                recipes: Recipes {
+                    bids: "recipes/bids/qmt_config_ramani.yaml",
+                    non_bids: "recipes/non-bids/qmt_config_ramani.yaml",
+                    sim: Some("recipes/sim/qmt_sim_ramani.yaml"),
+                },
+            },
         },
     ]
 }
@@ -89,5 +276,49 @@ mod tests {
         let entry = by_name("qmt_spgr").unwrap();
         let m = (entry.build)(&v, &crate::core::model::Protocol::default()).unwrap();
         assert_eq!(m.output_names().len(), 8);
+    }
+
+    #[test]
+    fn every_model_declares_documentation_metadata() {
+        for e in all() {
+            let d = &e.doc;
+            assert!(!d.title.is_empty(), "{}: empty doc title", e.name);
+            assert!(!d.summary.is_empty(), "{}: empty doc summary", e.name);
+            assert!(!d.equation.is_empty(), "{}: empty doc equation", e.name);
+            assert!(!d.symbols.is_empty(), "{}: no doc symbols", e.name);
+            assert!(!d.citations.is_empty(), "{}: no doc citations", e.name);
+            assert!(
+                d.source_dir.starts_with("crates/qmrust-core/src/models/"),
+                "{}: source_dir must be repo-relative, got '{}'",
+                e.name,
+                d.source_dir
+            );
+            assert!(
+                d.recipes.bids.starts_with("recipes/bids/"),
+                "{}: bids recipe must live under recipes/bids/, got '{}'",
+                e.name,
+                d.recipes.bids
+            );
+            assert!(
+                d.recipes.non_bids.starts_with("recipes/non-bids/"),
+                "{}: non-BIDS recipe must live under recipes/non-bids/, got '{}'",
+                e.name,
+                d.recipes.non_bids
+            );
+        }
+    }
+
+    #[test]
+    fn category_slugs_are_url_safe_and_stable() {
+        for e in all() {
+            let slug = e.doc.category.slug();
+            assert!(
+                slug.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                "{}: category slug '{}' is not URL-safe",
+                e.name,
+                slug
+            );
+            assert!(!e.doc.category.title().is_empty());
+        }
     }
 }
