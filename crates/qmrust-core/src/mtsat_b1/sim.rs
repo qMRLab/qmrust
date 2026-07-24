@@ -147,13 +147,6 @@ pub fn flash_signal_with_step(
         out
     };
 
-    let tr_fill =
-        p.tr - (if mtc {
-            (p.num_sat_pulse as f64) * (p.pulse_dur + p.pulse_gap_dur) + p.mt_grad_time
-        } else {
-            0.0
-        }) - p.w_exc_dur;
-
     let loops = (6.0 / p.tr).ceil() as usize + p.n_avg;
     let mut m: Vec5 = [0.0, 0.0, p.m0a, m0b, 0.0];
     let mut acc = 0.0;
@@ -182,8 +175,12 @@ pub fn flash_signal_with_step(
         // Water excitation and readout.
         m = matvec5(&rexc, &m);
         let sig = m[0].hypot(m[1]);
-        // TR fill, then perfect spoiling.
-        m = propagate(&m, &a_relax, tr_fill);
+        // Relax a full echoSpacing = TR after excitation, then perfect
+        // spoiling. The saturation train and MT spoiler gradient are additional
+        // wall time before excitation; TR is not compressed and WExcDur is
+        // never subtracted (it only drives bound-pool saturation inside the
+        // excitation matrix).
+        m = propagate(&m, &a_relax, p.tr);
         m[0] = 0.0;
         m[1] = 0.0;
 
@@ -299,14 +296,16 @@ mod tests {
 
     #[test]
     fn vfa_recovers_positive_r1_and_amplitude() {
-        // A small bound pool leaves R1app positive and just below the input
-        // raobs, and Aapp ≈ M0a.
+        // Exchange with a bound pool that relaxes faster than free water
+        // (R1b > Ra) pulls the VFA-apparent R1 above the observed rate, so
+        // R1app sits between raobs and R1b, and Aapp ≈ M0a.
         let p = sample_params();
         let raobs = 1.0 / 1.2;
         let (r1, a) = vfa_apparent(&p, &vfa(), 0.1, raobs);
         assert!(
-            r1 > 0.0 && r1 < raobs,
-            "R1app {r1} (expected 0 < r1 < {raobs})"
+            r1 > raobs && r1 < p.r1b,
+            "R1app {r1} (expected {raobs} < r1 < {})",
+            p.r1b
         );
         assert!((a - p.m0a).abs() < 0.1, "Aapp {a} (expected ≈ {})", p.m0a);
     }
