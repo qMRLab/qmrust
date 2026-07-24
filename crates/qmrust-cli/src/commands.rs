@@ -68,7 +68,7 @@ fn build_volume_ids(
 /// I/O lives here (in the CLI); `qmrust_core::config::parse_config` is a
 /// pure parser with no `std::fs` dependency, keeping the core crate
 /// wasm-clean.
-fn load_config_raw(
+pub(crate) fn load_config_raw(
     path: &std::path::Path,
 ) -> anyhow::Result<(qmrust_core::config::Config, serde_yaml::Value)> {
     let contents = std::fs::read_to_string(path)

@@ -7,6 +7,7 @@ use qmrust_core::sim;
 use std::path::PathBuf;
 
 mod bidsify;
+mod catalog;
 mod commands;
 mod io;
 mod mtsat_b1;
@@ -93,6 +94,14 @@ enum Commands {
         /// Path to YAML configuration file
         #[arg(long)]
         config: PathBuf,
+    },
+
+    /// Print every registered model's documentation metadata and declared
+    /// contract as JSON — the input to the documentation generators.
+    Catalog {
+        /// Repository root that declared recipe paths resolve against.
+        #[arg(long, default_value = ".")]
+        repo_root: PathBuf,
     },
 
     /// Simulate signal / sim→fit round-trips (qMRLab-style Sim_*).
@@ -240,6 +249,7 @@ fn main() -> Result<()> {
         }
         Commands::DumpSf { config, output } => commands::run_dump_sf(config, output),
         Commands::DumpConfig { config } => commands::run_dump_config(config),
+        Commands::Catalog { repo_root } => catalog::run(repo_root),
         Commands::Sim { mode } => {
             let (name, config, output, plot) = match mode {
                 SimMode::Signal {

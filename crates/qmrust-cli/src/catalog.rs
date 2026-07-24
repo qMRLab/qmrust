@@ -1,0 +1,346 @@
+//! `qmrust catalog --json`: registry metadata + `Model` trait introspection as
+//! one JSON payload. The single contract between the Rust code and the
+//! documentation generators.
+
+use anyhow::{Context, Result};
+use serde::Serialize;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use qmrust_core::core::model::{MeasurementKind, Model, Scope, Source};
+use qmrust_core::registry::{self, ModelEntry};
+
+#[derive(Serialize)]
+pub struct Catalog {
+    pub models: Vec<ModelCard>,
+}
+
+#[derive(Serialize)]
+pub struct ModelCard {
+    pub name: String,
+    pub bids_suffix: String,
+    pub title: String,
+    pub category: String,
+    pub category_title: String,
+    pub summary: String,
+    pub equation: String,
+    pub symbols: Vec<Symbol>,
+    pub citations: Vec<String>,
+    pub source_dir: String,
+    pub recipes: RecipePaths,
+    pub params: Vec<Param>,
+    pub outputs: Vec<Output>,
+    pub measurement: MeasurementCard,
+    pub protocol_schema: Vec<ProtoParamCard>,
+    pub required_inputs: Vec<InputCard>,
+    pub n_volumes: usize,
+    pub strategy: String,
+    pub effective_config: String,
+}
+
+#[derive(Serialize)]
+pub struct Symbol {
+    pub name: String,
+    pub meaning: String,
+    pub unit: String,
+}
+
+#[derive(Serialize)]
+pub struct RecipePaths {
+    pub bids: String,
+    pub non_bids: String,
+    pub sim: Option<String>,
+}
+
+/// A fit parameter. Bounds are `None` when the model reports a non-finite
+/// bound — JSON has no infinity, and "unbounded" is what the docs render.
+#[derive(Serialize)]
+pub struct Param {
+    pub name: String,
+    pub lower: Option<f64>,
+    pub upper: Option<f64>,
+    pub fixed: bool,
+}
+
+/// An output map. `bids_suffix`/`unit` are `None` for diagnostics — entries in
+/// `output_names()` the model does not declare in `bids_outputs()`.
+#[derive(Serialize)]
+pub struct Output {
+    pub name: String,
+    pub bids_suffix: Option<String>,
+    pub unit: Option<String>,
+    pub diagnostic: bool,
+}
+
+#[derive(Serialize)]
+pub struct MeasurementCard {
+    /// `"series"` or `"named"`.
+    pub kind: String,
+    pub roles: Vec<String>,
+    pub rows: Vec<BTreeMap<String, f64>>,
+}
+
+#[derive(Serialize)]
+pub struct ProtoParamCard {
+    pub name: String,
+    /// `"field"`, `"derived"` or `"option"`.
+    pub source: String,
+    /// Sidecar/option key; `None` for a derived value, which has no single key.
+    pub key: Option<String>,
+    /// `"per_volume"` or `"global"`.
+    pub scope: String,
+}
+
+#[derive(Serialize)]
+pub struct InputCard {
+    pub name: String,
+    pub required: bool,
+    pub bids_suffix: Option<String>,
+}
+
+fn finite(v: f64) -> Option<f64> {
+    v.is_finite().then_some(v)
+}
+
+fn card(entry: &ModelEntry, repo_root: &Path) -> Result<ModelCard> {
+    let doc = &entry.doc;
+    let recipe = repo_root.join(doc.recipes.non_bids);
+    let (_cfg, raw) = crate::commands::load_config_raw(&recipe)
+        .with_context(|| format!("{}: reading recipe {}", entry.name, doc.recipes.non_bids))?;
+    let model: Box<dyn Model> = (entry.describe)(&raw)
+        .with_context(|| format!("{}: describing from {}", entry.name, doc.recipes.non_bids))?;
+    let effective_config = (entry.dump)(&raw)?;
+
+    let bounds = model.param_bounds();
+    let fixed = model.fixed_mask();
+    let params = model
+        .param_names()
+        .iter()
+        .enumerate()
+        .map(|(i, name)| Param {
+            name: name.to_string(),
+            lower: bounds.get(i).and_then(|b| finite(b.0)),
+            upper: bounds.get(i).and_then(|b| finite(b.1)),
+            fixed: fixed.get(i).copied().unwrap_or(false),
+        })
+        .collect();
+
+    let declared = model.bids_outputs();
+    let outputs = model
+        .output_names()
+        .into_iter()
+        .map(
+            |name| match declared.iter().find(|(out, _, _)| *out == name) {
+                Some((_, suffix, unit)) => Output {
+                    name,
+                    bids_suffix: Some(suffix.to_string()),
+                    unit: Some(unit.to_string()),
+                    diagnostic: false,
+                },
+                None => Output {
+                    name,
+                    bids_suffix: None,
+                    unit: None,
+                    diagnostic: true,
+                },
+            },
+        )
+        .collect();
+
+    let measurement = match model.measurement() {
+        MeasurementKind::Named { roles } => MeasurementCard {
+            kind: "named".to_string(),
+            roles: roles.iter().map(|r| r.to_string()).collect(),
+            rows: vec![],
+        },
+        MeasurementKind::Series { rows } => MeasurementCard {
+            kind: "series".to_string(),
+            roles: vec![],
+            rows,
+        },
+    };
+
+    let protocol_schema = model
+        .protocol_schema()
+        .into_iter()
+        .map(|p| ProtoParamCard {
+            name: p.name.to_string(),
+            source: match p.source {
+                Source::Field(_) => "field",
+                Source::Derived(_) => "derived",
+                Source::Option(_) => "option",
+            }
+            .to_string(),
+            key: match p.source {
+                Source::Field(k) | Source::Option(k) => Some(k.to_string()),
+                Source::Derived(_) => None,
+            },
+            scope: match p.scope {
+                Scope::PerVolume => "per_volume",
+                Scope::Global => "global",
+            }
+            .to_string(),
+        })
+        .collect();
+
+    let required_inputs = model
+        .required_inputs()
+        .into_iter()
+        .map(|i| InputCard {
+            name: i.name.to_string(),
+            required: i.required,
+            bids_suffix: i.bids.map(|b| b.suffix.to_string()),
+        })
+        .collect();
+
+    Ok(ModelCard {
+        name: entry.name.to_string(),
+        bids_suffix: entry.bids_suffix.to_string(),
+        title: doc.title.to_string(),
+        category: doc.category.slug().to_string(),
+        category_title: doc.category.title().to_string(),
+        summary: doc.summary.to_string(),
+        equation: doc.equation.to_string(),
+        symbols: doc
+            .symbols
+            .iter()
+            .map(|(name, meaning, unit)| Symbol {
+                name: name.to_string(),
+                meaning: meaning.to_string(),
+                unit: unit.to_string(),
+            })
+            .collect(),
+        citations: doc.citations.iter().map(|c| c.to_string()).collect(),
+        source_dir: doc.source_dir.to_string(),
+        recipes: RecipePaths {
+            bids: doc.recipes.bids.to_string(),
+            non_bids: doc.recipes.non_bids.to_string(),
+            sim: doc.recipes.sim.map(|s| s.to_string()),
+        },
+        params,
+        outputs,
+        measurement,
+        protocol_schema,
+        required_inputs,
+        n_volumes: model.n_volumes(),
+        strategy: match model.strategy() {
+            qmrust_core::core::model::FitStrategy::Voxelwise => "voxelwise",
+            qmrust_core::core::model::FitStrategy::MatrixWise => "matrixwise",
+        }
+        .to_string(),
+        effective_config,
+    })
+}
+
+/// Describe every registered model. `repo_root` is where declared recipe paths
+/// are resolved from.
+pub fn build(repo_root: &Path) -> Result<Catalog> {
+    let models = registry::all()
+        .iter()
+        .map(|e| card(e, repo_root))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Catalog { models })
+}
+
+/// Print the catalog as pretty JSON on stdout.
+pub fn run(repo_root: PathBuf) -> Result<()> {
+    let cat = build(&repo_root)?;
+    println!("{}", serde_json::to_string_pretty(&cat)?);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    #[test]
+    fn catalog_has_one_entry_per_registered_model() {
+        let cat = build(&repo_root()).unwrap();
+        assert_eq!(cat.models.len(), qmrust_core::registry::all().len());
+        for m in &cat.models {
+            assert!(qmrust_core::registry::by_name(&m.name).is_some());
+        }
+    }
+
+    #[test]
+    fn every_declared_recipe_exists_and_describes() {
+        // The catalog describes each model from its non-BIDS recipe, so a
+        // missing or invalid recipe is a documentation build failure, not a
+        // silent empty page.
+        let root = repo_root();
+        for e in qmrust_core::registry::all() {
+            for path in [e.doc.recipes.bids, e.doc.recipes.non_bids]
+                .into_iter()
+                .chain(e.doc.recipes.sim)
+            {
+                assert!(
+                    root.join(path).exists(),
+                    "{}: declared recipe '{}' does not exist",
+                    e.name,
+                    path
+                );
+            }
+        }
+        let cat = build(&root).unwrap();
+        for m in &cat.models {
+            assert!(
+                !m.effective_config.is_empty(),
+                "{}: empty effective_config",
+                m.name
+            );
+        }
+    }
+
+    #[test]
+    fn doc_symbols_name_real_parameters() {
+        let cat = build(&repo_root()).unwrap();
+        for m in &cat.models {
+            let params: Vec<&str> = m.params.iter().map(|p| p.name.as_str()).collect();
+            for s in &m.symbols {
+                assert!(
+                    params.contains(&s.name.as_str()),
+                    "{}: doc symbol '{}' is not a parameter {:?}",
+                    m.name,
+                    s.name,
+                    params
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn series_models_report_a_populated_acquisition_axis() {
+        // Describing from the non-BIDS recipe (not an empty config) is what
+        // makes identity rows and n_volumes real.
+        let cat = build(&repo_root()).unwrap();
+        for m in &cat.models {
+            assert!(m.n_volumes > 0, "{}: n_volumes is 0", m.name);
+            match m.measurement.kind.as_str() {
+                "series" => assert!(!m.measurement.rows.is_empty(), "{}: no rows", m.name),
+                "named" => assert!(!m.measurement.roles.is_empty(), "{}: no roles", m.name),
+                other => panic!("{}: unknown measurement kind '{}'", m.name, other),
+            }
+        }
+    }
+
+    #[test]
+    fn non_finite_bounds_serialize_as_null() {
+        let cat = build(&repo_root()).unwrap();
+        let json = serde_json::to_string(&cat).unwrap();
+        assert!(!json.contains("inf"), "JSON must not contain infinity");
+        let ir = cat
+            .models
+            .iter()
+            .find(|m| m.name == "inversion_recovery")
+            .unwrap();
+        assert!(ir
+            .params
+            .iter()
+            .all(|p| p.lower.is_none() && p.upper.is_none()));
+    }
+}
