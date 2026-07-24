@@ -21,6 +21,20 @@ pub struct ModelEntry {
 pub fn all() -> &'static [ModelEntry] {
     &[
         ModelEntry {
+            name: "mt_ratio",
+            bids_suffix: "MTR",
+            build: models::mt_ratio::build,
+            describe: models::mt_ratio::describe,
+            dump: models::mt_ratio::dump,
+        },
+        ModelEntry {
+            name: "mt_sat",
+            bids_suffix: "MTS",
+            build: models::mt_sat::build,
+            describe: models::mt_sat::describe,
+            dump: models::mt_sat::dump,
+        },
+        ModelEntry {
             name: "mono_t2",
             bids_suffix: "MESE",
             build: models::mono_t2::build,

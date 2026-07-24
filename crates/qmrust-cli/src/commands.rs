@@ -76,6 +76,38 @@ fn load_config_raw(
     qmrust_core::config::parse_config(&contents)
 }
 
+/// If a `mt_sat` recipe carries `b1_correction: { fitvalues: <path>, b1_ref }`,
+/// load and parse the artifact and inline it so the model config deserializes
+/// a real `FitValues` instead of the path form. Keeps file I/O in the shell;
+/// the core only ever deserializes data it is handed. A recipe without
+/// `b1_correction` (or a non-`mt_sat` model) is left untouched.
+fn inject_mt_sat_b1_correction(raw: &mut serde_yaml::Value) -> Result<()> {
+    let Some(b1c) = raw.get("b1_correction").cloned() else {
+        return Ok(());
+    };
+    let path = b1c
+        .get("fitvalues")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("b1_correction.fitvalues must be a path"))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading fitvalues {path}"))?;
+    let fv: qmrust_core::mtsat_b1::fitvalues::FitValues = serde_yaml::from_str(&text)?;
+    if let Some(recipe_b1_ref) = b1c.get("b1_ref").and_then(|v| v.as_f64()) {
+        if (recipe_b1_ref - fv.b1_ref).abs() > 1e-9 {
+            eprintln!(
+                "  warning (mt_sat): recipe b1_correction.b1_ref ({recipe_b1_ref}) does not match \
+                 the fitvalues artifact's b1_ref ({}); the artifact's value is authoritative and \
+                 is what is used.",
+                fv.b1_ref
+            );
+        }
+    }
+    if let serde_yaml::Value::Mapping(m) = raw {
+        m.insert("b1_correction".into(), serde_yaml::to_value(fv)?);
+    }
+    Ok(())
+}
+
 /// Print the fully-resolved effective config (defaults applied + validated) as
 /// YAML. For qmt_spgr this prints the complete protocol/timing/pulse/fitting
 /// block that a short config expands to.
@@ -220,12 +252,19 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 }
 
 /// Load one resolved BIDS `Collection` into the `(data, protocol, header)`
-/// triple the engine needs: the volumes stacked in the collection's order as
-/// `[nx,ny,nz,nt]`, the per-volume sidecar `Protocol` (resolved against
-/// `schema`), and the first volume's header for output geometry. `Named`
-/// collections (e.g. MTsat-style MTS sets) bail loudly: reordering their
-/// role-labeled volumes to a model's `required` axis order is not implemented,
-/// and silently mis-assigning volumes would be worse than refusing.
+/// triple the engine needs: the volumes stacked as `[nx,ny,nz,nt]`, the
+/// per-volume sidecar `Protocol` (resolved against `schema`), and the first
+/// volume's header for output geometry.
+///
+/// A `Sequential` collection stacks in the collection's own order; the model
+/// re-identifies each volume from `proto` by value. A `Named` collection
+/// (e.g. an MTR set) is stacked in the model's declared role order (`roles`),
+/// so column `i` is the model's `roles[i]` and `build_volume_ids` can label it
+/// `VolumeId::Role(roles[i])` without any positional guesswork. The grouping's
+/// `named_set` role names must therefore match the model's `measurement()`
+/// roles; a role with no matching volume is a hard error, never a silent
+/// mis-assignment. `roles` is `None` when the model uses a `Series`
+/// measurement — a `Named` collection then has no axis to map onto and fails.
 ///
 /// An empty `schema` (a model that declares no `protocol_schema()`) resolves to
 /// an empty `Protocol`; the model then reads its acquisition from its own
@@ -235,11 +274,31 @@ fn load_collection(
     c: &Collection,
     schema: &[qmrust_core::core::model::ProtoParam],
     options: &std::collections::BTreeMap<String, f64>,
+    roles: Option<&[&'static str]>,
 ) -> Result<(Array4<f64>, Protocol, Option<NiftiHeader>)> {
-    let vols = match &c.data {
-        GroupedData::Sequential(vols) => vols,
-        GroupedData::Named(_) => {
-            bail!("named-collection fit not yet supported")
+    let vols: Vec<&rust_bids::VolumeRef> = match &c.data {
+        GroupedData::Sequential(vols) => vols.iter().collect(),
+        GroupedData::Named(map) => {
+            let roles = roles.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "collection for '{}' is a named set, but model uses a series measurement \
+                     with no role axis to map its volumes onto",
+                    c.suffix
+                )
+            })?;
+            roles
+                .iter()
+                .map(|&r| {
+                    map.get(r).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "named collection for '{}' is missing role '{}' (has {:?})",
+                            c.suffix,
+                            r,
+                            map.keys().collect::<Vec<_>>()
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
         }
     };
     if vols.is_empty() {
@@ -287,7 +346,37 @@ fn load_collection(
     let proto = if schema.is_empty() {
         Protocol::default()
     } else {
-        rust_bids::resolve_protocol(fs, c, schema, options)?
+        let resolved = rust_bids::resolve_protocol(fs, c, schema, options)?;
+        match (&c.data, roles) {
+            // `resolve_protocol` walks a named set in `BTreeMap` (alphabetical
+            // role) order, which need not match the model's declared role
+            // order the data was just stacked in. Reorder — and select, if the
+            // model uses a subset of the set's roles — so `proto.volumes[i]` is
+            // `roles[i]`, letting a Named model's `ingest_protocol` fold each
+            // role's acquisition by position.
+            (GroupedData::Named(map), Some(roles)) => {
+                let alpha: Vec<&str> = map.keys().map(String::as_str).collect();
+                let mut by_role: std::collections::BTreeMap<&str, _> =
+                    alpha.into_iter().zip(resolved.volumes).collect();
+                let volumes = roles
+                    .iter()
+                    .map(|&r| {
+                        by_role.remove(r).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "named collection for '{}' resolved no protocol for role '{}'",
+                                c.suffix,
+                                r
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Protocol {
+                    volumes,
+                    global: resolved.global,
+                }
+            }
+            _ => resolved,
+        }
     };
     Ok((out, proto, header))
 }
@@ -346,7 +435,10 @@ pub fn run_fit(
         (data_path, mat_path, r1map, b1map, b0map, mask_path)
     };
 
-    let (cfg, raw) = load_config_raw(&config_path)?;
+    let (cfg, mut raw) = load_config_raw(&config_path)?;
+    if cfg.model == "mt_sat" {
+        inject_mt_sat_b1_correction(&mut raw)?;
+    }
     let input = load_input(data_path.as_ref(), mat_path.as_ref(), mask_path.as_ref())?;
 
     // The mat/NIfTI path carries no BIDS sidecar metadata — the model reads
@@ -601,7 +693,10 @@ pub fn run_fit_bids(
             .ok();
     }
 
-    let (cfg, raw) = load_config_raw(&config_path)?;
+    let (cfg, mut raw) = load_config_raw(&config_path)?;
+    if cfg.model == "mt_sat" {
+        inject_mt_sat_b1_correction(&mut raw)?;
+    }
     let entry = qmrust_core::registry::by_name(&cfg.model).ok_or_else(|| {
         anyhow::anyhow!(
             "Unknown model: '{}'. Available: {}",
@@ -680,8 +775,15 @@ pub fn run_fit_bids(
         bids_dir
     );
 
+    // A `Named` model's declared role order — the axis `load_collection` stacks
+    // a named collection's role-labeled volumes onto. `None` for a `Series`
+    // model (its volumes are re-identified from `proto` by value instead).
+    let named_roles: Option<&'static [&'static str]> = match probe.measurement() {
+        MeasurementKind::Named { roles } => Some(roles),
+        MeasurementKind::Series { .. } => None,
+    };
+
     let mut fit_count = 0usize;
-    let mut skipped = 0usize;
     for c in &collections {
         for w in &c.warnings {
             eprintln!("  warning ({}): {}", c.subject, w.message);
@@ -692,24 +794,8 @@ pub fn run_fit_bids(
             None => c.subject.clone(),
         };
 
-        // Only the expected, structural case is a skip: `Named` collections
-        // (e.g. MTsat-style MTS sets) are not reorderable to a model's axis
-        // order (see `load_collection`). Anything else `load_collection` (or the
-        // model build / run_model_fit / write_derivatives below) reports — a
-        // corrupt NIfTI, a spatial-dims mismatch, a broken sidecar — is a real
-        // failure and must propagate loudly (`?`), never be logged-and-skipped
-        // alongside it.
-        if matches!(c.data, GroupedData::Named(_)) {
-            eprintln!(
-                "  skipping {}: named-collection fit not yet supported",
-                label
-            );
-            skipped += 1;
-            continue;
-        }
-
         eprintln!("Fitting {}...", label);
-        let (data, proto, header) = load_collection(&fs, c, &schema, &options)?;
+        let (data, proto, header) = load_collection(&fs, c, &schema, &options, named_roles)?;
 
         let model = (entry.build)(&raw, &proto)?;
         eprintln!("  Model: {}, {} volumes", cfg.model, data.dim().3);
@@ -761,17 +847,106 @@ pub fn run_fit_bids(
         fit_count += 1;
     }
 
-    eprintln!("Fit {} subject(s), skipped {}", fit_count, skipped);
+    eprintln!("Fit {} subject(s)", fit_count);
     if fit_count == 0 {
-        bail!(
-            "no {} collections were fit in {:?} ({} skipped)",
-            suffix,
-            bids_dir,
-            skipped
-        );
+        bail!("no {} collections were fit in {:?}", suffix, bids_dir);
     }
 
     Ok(())
+}
+
+/// Resolve the dataset's single `mt_sat` (MTS) collection, fit it, and zip its
+/// `T1`/`MTSAT` output maps with the resolved `B1map` aux into per-voxel
+/// `(R1 [1/s], MTsat [%], B1 [relative])` triples — one per mask-included
+/// voxel with a positive MTsat (the same "valid" gate `mt_sat_b1::calibrate`
+/// applies before inverting the surface). Reuses the exact BIDS machinery
+/// `run_fit_bids` uses (`load_collection`, `run_model_fit`,
+/// `resolve_aux_and_mask`) rather than re-deriving any of it: the `mt_sat`
+/// model itself reads its acquisition (flip angles, TRs) from the MTS
+/// sidecars, so no model options are needed here beyond selecting the model.
+///
+/// A B1 map is required for the Tardif self-calibration (the surface is a
+/// function of B1); a dataset with no `TB1map` resolved for the collection is
+/// a hard error, not a silent skip.
+pub fn collect_mtsat_r1_b1(bids_dir: &Path) -> Result<Vec<(f64, f64, f64)>> {
+    let raw: serde_yaml::Value = serde_yaml::from_str("model: mt_sat\n")?;
+    let entry = qmrust_core::registry::by_name("mt_sat")
+        .ok_or_else(|| anyhow::anyhow!("mt_sat model not registered"))?;
+    let probe = (entry.describe)(&raw)?;
+    let schema = probe.protocol_schema();
+    let named_roles: Option<&'static [&'static str]> = match probe.measurement() {
+        MeasurementKind::Named { roles } => Some(roles),
+        MeasurementKind::Series { .. } => None,
+    };
+
+    let fs = StdFs {
+        root: bids_dir.to_path_buf(),
+    };
+    let bids_cfg = rust_bids::default_config();
+    let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
+    let table = rust_bids::parse_to_table(&fs, &vocab)?;
+    let collections = rust_bids::collections_for(&fs, &bids_cfg, entry.bids_suffix)?;
+    let c = match collections.as_slice() {
+        [one] => one,
+        [] => bail!(
+            "no {} collections found in {:?}",
+            entry.bids_suffix,
+            bids_dir
+        ),
+        many => bail!(
+            "expected exactly one {} collection for the mtsat-b1 reference dataset in {:?}, \
+             found {}",
+            entry.bids_suffix,
+            bids_dir,
+            many.len()
+        ),
+    };
+
+    let options: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+    let (data, proto, _header) = load_collection(&fs, c, &schema, &options, named_roles)?;
+    // Calibration mode: fit() must return raw MTsat + B1-corrected R1 (no
+    // empirical Helms factor, no Tardif CF) — the exact coordinates the
+    // correction path (Tardif active) later queries, so calibrating and
+    // correcting agree. This helper only ever calibrates `mt_sat`.
+    let model = qmrust_core::models::mt_sat::build_calibration(&raw, &proto)?;
+    let (aux, mask, _sources) =
+        resolve_aux_and_mask(&table, model.as_ref(), &c.entities, None, bids_dir)?;
+    let b1 = aux.get_map("B1map").ok_or_else(|| {
+        anyhow::anyhow!(
+            "no B1map (TB1map) resolved for the mtsat-b1 reference collection in {:?}; a B1 map \
+             is required to self-calibrate the Tardif M0b-vs-R1 line",
+            bids_dir
+        )
+    })?;
+
+    let results = run_model_fit(model.as_ref(), &data, &proto, mask.as_ref(), &aux)?;
+    let t1 = results
+        .get("T1")
+        .ok_or_else(|| anyhow::anyhow!("mt_sat fit produced no 'T1' map"))?;
+    let mtsat = results
+        .get("MTSAT")
+        .ok_or_else(|| anyhow::anyhow!("mt_sat fit produced no 'MTSAT' map"))?;
+
+    let (nx, ny, nz) = t1.dim();
+    let mut out = Vec::new();
+    for x in 0..nx {
+        for y in 0..ny {
+            for z in 0..nz {
+                if let Some(m) = mask.as_ref() {
+                    if !m[[x, y, z]] {
+                        continue;
+                    }
+                }
+                let t1v = t1[[x, y, z]];
+                let mtsatv = mtsat[[x, y, z]];
+                let b1v = b1[[x, y, z]];
+                if mtsatv > 0.0 && t1v > 0.0 && t1v.is_finite() && b1v.is_finite() {
+                    out.push((1.0 / t1v, mtsatv, b1v));
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Locate a single input file for a collection by matching its full grouping
@@ -1002,6 +1177,7 @@ mod tests {
             &cols[0],
             &ir_schema(),
             &std::collections::BTreeMap::new(),
+            None,
         )
         .unwrap();
 
@@ -1248,8 +1424,8 @@ mod tests {
     }
 
     /// A real per-volume failure (here: a spatial-dims mismatch that
-    /// `load_collection` detects) must fail the whole run loudly — not be
-    /// logged as a "skip" alongside the deliberate Named-collection skip.
+    /// `load_collection` detects) must fail the whole run loudly, propagating
+    /// out of `run_fit_bids` rather than being logged and skipped.
     #[test]
     fn run_fit_bids_propagates_a_real_load_error_instead_of_skipping() {
         let tmp = TempDir::new("fit-bids-corrupt");
@@ -1383,26 +1559,33 @@ mod tests {
     }
 
     #[test]
-    fn load_collection_rejects_named_collections_for_now() {
+    fn load_collection_named_needs_role_axis_and_all_roles() {
         let c = Collection {
             subject: "sub-01".into(),
             session: None,
             run: None,
             task: None,
             entities: std::collections::BTreeMap::new(),
-            suffix: "MTS".into(),
+            suffix: "MTR".into(),
+            // An empty named set: no role volumes present.
             data: GroupedData::Named(Default::default()),
             warnings: vec![],
         };
         let fs = StdFs {
             root: std::env::temp_dir(),
         };
-        match load_collection(&fs, &c, &ir_schema(), &std::collections::BTreeMap::new()) {
-            Ok(_) => panic!("named collections must be rejected, not silently loaded"),
-            Err(e) => assert!(e
-                .to_string()
-                .contains("named-collection fit not yet supported")),
-        }
+        let opts = std::collections::BTreeMap::new();
+
+        // A series model (roles=None) has no axis to map a named set onto.
+        let err = load_collection(&fs, &c, &[], &opts, None).unwrap_err();
+        assert!(err.to_string().contains("series measurement"), "got: {err}");
+
+        // A named model whose required role is absent fails loudly, naming it —
+        // never a silent mis-assignment.
+        let err = load_collection(&fs, &c, &[], &opts, Some(&["MTon", "MToff"])).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("missing role"), "got: {msg}");
+        assert!(msg.contains("MTon"), "got: {msg}");
     }
 
     /// Input resolution is driven by a collection's *full* entity identity, not
@@ -1581,6 +1764,7 @@ mod tests {
             mat_data: Some(ir_mat),
             mat_dir: None,
             nii_data: None,
+            nii_dir: None,
             nii_mask: None,
             mask: Some(ir_mask),
             config: config.clone(),
@@ -1690,6 +1874,7 @@ mod tests {
             mat_data: Some(qmt_mat),
             mat_dir: None,
             nii_data: None,
+            nii_dir: None,
             nii_mask: None,
             mask: None,
             config: config.clone(),
@@ -1760,5 +1945,132 @@ mod tests {
         )
         .unwrap();
         run_dump_config(config_path).expect("dump-config does not enforce protocol completeness");
+    }
+
+    /// A minimal, valid `FitValues` YAML — enough for `inject_mt_sat_b1_correction`
+    /// to parse and inline, and for the resulting model to apply a nonzero
+    /// correction.
+    fn sample_fitvalues_yaml() -> String {
+        use qmrust_core::mtsat_b1::fitvalues::{FitValues, M0bVsR1};
+        use qmrust_core::mtsat_b1::sim::{FreqPattern, SeqParams, VfaParams};
+        use qmrust_core::mtsat_b1::surface::SsSurface;
+
+        let mut coeffs = [0.0; 64];
+        coeffs[0] = 1.0;
+        coeffs[4] = 0.3; // gives the surface a B1 dependence
+        let fv = FitValues {
+            ss_surface: SsSurface { coeffs },
+            m0b_vs_r1: M0bVsR1 {
+                slope: 0.05,
+                intercept: 0.02,
+            },
+            seq: SeqParams {
+                num_sat_pulse: 2,
+                pulse_dur: 0.768e-3,
+                pulse_gap_dur: 0.6e-3,
+                tr: 28e-3,
+                w_exc_dur: 3e-3,
+                freq_pattern: FreqPattern::DualAlternate,
+                delta: 7000.0,
+                flip_angle: 9.0,
+                r: 26.0,
+                t2a: 70e-3,
+                t1d: 6e-3,
+                m0a: 1.0,
+                r1b: 1.0,
+                t2b: 12e-6,
+                bw: 0.3 / 0.768e-3,
+                mt_grad_time: 0.0,
+                n_avg: 20,
+            },
+            vfa: VfaParams {
+                fa1_deg: 5.0,
+                fa2_deg: 20.0,
+                tr1: 30e-3,
+                tr2: 30e-3,
+            },
+            b1_ref: 6.8,
+        };
+        serde_yaml::to_string(&fv).unwrap()
+    }
+
+    /// Build the `mt_sat` model from a raw recipe, resolving any
+    /// `b1_correction` path form first — the same sequence `run_fit`/
+    /// `run_fit_bids` follow.
+    fn build_mt_sat_with_b1(raw: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+        let mut raw = raw.clone();
+        inject_mt_sat_b1_correction(&mut raw)?;
+        let entry = qmrust_core::registry::by_name("mt_sat").unwrap();
+        (entry.build)(&raw, &Protocol::default())
+    }
+
+    #[test]
+    fn mt_sat_recipe_loads_fitvalues_into_model() {
+        // A recipe pointing at a fitvalues.yaml must yield a model that
+        // applies the correction (B1 != 1 changes the fitted MTSAT).
+        let dir = TempDir::new("mtsat-b1-recipe");
+        let fv_path = dir.0.join("fv.yaml");
+        std::fs::write(&fv_path, sample_fitvalues_yaml()).unwrap();
+        let recipe = format!(
+            "model: mt_sat\nmtw: {{flip_angle: 6, repetition_time: 0.028}}\npdw: {{flip_angle: 6, repetition_time: 0.028}}\nt1w: {{flip_angle: 20, repetition_time: 0.018}}\nb1_correction: {{ fitvalues: {:?}, b1_ref: 6.8 }}\n",
+            fv_path
+        );
+        let raw: serde_yaml::Value = serde_yaml::from_str(&recipe).unwrap();
+        let model = build_mt_sat_with_b1(&raw).unwrap();
+
+        let empty_aux = qmrust_core::core::model::Aux::new();
+        let sig = model.forward(&[1000.0, 0.9, 1.5], &empty_aux);
+        let no_b1 = model.fit(&sig, &empty_aux)[0];
+        let mut aux_with_b1 = qmrust_core::core::model::Aux::new();
+        aux_with_b1.set("B1map", 1.2);
+        let with_b1 = model.fit(&sig, &aux_with_b1)[0];
+        assert!(
+            (with_b1 - no_b1).abs() > 1e-9,
+            "recipe-loaded FitValues had no effect: {no_b1} vs {with_b1}"
+        );
+    }
+
+    #[test]
+    fn mt_sat_recipe_b1_ref_mismatch_warns_but_uses_artifact_value() {
+        // A recipe `b1_ref` that disagrees with the artifact's own must not
+        // error — it's a spec-mandated warning, and the artifact's `b1_ref`
+        // (6.8 here) remains authoritative regardless of what the recipe says.
+        let dir = TempDir::new("mtsat-b1-ref-mismatch");
+        let fv_path = dir.0.join("fv.yaml");
+        std::fs::write(&fv_path, sample_fitvalues_yaml()).unwrap();
+        let recipe = format!(
+            "model: mt_sat\nmtw: {{flip_angle: 6, repetition_time: 0.028}}\npdw: {{flip_angle: 6, repetition_time: 0.028}}\nt1w: {{flip_angle: 20, repetition_time: 0.018}}\nb1_correction: {{ fitvalues: {:?}, b1_ref: 9.9 }}\n",
+            fv_path
+        );
+        let raw: serde_yaml::Value = serde_yaml::from_str(&recipe).unwrap();
+        let mut raw_mut = raw.clone();
+        inject_mt_sat_b1_correction(&mut raw_mut).expect("mismatched b1_ref must warn, not error");
+        // The inlined b1_correction carries the artifact's b1_ref (6.8), not
+        // the recipe's mismatched 9.9.
+        let inlined_b1_ref = raw_mut
+            .get("b1_correction")
+            .and_then(|v| v.get("b1_ref"))
+            .and_then(|v| v.as_f64())
+            .unwrap();
+        assert!((inlined_b1_ref - 6.8).abs() < 1e-9, "{inlined_b1_ref}");
+    }
+
+    #[test]
+    fn mt_sat_recipe_without_b1_correction_still_parses() {
+        let raw: serde_yaml::Value = serde_yaml::from_str(
+            "model: mt_sat\nmtw: {flip_angle: 6, repetition_time: 0.028}\npdw: {flip_angle: 6, repetition_time: 0.028}\nt1w: {flip_angle: 20, repetition_time: 0.018}\n",
+        )
+        .unwrap();
+        build_mt_sat_with_b1(&raw).expect("no b1_correction key -> None, still builds");
+    }
+
+    #[test]
+    fn non_mt_sat_recipe_is_untouched_by_injection() {
+        let mut raw: serde_yaml::Value = serde_yaml::from_str(
+            "model: inversion_recovery\nmethod: magnitude\ninversion_times: [0.35, 0.5, 0.8]\n",
+        )
+        .unwrap();
+        inject_mt_sat_b1_correction(&mut raw).unwrap();
+        assert!(raw.get("b1_correction").is_none());
     }
 }

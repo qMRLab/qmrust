@@ -23,3 +23,10 @@ MTS:
 MESE:
   sequential_set:
     by: [echo]
+MTR:
+  named_set:
+    MTon:
+      mt: "on"
+    MToff:
+      mt: "off"
+    required: [MTon, MToff]

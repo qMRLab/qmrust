@@ -1,0 +1,523 @@
+//! MTsat adapter onto the core `Model` trait.
+//!
+//! MTsat is a `Named` three-volume model — `MTw`, `PDw`, `T1w` (the BIDS `MTS`
+//! set) plus an optional `B1map` aux — combined by the closed-form Helms
+//! computation. It is not an iterative fit. Each role carries a nominal flip
+//! angle and repetition time: the non-BIDS path reads them from `--config`, the
+//! BIDS path folds them from each role's sidecar in `ingest_protocol`.
+
+use crate::core::model::{
+    Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, InputSpec, Measurement, MeasurementKind, Model,
+    ModelConfig, ProtoParam, Protocol, Scope, Source,
+};
+use crate::models::mt_sat::config::MtSatConfig;
+use crate::models::mt_sat::fit::{self, Acq};
+use anyhow::Result;
+use serde_json::json;
+use std::collections::BTreeMap;
+
+pub struct MtSatModel {
+    acq: Acq,
+    b1_correction_factor: f64,
+    b1_correction: Option<crate::mtsat_b1::fitvalues::FitValues>,
+    export_mtr: bool,
+    /// Measurement role names carrying the physical PD- and T1-weighted signals
+    /// — normally `"PDw"`/`"T1w"`, but swapped when the flip-1/flip-2 labels do
+    /// not reflect the flip angles (see `new`). Each stays paired with its own
+    /// entry in `acq`.
+    pd_role: &'static str,
+    t1_role: &'static str,
+    /// FA (degrees) / TR (s) per role, retained for `bids_volume` sidecars.
+    cfg: MtSatConfig,
+    output_names: Vec<String>,
+    /// When true, `fit` emits raw (pre-empirical-factor, pre-Tardif-CF) MTsat
+    /// alongside B1-corrected R1 — the coordinates a B1-vs-R1 calibration
+    /// surface is built in, matching the correction path exactly. Used only
+    /// by the calibration builder ([`new_calibration`](Self::new_calibration)).
+    calibration_mode: bool,
+}
+
+/// Volume roles, in acquisition order — index `i` maps to `bids_volume(i)`, to
+/// the `MTS` grouping's `named_set` role of the same name, and (BIDS path) to
+/// the reordered per-role protocol row `i`.
+const ROLES: &[&str] = &["MTw", "PDw", "T1w"];
+const MTS_ENTITIES: &[EntityRole] = &[EntityRole::Flip, EntityRole::Mt];
+
+fn deg2rad(d: f64) -> f64 {
+    d * std::f64::consts::PI / 180.0
+}
+
+impl MtSatModel {
+    pub fn new(cfg: MtSatConfig) -> Self {
+        // T1w is the higher-flip-angle MT-off image; PDw the lower. The
+        // flip-1/flip-2 labels only order the volumes, so decide PD vs T1 by
+        // the flip-angle *value* and keep each signal paired with its own
+        // FA/TR. R1/A/MTsat are invariant to this choice; MTR needs the true
+        // PD, so a mislabeled pair is corrected here (with a warning) rather
+        // than fit wrong. `validate_protocol` has already rejected an equal
+        // (ambiguous) pair.
+        let ((pd_role, pd_w), (t1_role, t1_w)) = if cfg.pdw.flip_angle < cfg.t1w.flip_angle {
+            (("PDw", cfg.pdw), ("T1w", cfg.t1w))
+        } else {
+            eprintln!(
+                "  warning (mt_sat): the PDw-labeled volume's flip angle ({}°) exceeds the \
+                 T1w-labeled one's ({}°); reassigning by flip angle (T1w = higher FA). Verify \
+                 the flip-1/flip-2 entities are correct.",
+                cfg.pdw.flip_angle, cfg.t1w.flip_angle
+            );
+            (("T1w", cfg.t1w), ("PDw", cfg.pdw))
+        };
+        let acq = Acq {
+            alpha_mt: deg2rad(cfg.mtw.flip_angle),
+            tr_mt: cfg.mtw.repetition_time,
+            alpha_pd: deg2rad(pd_w.flip_angle),
+            tr_pd: pd_w.repetition_time,
+            alpha_t1: deg2rad(t1_w.flip_angle),
+            tr_t1: t1_w.repetition_time,
+        };
+        let mut output_names = vec!["MTSAT".to_string(), "T1".to_string()];
+        if cfg.export_mtr {
+            output_names.push("MTR".to_string());
+        }
+        let b1_correction = cfg.b1_correction.clone();
+        Self {
+            acq,
+            b1_correction_factor: cfg.b1_correction_factor,
+            b1_correction,
+            export_mtr: cfg.export_mtr,
+            pd_role,
+            t1_role,
+            cfg,
+            output_names,
+            calibration_mode: false,
+        }
+    }
+
+    /// Build `mt_sat` in calibration mode: `fit` emits raw (pre-empirical-
+    /// factor, pre-CF) MTsat + B1-corrected R1, regardless of any configured
+    /// `b1_correction` — the coordinates a B1-vs-R1 calibration surface is
+    /// built in.
+    pub fn new_calibration(cfg: MtSatConfig) -> Self {
+        let mut m = Self::new(cfg);
+        m.calibration_mode = true;
+        m
+    }
+}
+
+impl Model for MtSatModel {
+    fn param_names(&self) -> Vec<&'static str> {
+        // Forward inputs: apparent amplitude, T1 (s), and MT saturation (%).
+        vec!["A", "T1", "MTSAT"]
+    }
+    fn output_names(&self) -> Vec<String> {
+        self.output_names.clone()
+    }
+    fn param_bounds(&self) -> Vec<(f64, f64)> {
+        vec![(f64::NEG_INFINITY, f64::INFINITY); 3]
+    }
+    fn fixed_mask(&self) -> Vec<bool> {
+        vec![false; 3]
+    }
+    fn required_inputs(&self) -> Vec<InputSpec> {
+        // B1 transmit map, used-if-present to correct MTsat (and R1).
+        vec![InputSpec {
+            name: "B1map",
+            required: false,
+            bids: Some(BidsMap {
+                suffix: "TB1map",
+                entity: None,
+            }),
+        }]
+    }
+    fn measurement(&self) -> MeasurementKind {
+        MeasurementKind::Named { roles: ROLES }
+    }
+    fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
+        // `forward_signals` returns (MTw, physical-PD, physical-T1); tag the
+        // latter two with the role names that carry them (swapped iff the
+        // labels were).
+        let (mtw, pd, t1) = fit::forward_signals(&self.acq, params[0], params[1], params[2]);
+        Measurement::Named(BTreeMap::from([
+            ("MTw", mtw),
+            (self.pd_role, pd),
+            (self.t1_role, t1),
+        ]))
+    }
+    fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
+        let role = |r: &str| {
+            m.role(r)
+                .unwrap_or_else(|| panic!("measurement has no {r} volume"))
+        };
+        let mtw = role("MTw");
+        let pd = role(self.pd_role);
+        let t1 = role(self.t1_role);
+        let b1 = aux.get("B1map");
+        // The empirical Helms multiplicative factor is qMRLab-faithful default
+        // behavior for the plain path (no Tardif artifact configured, not
+        // calibrating); the Tardif correction path and calibration both need
+        // raw MTsat instead, so their B1-vs-R1 coordinates agree. B1-correction
+        // of R1/A happens whenever a B1 map is present, independent of this.
+        let apply_helms = !self.calibration_mode && self.b1_correction.is_none();
+        let (mtsat0, r1) = fit::mtsat(
+            &self.acq,
+            mtw,
+            pd,
+            t1,
+            b1,
+            apply_helms,
+            self.b1_correction_factor,
+        );
+        let mtsat = if self.calibration_mode {
+            mtsat0
+        } else {
+            match (&self.b1_correction, b1) {
+                (Some(fv), Some(b1v)) => crate::mtsat_b1::correct::correct(
+                    mtsat0,
+                    crate::mtsat_b1::correct::correction_factor(fv, b1v, r1),
+                ),
+                _ => mtsat0,
+            }
+        };
+        let mut out = vec![mtsat, 1.0 / r1];
+        if self.export_mtr {
+            out.push(fit::mtr(pd, mtw));
+        }
+        out
+    }
+    fn n_volumes(&self) -> usize {
+        ROLES.len()
+    }
+    fn bids_volume(&self, index: usize) -> BidsVolume {
+        // Index follows ROLES; the MTS set is distinguished by flip + mt.
+        let (w, flip, mt, mt_state) = match ROLES[index] {
+            "MTw" => (self.cfg.mtw, "1", "on", true),
+            "PDw" => (self.cfg.pdw, "1", "off", false),
+            "T1w" => (self.cfg.t1w, "2", "off", false),
+            other => panic!("mt_sat has no volume role '{other}'"),
+        };
+        BidsVolume {
+            entities: vec![("flip", flip.to_string()), ("mt", mt.to_string())],
+            sidecar: BTreeMap::from([
+                ("FlipAngle".to_string(), json!(w.flip_angle)),
+                (
+                    "RepetitionTimeExcitation".to_string(),
+                    json!(w.repetition_time),
+                ),
+                ("MTState".to_string(), json!(mt_state)),
+            ]),
+        }
+    }
+    fn bids(&self) -> Option<BidsSpec> {
+        Some(BidsSpec {
+            suffix: "MTS",
+            entities: MTS_ENTITIES,
+        })
+    }
+    fn protocol_schema(&self) -> Vec<ProtoParam> {
+        vec![
+            ProtoParam {
+                name: "FlipAngle",
+                source: Source::Field("FlipAngle"),
+                scope: Scope::PerVolume,
+            },
+            ProtoParam {
+                name: "RepetitionTimeExcitation",
+                source: Source::Field("RepetitionTimeExcitation"),
+                scope: Scope::PerVolume,
+            },
+        ]
+    }
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
+        let mut outs = vec![("MTSAT", "MTsat", "%"), ("T1", "T1map", "s")];
+        if self.export_mtr {
+            outs.push(("MTR", "MTRmap", "%"));
+        }
+        outs
+    }
+}
+
+impl crate::core::model::ModelConfig for MtSatConfig {
+    const NAME: &'static str = "mt_sat";
+    const SUBKEY: Option<&'static str> = None;
+
+    fn validate_options(&mut self) -> Result<()> {
+        MtSatConfig::validate_options(self)
+    }
+
+    fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
+        // The shell orders a named set's per-role protocol to ROLES, so
+        // `proto.volumes[i]` carries role `ROLES[i]`'s FlipAngle/TR sidecar.
+        if proto.volumes.is_empty() {
+            return Ok(());
+        }
+        let weightings = [&mut self.mtw, &mut self.pdw, &mut self.t1w];
+        for (w, vol) in weightings.into_iter().zip(&proto.volumes) {
+            if let Some(&fa) = vol.get("FlipAngle") {
+                w.flip_angle = fa;
+            }
+            if let Some(&tr) = vol.get("RepetitionTimeExcitation") {
+                w.repetition_time = tr;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_protocol(&mut self) -> Result<()> {
+        MtSatConfig::validate_protocol(self)
+    }
+
+    fn into_model(self) -> Box<dyn Model> {
+        Box::new(MtSatModel::new(self))
+    }
+}
+
+/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
+pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+    crate::core::model::describe_model::<MtSatConfig>(v)
+}
+
+/// Registry builder (see [`build_model`](crate::core::model::build_model)).
+pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
+    crate::core::model::build_model::<MtSatConfig>(v, proto)
+}
+
+/// Build `mt_sat` in calibration mode: `fit` emits raw (pre-empirical-factor,
+/// pre-CF) MTsat + B1-corrected R1, applying neither the empirical Helms
+/// factor nor the Tardif CF — the coordinates the correction surface is
+/// calibrated in. Mirrors [`build`] (and `core::model::build_model`) except
+/// for the final construction step.
+pub fn build_calibration(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
+    let mut cfg: MtSatConfig = serde_yaml::from_value(v.clone())?;
+    cfg.validate_options()?;
+    cfg.ingest_protocol(proto)?;
+    // Calibration produces MTsat + T1 only; MTR is never used here, so drop the
+    // MTR-export requirement that TR_MT == TR_PD. This matters for protocols
+    // whose PD-weighted VFA volume is acquired at a different TR than the
+    // MT-weighted volume (e.g. TardifLab's data: MTw TR 28 ms, PDw/T1w 30 ms).
+    cfg.export_mtr = false;
+    cfg.validate_protocol()?;
+    let model: Box<dyn Model> = Box::new(MtSatModel::new_calibration(cfg));
+    crate::core::model::validate_against_protocol(&model.measurement(), proto)?;
+    Ok(model)
+}
+
+/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
+pub fn dump(v: &serde_yaml::Value) -> Result<String> {
+    crate::core::model::dump_model::<MtSatConfig>(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::mt_sat::config::Weighting;
+
+    fn mtsat_value() -> serde_yaml::Value {
+        serde_yaml::from_str(
+            "model: mt_sat\nmtw: {flip_angle: 6, repetition_time: 0.028}\npdw: {flip_angle: 6, repetition_time: 0.028}\nt1w: {flip_angle: 20, repetition_time: 0.018}\n",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn build_and_roundtrip_via_trait() {
+        let m = build(&mtsat_value(), &Protocol::default()).unwrap();
+        assert_eq!(m.param_names(), vec!["A", "T1", "MTSAT"]);
+        assert_eq!(m.output_names(), vec!["MTSAT", "T1", "MTR"]); // export default on
+        assert_eq!(m.n_volumes(), 3);
+        // forward known (A, T1, MTsat), recover T1 and MTsat exactly.
+        let sig = m.forward(&[1000.0, 0.9, 1.5], &Aux::new());
+        let fitted = m.fit(&sig, &Aux::new());
+        assert!((fitted[0] - 1.5).abs() < 1e-6, "MTSAT: {}", fitted[0]);
+        assert!((fitted[1] - 0.9).abs() < 1e-6, "T1: {}", fitted[1]);
+    }
+
+    #[test]
+    fn fit_reads_by_role_not_position() {
+        let m = build(&mtsat_value(), &Protocol::default()).unwrap();
+        let sig = m.forward(&[1000.0, 0.9, 1.5], &Aux::new());
+        let Measurement::Named(map) = &sig else {
+            unreachable!()
+        };
+        // Rebuild the map in a different insertion order; result must not change.
+        let reordered = Measurement::Named(BTreeMap::from([
+            ("T1w", map["T1w"]),
+            ("MTw", map["MTw"]),
+            ("PDw", map["PDw"]),
+        ]));
+        assert_eq!(m.fit(&sig, &Aux::new()), m.fit(&reordered, &Aux::new()));
+    }
+
+    #[test]
+    fn bids_folds_per_role_flip_and_tr_from_protocol() {
+        // Per-role protocol in ROLES order (MTw, PDw, T1w), as the shell hands it.
+        let proto = Protocol {
+            volumes: vec![
+                BTreeMap::from([
+                    ("FlipAngle".to_string(), 6.0),
+                    ("RepetitionTimeExcitation".to_string(), 0.028),
+                ]),
+                BTreeMap::from([
+                    ("FlipAngle".to_string(), 6.0),
+                    ("RepetitionTimeExcitation".to_string(), 0.028),
+                ]),
+                BTreeMap::from([
+                    ("FlipAngle".to_string(), 20.0),
+                    ("RepetitionTimeExcitation".to_string(), 0.018),
+                ]),
+            ],
+            global: BTreeMap::new(),
+        };
+        // Config carries no acquisition; the protocol supplies it.
+        let v: serde_yaml::Value = serde_yaml::from_str("model: mt_sat\n").unwrap();
+        let m = build(&v, &proto).unwrap();
+        // The T1w volume's sidecar must echo the folded 20°/18 ms.
+        let t1w = m.bids_volume(2);
+        assert_eq!(
+            t1w.entities,
+            vec![("flip", "2".into()), ("mt", "off".into())]
+        );
+        assert_eq!(t1w.sidecar["FlipAngle"], json!(20.0));
+        assert_eq!(t1w.sidecar["RepetitionTimeExcitation"], json!(0.018));
+    }
+
+    #[test]
+    fn corrects_swapped_flip_labels() {
+        let normal = build(&mtsat_value(), &Protocol::default()).unwrap();
+        // Same physical acquisition, but the flip-1/flip-2 labels — hence the
+        // pdw/t1w config roles — are swapped: the PDw-labeled volume carries
+        // FA20/18ms (really T1w) and the T1w-labeled one FA6/28ms (really PDw).
+        let swapped_v: serde_yaml::Value = serde_yaml::from_str(
+            "model: mt_sat\nmtw: {flip_angle: 6, repetition_time: 0.028}\npdw: {flip_angle: 20, repetition_time: 0.018}\nt1w: {flip_angle: 6, repetition_time: 0.028}\n",
+        )
+        .unwrap();
+        let swapped = build(&swapped_v, &Protocol::default()).unwrap();
+        let p = [1000.0, 0.9, 1.5];
+        let a = normal.fit(&normal.forward(&p, &Aux::new()), &Aux::new());
+        let b = swapped.fit(&swapped.forward(&p, &Aux::new()), &Aux::new());
+        for (x, y) in a.iter().zip(&b) {
+            assert!(
+                (x - y).abs() < 1e-9,
+                "reassignment changed the maps: {a:?} vs {b:?}"
+            );
+        }
+        // The corrected model still recovers the truth (MTSAT, T1).
+        assert!(
+            (b[0] - 1.5).abs() < 1e-6 && (b[1] - 0.9).abs() < 1e-6,
+            "{b:?}"
+        );
+    }
+
+    #[test]
+    fn declares_bids_mts_and_b1_aux() {
+        let m = build(&mtsat_value(), &Protocol::default()).unwrap();
+        assert_eq!(m.bids().unwrap().suffix, "MTS");
+        let inputs = m.required_inputs();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].name, "B1map");
+        assert!(!inputs[0].required);
+    }
+
+    #[test]
+    fn bids_outputs_reference_real_output_names() {
+        let m = build(&mtsat_value(), &Protocol::default()).unwrap();
+        let names = m.output_names();
+        for (out, _s, _u) in m.bids_outputs() {
+            assert!(names.iter().any(|n| n == out), "{out} not in {names:?}");
+        }
+    }
+
+    #[test]
+    fn export_mtr_off_drops_mtr_output() {
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: mt_sat\nexport_mtr: false\nmtw: {flip_angle: 6, repetition_time: 0.028}\npdw: {flip_angle: 6, repetition_time: 0.030}\nt1w: {flip_angle: 20, repetition_time: 0.018}\n",
+        )
+        .unwrap();
+        let m = build(&v, &Protocol::default()).unwrap();
+        assert_eq!(m.output_names(), vec!["MTSAT", "T1"]);
+        assert_eq!(
+            m.fit(&m.forward(&[1000.0, 0.9, 1.5], &Aux::new()), &Aux::new())
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn applies_tardif_correction_when_fitvalues_present() {
+        // Build an mt_sat model with an inlined FitValues whose surface makes
+        // CF nonzero, and a B1 map != 1 in aux; MTSAT must change vs no B1 map.
+        use crate::mtsat_b1::fitvalues::{FitValues, M0bVsR1};
+        use crate::mtsat_b1::surface::SsSurface;
+        let mut coeffs = [0.0; 64];
+        coeffs[0] = 1.0;
+        coeffs[4] = 0.3; // b1 dependence
+        let fv = FitValues {
+            ss_surface: SsSurface { coeffs },
+            m0b_vs_r1: M0bVsR1 {
+                slope: 0.05,
+                intercept: 0.02,
+            },
+            seq: crate::mtsat_b1::sim::tests_sample_params(),
+            vfa: crate::mtsat_b1::sim::VfaParams {
+                fa1_deg: 5.0,
+                fa2_deg: 20.0,
+                tr1: 30e-3,
+                tr2: 30e-3,
+            },
+            b1_ref: 6.8,
+        };
+        let cfg = MtSatConfig {
+            mtw: Weighting {
+                flip_angle: 6.0,
+                repetition_time: 0.028,
+            },
+            pdw: Weighting {
+                flip_angle: 6.0,
+                repetition_time: 0.028,
+            },
+            t1w: Weighting {
+                flip_angle: 20.0,
+                repetition_time: 0.018,
+            },
+            b1_correction: Some(fv),
+            ..Default::default()
+        };
+        let m = MtSatModel::new(cfg);
+        let sig = m.forward(&[1000.0, 0.9, 1.5], &Aux::new());
+        let mut aux = Aux::new();
+        aux.set("B1map", 1.2);
+        let corrected = m.fit(&sig, &aux)[0];
+        let uncorrected = m.fit(&sig, &Aux::new())[0]; // no B1 → no correction
+        assert!(
+            (corrected - uncorrected).abs() > 1e-9,
+            "correction had no effect"
+        );
+    }
+
+    #[test]
+    fn calibration_mode_agrees_with_plain_model_on_r1_but_not_helms_mtsat() {
+        // Calibration must produce the SAME B1-corrected R1 (→ T1) as the plain
+        // (no-fitvalues) qMRLab-faithful path, but RAW MTsat instead of the
+        // empirical-Helms-corrected value — the coordinates the correction
+        // surface (and the Tardif path) are built/queried in.
+        let plain = build(&mtsat_value(), &Protocol::default()).unwrap();
+        let calibration =
+            MtSatModel::new_calibration(serde_yaml::from_value(mtsat_value()).unwrap());
+        let sig = plain.forward(&[1000.0, 0.9, 1.5], &Aux::new());
+        let mut aux = Aux::new();
+        aux.set("B1map", 1.2);
+        let plain_out = plain.fit(&sig, &aux);
+        let calib_out = calibration.fit(&sig, &aux);
+        assert!(
+            (plain_out[0] - calib_out[0]).abs() > 1e-9,
+            "calibration MTSAT should differ from the Helms-corrected plain MTSAT: {} vs {}",
+            plain_out[0],
+            calib_out[0]
+        );
+        assert!(
+            (plain_out[1] - calib_out[1]).abs() < 1e-12,
+            "T1 (from B1-corrected R1) must agree between plain and calibration: {} vs {}",
+            plain_out[1],
+            calib_out[1]
+        );
+    }
+}

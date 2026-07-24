@@ -1,0 +1,15 @@
+model: mt_sat
+
+# BIDS input: each MTS role's FlipAngle and RepetitionTimeExcitation come from
+# its JSON sidecar (via the model's protocol_schema), so the per-role
+# acquisition is NOT declared here.
+
+# Options (always used; not BIDS metadata).
+# B1 correction is applied only when a B1 map (TB1map) is present in the dataset.
+b1_correction_factor: 0.4
+export_mtr: true
+
+# BIDS mask selection — disambiguates which mask to apply. If the dataset has
+# no matching mask, no masking is applied (as in this example).
+mask:
+  desc: brain

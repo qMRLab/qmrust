@@ -1,0 +1,17 @@
+model: mt_ratio
+
+# MTR = 100 * (MToff - MTon) / MToff. There is no acquisition protocol and no
+# fit options, so this config carries nothing but the model name.
+#
+# Two uses:
+#   - bidsify a qMRLab named set (one <role>.mat per role — MTon.mat, MToff.mat
+#     — plus Mask.mat) from --mat-dir; this config is the --config input:
+#
+#       qmrust bidsify --model mt_ratio --mat-dir <dir> \
+#         --config recipes/non-bids/mt_ratio_config.yaml --subject 01 --out ds
+#
+#   - fit a stacked 4D NIfTI whose two volumes are [mt-on, mt-off], with the
+#     mask via --mask:
+#
+#       qmrust fit --data mton_mtoff.nii.gz --mask Mask.mat \
+#         --config recipes/non-bids/mt_ratio_config.yaml --output-dir out_mtr

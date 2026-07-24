@@ -185,6 +185,11 @@ pub fn dump_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<String> {
         .with_context(|| format!("{}: invalid config", C::NAME))?;
     let body = serde_yaml::to_string(&cfg)?;
     let mut out = format!("model: {}\n", C::NAME);
+    // A fieldless config serializes to the flow mapping `{}`; appending that
+    // after `model: <name>` would be invalid YAML, so emit just the model line.
+    if body.trim() == "{}" {
+        return Ok(out);
+    }
     match C::SUBKEY {
         Some(key) => {
             out.push_str(&format!("{key}:\n"));
@@ -211,9 +216,11 @@ pub fn dump_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<String> {
 /// count or key mismatch here would otherwise surface only per-voxel, as a
 /// fit-time panic for every voxel whose identity has no matching sample.
 ///
-/// A `Named` measurement carries its own fixed roles, not an external protocol,
-/// so a non-empty `proto` supplied against one is rejected rather than silently
-/// ignored.
+/// A `Named` measurement's identities are its fixed roles, not the protocol; a
+/// non-empty `proto` against one is a per-role acquisition (e.g. MTS's
+/// FlipAngle/RepetitionTimeExcitation per role), which the shell has already
+/// ordered to the model's roles. The only check is one acquisition row per
+/// role — a count mismatch means the shell mis-assembled the per-role protocol.
 pub fn validate_against_protocol(kind: &MeasurementKind, proto: &Protocol) -> AnyResult<()> {
     if proto.volumes.is_empty() {
         return Ok(());
@@ -271,11 +278,16 @@ pub fn validate_against_protocol(kind: &MeasurementKind, proto: &Protocol) -> An
             }
             Ok(())
         }
-        MeasurementKind::Named { .. } => {
-            bail!(
-                "Named measurement does not accept an external protocol; supplied protocol has {} volumes",
-                proto.volumes.len()
-            );
+        MeasurementKind::Named { roles } => {
+            if proto.volumes.len() != roles.len() {
+                bail!(
+                    "Named measurement has {} roles ({:?}) but the per-role protocol supplies {} rows",
+                    roles.len(),
+                    roles,
+                    proto.volumes.len()
+                );
+            }
+            Ok(())
         }
     }
 }
@@ -606,11 +618,26 @@ mod tests {
     }
 
     #[test]
-    fn validate_against_protocol_rejects_named_with_nonempty_protocol() {
+    fn validate_against_protocol_named_accepts_one_row_per_role() {
+        // A Named measurement may carry a per-role acquisition protocol; the
+        // check is one row per role (the shell orders rows to the roles).
         let kind = MeasurementKind::Named {
-            roles: &["PDw", "MTw", "T1w"],
+            roles: &["MTw", "PDw", "T1w"],
         };
-        let proto = proto_with_tis(&[1.0]);
-        assert!(validate_against_protocol(&kind, &proto).is_err());
+        let ok = Protocol {
+            volumes: vec![
+                BTreeMap::from([("FlipAngle".to_string(), 6.0)]),
+                BTreeMap::from([("FlipAngle".to_string(), 6.0)]),
+                BTreeMap::from([("FlipAngle".to_string(), 20.0)]),
+            ],
+            global: BTreeMap::new(),
+        };
+        assert!(validate_against_protocol(&kind, &ok).is_ok());
+
+        // A count mismatch (2 rows for 3 roles) means the shell mis-assembled
+        // the per-role protocol — a hard error.
+        let bad = proto_with_tis(&[1.0, 2.0]);
+        let err = validate_against_protocol(&kind, &bad).unwrap_err();
+        assert!(err.to_string().contains("3 roles"), "{err}");
     }
 }

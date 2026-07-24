@@ -218,6 +218,28 @@ supplies no `Protocol` at all: it carries only voxel data and a mask (plus
 any aux as sibling files), and the model reads its acquisition parameters
 straight from `--config` — `build` is handed an empty `Protocol`.
 
+### `mt_sat`'s B1-correction path selection
+
+`mt_sat` declares a single optional aux input, `B1map` (`required_inputs()`),
+and picks its correction purely from what the recipe and the dataset supply —
+no BIDS- or non-BIDS-specific branching:
+
+1. `b1_correction: { fitvalues, b1_ref }` present in the recipe *and* a
+   `B1map` resolved → the TardifLab correction (`mtsat_b1::correct`), using
+   the recipe-supplied `FitValues`.
+2. No `b1_correction`, but a `B1map` resolved → the empirical Helms factor
+   (`b1_correction_factor`, default 0.4).
+3. No `B1map` resolved at all → no correction; MTsat is reported uncorrected.
+
+The recipe's `b1_correction` is written as a **path** (`{ fitvalues: <file>,
+b1_ref: <µT> }`) because the artifact is produced by a separate step
+(`qmrust mtsat-b1`) and core never touches the filesystem. Before `build`,
+`qmrust-cli` (`inject_mt_sat_b1_correction`) reads that file, parses it into a
+`FitValues`, and replaces the path form in the raw config tree with the
+inlined struct — so `MtSatConfig::b1_correction` deserializes a real
+`FitValues` directly, and the same injection runs identically ahead of both
+the BIDS and non-BIDS `fit` paths.
+
 ---
 
 ## 5. The two feeders
@@ -228,9 +250,15 @@ straight from `--config` — `build` is handed an empty `Protocol`.
   `load_collection` (reads the NIfTI volumes + calls `resolve_protocol`),
   `resolve_aux_and_mask` (§1) to fill any `required_inputs()` and the
   configured mask, then `fit_and_write` (`build_volume_ids` → `engine::run` →
-  NIfTI output). Only `Sequential` collections drive a fit — `Named`
-  collections are logged and skipped (`commands.rs::run_fit_bids`/
-  `load_collection`).
+  NIfTI output). Both collection shapes fit: a `Sequential` collection is
+  re-identified from its `Protocol` by value; a `Named` collection is stacked
+  in the model's declared role order (`load_collection` maps each role to the
+  named set's like-named volume, so the grouping's `named_set` role names must
+  match the model's `measurement()` roles). A Named model that needs per-role
+  acquisition (e.g. MTsat's FlipAngle/RepetitionTimeExcitation) declares it in
+  `protocol_schema()`; `load_collection` resolves it per volume and reorders
+  the rows to the model's role order, so `ingest_protocol` folds each role's
+  sidecar values by position.
 - **Browser/Tauri** — same `DatasetFs` seam, a different implementation
   backed by JS directory listings instead of `std::fs`; no change to
   `rust-bids`'s resolution or protocol logic.
@@ -258,8 +286,6 @@ than expecting raw equality. See the "Units — BIDS-native (SI)" principle in
 
 ## Deferred
 
-- Fitting `Named` collections, and mapping qMT/MP2RAGE-style protocols onto
-  them — only `Sequential` collections drive a real fit.
 - A real multi-field `Source::Derived` model (e.g. MP2RAGE) — the mechanism
   is proven only by IR's single-field `InversionTime` schema and a stub
   `Derived` test.

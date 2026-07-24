@@ -9,6 +9,7 @@ use std::path::PathBuf;
 mod bidsify;
 mod commands;
 mod io;
+mod mtsat_b1;
 mod progress;
 mod provenance;
 
@@ -122,7 +123,13 @@ enum Commands {
         #[arg(long)]
         nii_data: Option<PathBuf>,
 
-        /// Path to a NIfTI mask, paired with --nii-data
+        /// Directory of per-role NIfTIs (`<role>.nii.gz`, e.g. MTS's
+        /// MTw/PDw/T1w) for a Named model. Mutually exclusive with the other
+        /// source flags.
+        #[arg(long)]
+        nii_dir: Option<PathBuf>,
+
+        /// Path to a NIfTI mask, paired with --nii-data/--nii-dir
         #[arg(long)]
         nii_mask: Option<PathBuf>,
 
@@ -141,6 +148,22 @@ enum Commands {
         subject: String,
 
         /// BIDS dataset root to create/append to
+        #[arg(long)]
+        out: PathBuf,
+    },
+
+    /// Build an MTsat B1-correction artifact: simulate the sequence surface
+    /// and self-calibrate the M0b-vs-R1 line on a reference MTS dataset.
+    MtsatB1 {
+        /// Path to the sequence/grid YAML config (SeqParams + VfaParams + grid + b1_ref)
+        #[arg(long)]
+        seq: PathBuf,
+
+        /// BIDS dataset root holding the reference MTS collection (+ B1map)
+        #[arg(long)]
+        bids_dir: PathBuf,
+
+        /// Output path for the fitValues YAML artifact
         #[arg(long)]
         out: PathBuf,
     },
@@ -247,6 +270,7 @@ fn main() -> Result<()> {
             mat_data,
             mat_dir,
             nii_data,
+            nii_dir,
             nii_mask,
             mask,
             config,
@@ -257,11 +281,15 @@ fn main() -> Result<()> {
             mat_data,
             mat_dir,
             nii_data,
+            nii_dir,
             nii_mask,
             mask,
             config,
             subject,
             out,
         }),
+        Commands::MtsatB1 { seq, bids_dir, out } => {
+            mtsat_b1::run_mtsat_b1(mtsat_b1::MtSatB1Args { seq, bids_dir, out })
+        }
     }
 }

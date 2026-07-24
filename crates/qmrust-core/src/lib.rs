@@ -10,6 +10,7 @@ pub mod core;
 pub mod engine;
 pub mod fitting;
 pub mod models;
+pub mod mtsat_b1;
 pub mod quad;
 pub mod registry;
 pub mod sim;

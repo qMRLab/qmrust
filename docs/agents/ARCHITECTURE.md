@@ -48,7 +48,11 @@ crates/qmrust-core/src/
 ├── core/model.rs      the Model trait + value types (the contributor surface)
 ├── models/            per-model math + config + Model impl + builder
 │   ├── inversion_recovery/{config,fit,model}.rs
+│   ├── mt_sat/{config,fit,model}.rs
 │   └── qmt_spgr/{config,fit,adapter,lineshape,ode,pulse,sf}.rs
+├── mtsat_b1/          MTsat B1 correction: 5-state Bloch–McConnell FLASH
+│                      sequence sim, surface fit, M0b/R1 calibration,
+│                      correction factor, FitValues artifact
 ├── registry.rs        name / BIDS-suffix → builder  (the one dispatch point)
 ├── engine.rs          the parallel voxel-fitting engine (FitStrategy)
 ├── sim/               forward signal, noise, sim→fit round-trips, reports
@@ -72,7 +76,10 @@ The `qmrust` binary. Owns everything the core deliberately excludes:
 
 Subcommands: `fit`, `sim {signal|single-voxel|sensitivity|montecarlo}`, `dump-config`,
 `dump-sf`, `bidsify` (qMRLab `.mat` or NIfTI → byte-identical BIDS dataset; see
-[`DATA-PIPELINE.md`](DATA-PIPELINE.md)).
+[`DATA-PIPELINE.md`](DATA-PIPELINE.md)), `mtsat-b1` (simulate the FLASH
+sequence surface with the 5-state Bloch–McConnell engine and self-calibrate against a
+reference MTS dataset, producing the `FitValues` artifact consumed by `mt_sat`'s
+`b1_correction`).
 
 ### `qmrust-wasm` — the browser shell
 
@@ -255,8 +262,11 @@ collection's full identity + declared BIDS suffix — found in raw *or* any
 `mask:` key (a suffix + entity constraints, e.g. `desc: brain`); an under-specified
 `mask:` matching several files is a hard error rather than a silent pick, and no
 `mask:` block means no masking. See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for how
-collections are resolved, how sidecars are merged, and the scope of BIDS fitting
-(`Sequential` collections; `Named`/MTS-style collections are not BIDS-fittable).
+collections are resolved and how sidecars are merged. Both collection shapes
+are BIDS-fittable: a `Sequential` collection is re-identified from its resolved
+`Protocol` by value; a `Named`/MTS-style collection is stacked in the model's
+declared role order (its grouping `named_set` role names must match the model's
+`measurement()` roles).
 
 Output is written in the BIDS-derivatives convention too — `output_dir/qmrust/<subject>
 [/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz`, per each model's declared
