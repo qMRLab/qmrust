@@ -3,6 +3,7 @@
 //! voxelwise correction factor. Pure; no I/O.
 
 pub mod calibrate;
+pub mod correct;
 pub mod fitvalues;
 pub mod lineshape;
 pub mod mat3;
