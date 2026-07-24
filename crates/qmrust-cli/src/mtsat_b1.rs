@@ -176,4 +176,69 @@ b1_ref: 9.0
             qmrust_core::mtsat_b1::sim::FreqPattern::DualAlternate
         );
     }
+
+    /// External validation: `flash_signal` must reproduce TardifLab's
+    /// `BlochSimFlashSequence_v2` (single-echo FLASH) reference signals. Needs
+    /// the reference CSV (columns `M0b,b1,R1,satFlipAngle,sig_MTw,sig_PDw,
+    /// sig_T1w`) produced by `matlab/mtsat_b1_reference.m`, supplied via env var
+    /// — no MATLAB here, so `#[ignore]`d by default. Run with:
+    ///
+    /// ```text
+    /// QMRUST_MTSAT_B1_REF_CSV=<path>/mtsat_b1_reference.csv \
+    ///   cargo test -p qmrust-cli --release mtsat_b1_flash_matches_matlab_reference -- --ignored --nocapture
+    /// ```
+    ///
+    /// The sequence/VFA parameters come from the shipped recipe, so the CSV must
+    /// have been generated with the same SHARED-PARAMS values. Signals are
+    /// absolute transverse magnitudes (M0a = 1) on both sides — compared
+    /// directly. Targets: median relative error < 1%, max < 2% (the residual is
+    /// step-size, `expm`, and the `satFlipAngle`↔`b1rms` / lineshape-bandwidth
+    /// conventions, largest in the strong-saturation corner).
+    #[test]
+    #[ignore]
+    fn mtsat_b1_flash_matches_matlab_reference() {
+        use qmrust_core::mtsat_b1::sim::flash_signal;
+        let csv = std::env::var("QMRUST_MTSAT_B1_REF_CSV")
+            .expect("set QMRUST_MTSAT_B1_REF_CSV=<path>/mtsat_b1_reference.csv");
+        let text = std::fs::read_to_string(&csv).unwrap();
+        let cfg: SeqConfig =
+            serde_yaml::from_str(include_str!("../../../recipes/mtsat_b1_seq.yaml")).unwrap();
+        let seq = cfg.seq;
+        let mut pdw_seq = seq;
+        pdw_seq.tr = cfg.vfa.tr1;
+        let mut t1w_seq = seq;
+        t1w_seq.tr = cfg.vfa.tr2;
+
+        let mut errs = Vec::new();
+        for line in text.lines().skip(1) {
+            let f: Vec<f64> = line
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            if f.len() < 7 {
+                continue;
+            }
+            let (m0b, b1, r1) = (f[0], f[1], f[2]);
+            let (mtw_ref, pdw_ref, t1w_ref) = (f[4], f[5], f[6]);
+            let mtw = flash_signal(&seq, m0b, r1, seq.flip_angle, b1, true);
+            let pdw = flash_signal(&pdw_seq, m0b, r1, cfg.vfa.fa1_deg, 0.0, false);
+            let t1w = flash_signal(&t1w_seq, m0b, r1, cfg.vfa.fa2_deg, 0.0, false);
+            for (got, want) in [(mtw, mtw_ref), (pdw, pdw_ref), (t1w, t1w_ref)] {
+                errs.push(100.0 * (got - want).abs() / want.abs());
+            }
+        }
+        assert!(!errs.is_empty(), "no rows parsed from {csv}");
+        let max = errs.iter().cloned().fold(0.0_f64, f64::max);
+        errs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median = errs[errs.len() / 2];
+        eprintln!(
+            "mtsat_b1 vs MATLAB reference: {} comparisons, median {median:.3}%, max {max:.3}%",
+            errs.len()
+        );
+        assert!(
+            median < 1.0,
+            "median relative error {median:.3}% exceeds 1%"
+        );
+        assert!(max < 2.0, "max relative error {max:.3}% exceeds 2%");
+    }
 }
