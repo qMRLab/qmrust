@@ -2,6 +2,7 @@
 //! simulation, tricubic surface fit, single-MTw self-calibration, and the
 //! voxelwise correction factor. Pure; no I/O.
 
+pub mod calibrate;
 pub mod fitvalues;
 pub mod lineshape;
 pub mod mat3;
