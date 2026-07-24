@@ -7,16 +7,24 @@ project:
     - name: qMRLab
   github: https://github.com/qmrlab/qmrust
   license: MIT
+  bibliography:
+    - references.bib
   toc:
     - file: index.md
+    - file: getting-started.md
+    - title: Methods
+      children:
+        - pattern: 'models/**/*.md'
+    - file: playground.md
     - title: User Guide
       children:
-        - file: getting-started.md
-        - file: bids.md
-        - file: browser.md
+        - file: guide/bids.md
+        - file: guide/non-bids.md
+        - file: guide/simulation.md
+        - file: guide/browser.md
     - title: Developer Guide
       children:
-        - file: architecture.md
-        - file: models.md
+        - file: dev/architecture.md
+        - file: dev/adding-a-model.md
 site:
   template: book-theme

@@ -407,7 +407,7 @@ comes from.
 
 See [`ADDING-A-MODEL.md`](ADDING-A-MODEL.md) for a dense, checklist-first version of this
 section (exact signatures, invariants, and the verification commands), and
-[`docs/models.md`](../models.md) for the developer-facing guide.
+[`docs/dev/adding-a-model.md`](../dev/adding-a-model.md) for the developer-facing guide.
 
 ---
 

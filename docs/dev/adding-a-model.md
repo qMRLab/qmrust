@@ -49,7 +49,7 @@ declarative grouping config (`BidsConfig`). Everything downstream (grouping,
 auxiliary-input resolution, mask resolution) is just a query over that table
 via `table_filter(rows, &[(column, value)])` — nothing model- or
 dataset-specific. See
-[`docs/agents/DATA-PIPELINE.md`](agents/DATA-PIPELINE.md) for the full
+[`docs/agents/DATA-PIPELINE.md`](../agents/DATA-PIPELINE.md) for the full
 walkthrough.
 
 ## Declaring your model's BIDS contract
@@ -165,7 +165,7 @@ MTS:
   fixed, role-labeled volumes matched by entity constraints, with a
   `required` list of which roles must all be present.
 
-See [`docs/agents/DATA-PIPELINE.md`](agents/DATA-PIPELINE.md) for the full
+See [`docs/agents/DATA-PIPELINE.md`](../agents/DATA-PIPELINE.md) for the full
 `Vocabulary`/grouping mechanics.
 
 ## Auxiliary maps and the mask
@@ -210,6 +210,6 @@ explicitly.
 For the full trait definition, the supporting value types (`Aux`,
 `InputSpec`, `FitStrategy`, `Protocol`, `MeasurementKind`, `BidsSpec`), and a
 worked line-by-line example, see
-[`docs/agents/ARCHITECTURE.md`](agents/ARCHITECTURE.md#the-model-trait--the-single-contributor-surface).
+[`docs/agents/ARCHITECTURE.md`](../agents/ARCHITECTURE.md#the-model-trait--the-single-contributor-surface).
 For the BIDS layout/sidecar/protocol machinery in depth, see
-[`docs/agents/DATA-PIPELINE.md`](agents/DATA-PIPELINE.md).
+[`docs/agents/DATA-PIPELINE.md`](../agents/DATA-PIPELINE.md).

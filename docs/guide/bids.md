@@ -70,7 +70,7 @@ and the brain **mask** — is located from this table by the collection's identi
 plus a declared suffix (and, for the mask, entity constraints given in the
 `--config` `mask:` block, e.g. `mask: { desc: brain }`), found wherever it lives
 in the raw tree or any `derivatives/<pipeline>/`. See
-[Adding a model](models.md) for the full contributor-facing customization.
+[Adding a model](../dev/adding-a-model.md) for the full contributor-facing customization.
 
 ## The I/O seam
 
@@ -91,7 +91,7 @@ function, or a non-BIDS `Option(key)` read from `--config` instead. `protocol::
 resolve_protocol` evaluates that schema against each volume's `Sidecar` (and the
 `--config` options, for any `Option` fallback) to build a `qmrust_core::Protocol` — the
 same acquisition-metadata shape a model reads its protocol from — so grouped BIDS volumes
-feed directly into the existing fitting shell described in [Architecture](architecture.md).
+feed directly into the existing fitting shell described in [Architecture](../dev/architecture.md).
 A model with no declared `protocol_schema()` resolves to an empty `Protocol`, falling
 back to reading its own `--config` as before. `qmt_spgr` declares `Angle` and `Offset`
 (both `PerVolume`, read straight off each `QMTSPGR` volume's sidecar), mirroring IR's

@@ -2,7 +2,7 @@
 
 This page gets you from a fresh clone to a fitted map or a simulated signal.
 If you just want the shape of the project first, read [index](index.md) or
-[architecture](architecture.md) instead.
+[architecture](dev/architecture.md) instead.
 
 ## Build
 
@@ -70,7 +70,7 @@ declares (B1/B0/R1) from the dataset by suffix — so aux-requiring models like
 qMT fit through `--bids-dir` too. *Named* collections (fixed role slots, e.g.
 MTR's mt-on/mt-off) fit as well: their role-labeled volumes are mapped onto the
 model's declared roles, so the grouping's `named_set` role names must match the
-model's `measurement()` roles. See [BIDS](bids.md) for how `rust-bids` resolves
+model's `measurement()` roles. See [BIDS](guide/bids.md) for how `rust-bids` resolves
 the dataset layout.
 
 Notice `--config` above points at `recipes/bids/irt1_config.yaml`, not the
@@ -78,7 +78,7 @@ non-BIDS one — a BIDS fit's config doesn't carry the inversion times: the
 model declares which acquisition parameters it needs from the JSON sidecars,
 so `--config` is just algorithm options (fit bounds, etc.) plus the `mask:`
 block that disambiguates which mask to apply. See
-[From sidecar metadata to `Protocol`](bids.md#from-sidecar-metadata-to-protocol)
+[From sidecar metadata to `Protocol`](guide/bids.md#from-sidecar-metadata-to-protocol)
 for how that mapping works.
 
 Fitted maps are written under `--output-dir` as a **BIDS-derivatives** tree:
@@ -108,7 +108,7 @@ and the mask under `ds-qmrust/derivatives/preprocessed/sub-01/anat/
 sub-01_desc-brain_mask.nii.gz`.
 
 `bidsify` also supports `qmt_spgr`, whose BIDS identity is the custom,
-non-official suffix `QMTSPGR` (see [BIDS](bids.md)). Point it at a directory
+non-official suffix `QMTSPGR` (see [BIDS](guide/bids.md)). Point it at a directory
 of qMRLab's qMT `.mat` files instead of a single file, and append it as a
 second subject in the same dataset:
 
@@ -130,7 +130,7 @@ sidecar carrying the acquisition metadata the fit reads back by identity:
 
 and a root `.bidsignore` containing `*QMTSPGR*` (so general BIDS validators
 skip the non-official suffix; qmrust's own layout resolver discovers it
-regardless — see [BIDS](bids.md)). Any computed inputs present in `--mat-dir`
+regardless — see [BIDS](guide/bids.md)). Any computed inputs present in `--mat-dir`
 are written byte-identical to a `preprocessed` derivatives pipeline: B1/B0
 field maps under `ds-qmrust/derivatives/preprocessed/sub-02/fmap/`
 (`_TB1map`/`_B0map`), the R1 map and brain mask under that pipeline's `anat/`
@@ -196,5 +196,5 @@ qmrust's `T1map` by a factor of 1000. See the "Units — BIDS-native (SI)" princ
 
 ## Next steps
 
-- Adding your own model? See [Models](models.md).
-- Working from a BIDS dataset instead of individual files? See [BIDS](bids.md).
+- Adding your own model? See [Adding a model](dev/adding-a-model.md).
+- Working from a BIDS dataset instead of individual files? See [BIDS](guide/bids.md).
