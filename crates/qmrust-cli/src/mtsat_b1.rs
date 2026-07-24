@@ -145,7 +145,6 @@ seq:
   r: 26
   t2a: 0.07
   t1d: 0.006
-  lineshape: SuperLorentzian
   m0a: 1
   rb: 1
   t2b: 0.000012
