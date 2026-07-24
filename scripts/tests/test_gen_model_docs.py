@@ -56,6 +56,20 @@ class TestRendering(unittest.TestCase):
         rows = g.identity_labels(minimal_model())
         self.assertEqual(rows, ["InversionTime=0.35", "InversionTime=0.5"])
 
+    def test_derived_output_with_no_matching_param_is_not_fitted(self):
+        """An output absent from `params` is derived, not fitted: never 'free'."""
+        m = minimal_model(outputs=[
+            {"name": "T1", "bids_suffix": "T1map", "unit": "s",
+             "diagnostic": False},
+            {"name": "MTR", "bids_suffix": "MTRmap", "unit": "%",
+             "diagnostic": False},
+            {"name": "res", "bids_suffix": None, "unit": None,
+             "diagnostic": True},
+        ])
+        table = g.render_outputs_table(m)
+        self.assertIn("| `MTR` | `MTRmap` | % | — | — |", table)
+        self.assertNotIn("| `MTR` | `MTRmap` | % | — | free |", table)
+
     def test_named_roles_are_labeled_by_role(self):
         m = minimal_model(measurement={"kind": "named",
                                        "roles": ["MTon", "MToff"], "rows": []})

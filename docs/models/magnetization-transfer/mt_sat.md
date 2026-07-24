@@ -67,7 +67,7 @@ In a BIDS dataset these values are resolved for you:
 |---|---|---|---|---|
 | `MTSAT` | `MTsat` | % | unbounded … unbounded | free |
 | `T1` | `T1map` | s | unbounded … unbounded | free |
-| `MTR` | `MTRmap` | % | — | free |
+| `MTR` | `MTRmap` | % | — | — |
 
 ## Usage
 

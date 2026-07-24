@@ -219,7 +219,7 @@ def render_outputs_table(model):
         rng = (
             f"{bound(p['lower'])} … {bound(p['upper'])}" if p else "—"
         )
-        fitted = "fixed" if (p and p["fixed"]) else "free"
+        fitted = "—" if not p else ("fixed" if p["fixed"] else "free")
         body.append(
             f"| `{o['name']}` | `{o['bids_suffix']}` | {unit(o['unit'])} "
             f"| {rng} | {fitted} |"
@@ -412,8 +412,13 @@ def render_page(model, figures, repo_root):
     return "\n\n".join(b for b in blocks if b) + "\n"
 
 
-def render_gallery(models, prefix):
-    """Card grid, grouped by category. `prefix` prefixes each card's link."""
+def render_gallery(models, prefix, heading_level=3):
+    """Card grid, grouped by category. `prefix` prefixes each card's link.
+
+    `heading_level` must match the heading depth of the section the gallery
+    is spliced into, one level below it, so MyST sees an unbroken hierarchy.
+    """
+    marker = "#" * heading_level
     out = []
     seen = []
     for m in models:
@@ -421,7 +426,7 @@ def render_gallery(models, prefix):
             seen.append((m["category"], m["category_title"]))
     for slug, title in seen:
         group = [m for m in models if m["category"] == slug]
-        out += [f"### {title}", "", "::::{grid} 1 1 2 2"]
+        out += [f"{marker} {title}", "", "::::{grid} 1 1 2 2"]
         for m in group:
             out += [
                 ":::{card}",
@@ -448,7 +453,7 @@ def render_gallery_index(models):
         "Every model qmrust fits, grouped by method family. Each page documents "
         "what the model reads, what it produces, and how to run it with and "
         "without BIDS.",
-        render_gallery(models, prefix=""),
+        render_gallery(models, prefix="", heading_level=2),
     ]) + "\n"
 
 

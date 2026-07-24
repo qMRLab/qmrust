@@ -6,7 +6,7 @@
 
 Every model qmrust fits, grouped by method family. Each page documents what the model reads, what it produces, and how to run it with and without BIDS.
 
-### Magnetization transfer
+## Magnetization transfer
 
 ::::{grid} 1 1 2 2
 :::{card}
@@ -35,7 +35,7 @@ Two-pool quantitative magnetization transfer from a spoiled gradient-echo sequen
 :::
 ::::
 
-### Relaxometry
+## Relaxometry
 
 ::::{grid} 1 1 2 2
 :::{card}
