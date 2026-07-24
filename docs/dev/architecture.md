@@ -42,4 +42,4 @@ and wasm crates do) but is not part of the core itself. See [BIDS](../guide/bids
 This page is intentionally short. For the full design — the `Model` trait in
 detail, the registry, the engine's fit strategies, per-crate directory maps,
 and worked examples of adding a model — read
-[`docs/agents/ARCHITECTURE.md`](agents/ARCHITECTURE.md).
+[`docs/agents/ARCHITECTURE.md`](../agents/ARCHITECTURE.md).
