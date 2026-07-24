@@ -290,6 +290,11 @@ pub fn build_calibration(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<
     let mut cfg: MtSatConfig = serde_yaml::from_value(v.clone())?;
     cfg.validate_options()?;
     cfg.ingest_protocol(proto)?;
+    // Calibration produces MTsat + T1 only; MTR is never used here, so drop the
+    // MTR-export requirement that TR_MT == TR_PD. This matters for protocols
+    // whose PD-weighted VFA volume is acquired at a different TR than the
+    // MT-weighted volume (e.g. TardifLab's data: MTw TR 28 ms, PDw/T1w 30 ms).
+    cfg.export_mtr = false;
     cfg.validate_protocol()?;
     let model: Box<dyn Model> = Box::new(MtSatModel::new_calibration(cfg));
     crate::core::model::validate_against_protocol(&model.measurement(), proto)?;
