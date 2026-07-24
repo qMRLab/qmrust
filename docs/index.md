@@ -17,6 +17,55 @@ data in this page, in your browser.
 ## Methods
 
 <!-- BEGIN generated: model gallery -->
+### Magnetization transfer
+
+::::{grid} 1 1 2 2
+:::{card}
+:header: Magnetization transfer ratio
+:link: models/magnetization-transfer/mt_ratio.md
+
+Computes the magnetization transfer ratio from two images: one acquired with an off-resonance saturation pulse and one without.
+
+`MTR` · `MTRmap`
+:::
+:::{card}
+:header: MT saturation
+:link: models/magnetization-transfer/mt_sat.md
+
+Derives the MT saturation parameter from three spoiled gradient-echo volumes — MT-weighted, PD-weighted and T1-weighted.
+
+`MTS` · `MTsat`, `T1map`, `MTRmap`
+:::
+:::{card}
+:header: qMT-SPGR
+:link: models/magnetization-transfer/qmt_spgr.md
+
+Two-pool quantitative magnetization transfer from a spoiled gradient-echo sequence with off-resonance saturation sampled across a grid of saturation flip angles and frequency offsets.
+
+`QMTSPGR` · `Fmap`, `kRmap`, `R1Fmap`, `R1Rmap`, `T2Fmap`, `T2Rmap`
+:::
+::::
+
+### Relaxometry
+
+::::{grid} 1 1 2 2
+:::{card}
+:header: Mono-exponential T2
+:link: models/relaxometry/mono_t2.md
+
+Fits the transverse relaxation time T2 from a multi-echo spin-echo series as a mono-exponential decay with a free amplitude.
+
+`MESE` · `T2map`, `M0map`
+:::
+:::{card}
+:header: Inversion recovery T1
+:link: models/relaxometry/inversion_recovery.md
+
+Fits the longitudinal relaxation time T1 from a series of inversion-recovery images acquired at different inversion times.
+
+`IRT1` · `T1map`
+:::
+::::
 <!-- END generated: model gallery -->
 
 ## Guides

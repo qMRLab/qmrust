@@ -36,3 +36,9 @@ docs/superpowers/
 
 # MyST docs build output
 docs/_build/
+
+# Documentation generator input (regenerate with `qmrust catalog`)
+/catalog.json
+
+# Python bytecode cache
+__pycache__/
