@@ -175,12 +175,20 @@ pub fn flash_signal_with_step(
         // Water excitation and readout.
         m = matvec5(&rexc, &m);
         let sig = m[0].hypot(m[1]);
-        // Relax a full echoSpacing = TR after excitation, then perfect
-        // spoiling. The saturation train and MT spoiler gradient are additional
-        // wall time before excitation; TR is not compressed and WExcDur is
-        // never subtracted (it only drives bound-pool saturation inside the
-        // excitation matrix).
-        m = propagate(&m, &a_relax, p.tr);
+        // Reference (BlochSimFlashSequence_v2, single-echo FLASH) relaxes
+        // echoSpacing+TD after excitation. MTC keeps the saturation train
+        // inside TR (per-loop wall time = TR + pulse_gap_dur); the no-MTC/VFA
+        // branch relaxes a full TR (TD=0, echoSpacing:=TR). w_exc_dur is never
+        // subtracted — it only drives bound-pool saturation inside the
+        // excitation matrix. Relaxation decouples transverse from longitudinal,
+        // so the reference's two relax-then-zero intervals collapse to one.
+        let post_exc_relax = if mtc {
+            p.tr - (p.num_sat_pulse as f64) * (p.pulse_dur + p.pulse_gap_dur) + p.pulse_gap_dur
+                - p.mt_grad_time
+        } else {
+            p.tr
+        };
+        m = propagate(&m, &a_relax, post_exc_relax);
         m[0] = 0.0;
         m[1] = 0.0;
 
