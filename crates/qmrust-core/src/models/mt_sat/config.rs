@@ -6,6 +6,7 @@
 //! them from each role's sidecar via `ingest_protocol`. Plus two options: the
 //! empirical B1 correction factor and whether to export the MTR map.
 
+use crate::mtsat_b1::fitvalues::FitValues;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +43,14 @@ pub struct MtSatConfig {
     /// ratio of the two same-TR volumes). Default true.
     #[serde(default = "default_export_mtr")]
     pub export_mtr: bool,
+    /// Parsed TardifLab B1-correction artifact. `None` → fall back to the
+    /// Helms factor (if a B1 map is present) or no correction; `Some` (and a
+    /// B1 map present) → the Tardif correction factor instead of Helms.
+    /// Skipped by serde: the recipe references the artifact by path, and the
+    /// CLI resolves and injects the parsed value — the core never reads
+    /// files.
+    #[serde(skip)]
+    pub b1_correction: Option<FitValues>,
 }
 
 impl Default for MtSatConfig {
@@ -52,6 +61,7 @@ impl Default for MtSatConfig {
             t1w: Weighting::default(),
             b1_correction_factor: default_b1_correction_factor(),
             export_mtr: default_export_mtr(),
+            b1_correction: None,
         }
     }
 }

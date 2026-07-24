@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 pub struct MtSatModel {
     acq: Acq,
     b1_correction_factor: f64,
+    b1_correction: Option<crate::mtsat_b1::fitvalues::FitValues>,
     export_mtr: bool,
     /// Measurement role names carrying the physical PD- and T1-weighted signals
     /// — normally `"PDw"`/`"T1w"`, but swapped when the flip-1/flip-2 labels do
@@ -73,9 +74,11 @@ impl MtSatModel {
         if cfg.export_mtr {
             output_names.push("MTR".to_string());
         }
+        let b1_correction = cfg.b1_correction.clone();
         Self {
             acq,
             b1_correction_factor: cfg.b1_correction_factor,
+            b1_correction,
             export_mtr: cfg.export_mtr,
             pd_role,
             t1_role,
@@ -132,8 +135,19 @@ impl Model for MtSatModel {
         let mtw = role("MTw");
         let pd = role(self.pd_role);
         let t1 = role(self.t1_role);
-        let b1 = aux.get("B1map");
-        let (mtsat, r1) = fit::mtsat(&self.acq, mtw, pd, t1, b1, self.b1_correction_factor);
+        let helms_b1 = if self.b1_correction.is_some() {
+            None
+        } else {
+            aux.get("B1map")
+        };
+        let (mtsat0, r1) = fit::mtsat(&self.acq, mtw, pd, t1, helms_b1, self.b1_correction_factor);
+        let mtsat = match (&self.b1_correction, aux.get("B1map")) {
+            (Some(fv), Some(b1)) => crate::mtsat_b1::correct::correct(
+                mtsat0,
+                crate::mtsat_b1::correct::correction_factor(fv, b1, r1),
+            ),
+            _ => mtsat0,
+        };
         let mut out = vec![mtsat, 1.0 / r1];
         if self.export_mtr {
             out.push(fit::mtr(pd, mtw));
@@ -245,6 +259,7 @@ pub fn dump(v: &serde_yaml::Value) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::mt_sat::config::Weighting;
 
     fn mtsat_value() -> serde_yaml::Value {
         serde_yaml::from_str(
@@ -373,6 +388,58 @@ mod tests {
             m.fit(&m.forward(&[1000.0, 0.9, 1.5], &Aux::new()), &Aux::new())
                 .len(),
             2
+        );
+    }
+
+    #[test]
+    fn applies_tardif_correction_when_fitvalues_present() {
+        // Build an mt_sat model with an inlined FitValues whose surface makes
+        // CF nonzero, and a B1 map != 1 in aux; MTSAT must change vs no B1 map.
+        use crate::mtsat_b1::fitvalues::{FitValues, M0bVsR1};
+        use crate::mtsat_b1::surface::SsSurface;
+        let mut coeffs = [0.0; 64];
+        coeffs[0] = 1.0;
+        coeffs[4] = 0.3; // b1 dependence
+        let fv = FitValues {
+            ss_surface: SsSurface { coeffs },
+            m0b_vs_r1: M0bVsR1 {
+                slope: 0.05,
+                intercept: 0.02,
+            },
+            seq: crate::mtsat_b1::sim::tests_sample_params(),
+            vfa: crate::mtsat_b1::sim::VfaParams {
+                fa1_deg: 5.0,
+                fa2_deg: 20.0,
+                tr1: 30e-3,
+                tr2: 30e-3,
+            },
+            b1_ref: 6.8,
+        };
+        let cfg = MtSatConfig {
+            mtw: Weighting {
+                flip_angle: 6.0,
+                repetition_time: 0.028,
+            },
+            pdw: Weighting {
+                flip_angle: 6.0,
+                repetition_time: 0.028,
+            },
+            t1w: Weighting {
+                flip_angle: 20.0,
+                repetition_time: 0.018,
+            },
+            b1_correction: Some(fv),
+            ..Default::default()
+        };
+        let m = MtSatModel::new(cfg);
+        let sig = m.forward(&[1000.0, 0.9, 1.5], &Aux::new());
+        let mut aux = Aux::new();
+        aux.set("B1map", 1.2);
+        let corrected = m.fit(&sig, &aux)[0];
+        let uncorrected = m.fit(&sig, &Aux::new())[0]; // no B1 → no correction
+        assert!(
+            (corrected - uncorrected).abs() > 1e-9,
+            "correction had no effect"
         );
     }
 }
