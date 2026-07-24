@@ -5,7 +5,6 @@
 pub mod calibrate;
 pub mod correct;
 pub mod fitvalues;
-pub mod lineshape;
 pub mod mat3;
 pub mod pulse;
 pub mod rate;

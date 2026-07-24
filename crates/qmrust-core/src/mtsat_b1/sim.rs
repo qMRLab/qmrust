@@ -4,7 +4,6 @@
 //! pulse train, inter-pulse gaps, the sinc water excitation, and TR-fill, until
 //! the post-saturation Mza settles (<0.05% change). Returns `Mza·sin(flip)`.
 
-use crate::mtsat_b1::lineshape::Lineshape;
 use crate::mtsat_b1::mat3::{expm3, ident3, matvec3, solve3, sub3, Mat3, Vec3};
 use crate::mtsat_b1::pulse::{sat_pulse, sinc_exc_pulse, SatShape};
 use crate::mtsat_b1::rate::{rate_matrix, PoolParams};
@@ -31,7 +30,6 @@ pub struct SeqParams {
     pub r: f64,
     pub t2a: f64,
     pub t1d: f64,
-    pub lineshape: Lineshape,
     pub m0a: f64,
     pub rb: f64,
     pub t2b: f64,
@@ -72,7 +70,6 @@ pub fn mamt_signal_with_step(
         t2a: p.t2a,
         t2b: p.t2b,
         t1d: p.t1d,
-        lineshape: p.lineshape,
     };
     let b: Vec3 = [ra * p.m0a, p.rb * m0b, 0.0];
     let ident = ident3();
@@ -197,7 +194,6 @@ pub fn mtsat_sim(p: &SeqParams, vfa: &VfaParams, m0b: f64, raobs: f64, b1_sat: f
 
 #[cfg(test)]
 pub fn tests_sample_params() -> SeqParams {
-    use crate::mtsat_b1::lineshape::Lineshape;
     use crate::mtsat_b1::pulse::SatShape;
     SeqParams {
         num_sat_pulse: 2,
@@ -213,7 +209,6 @@ pub fn tests_sample_params() -> SeqParams {
         r: 26.0,
         t2a: 70e-3,
         t1d: 6e-3,
-        lineshape: Lineshape::SuperLorentzian,
         m0a: 1.0,
         rb: 1.0,
         t2b: 12e-6,

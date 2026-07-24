@@ -1978,7 +1978,6 @@ mod tests {
                 r: 26.0,
                 t2a: 70e-3,
                 t1d: 6e-3,
-                lineshape: qmrust_core::mtsat_b1::lineshape::Lineshape::SuperLorentzian,
                 m0a: 1.0,
                 rb: 1.0,
                 t2b: 12e-6,

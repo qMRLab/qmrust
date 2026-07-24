@@ -1,7 +1,8 @@
 //! Longitudinal 3-pool (free/bound/dipolar) rate matrix, ported from
-//! <ref>/functions/calc_RF_matrix_wDipolar2.m (Lee 2011 dipolar form).
+//! <ref>/functions/calc_RF_matrix_wDipolar2.m (Lee 2011 dipolar form). Bound-pool
+//! absorption uses the in-tree 2π super-Lorentzian lineshape (`computeG`).
 
-use crate::mtsat_b1::lineshape::{absorption, Lineshape};
+use crate::models::qmt_spgr::lineshape::super_lorentzian_g;
 use crate::mtsat_b1::mat3::Mat3;
 use std::f64::consts::PI;
 
@@ -14,23 +15,16 @@ pub struct PoolParams {
     pub t2a: f64,
     pub t2b: f64,
     pub t1d: f64,
-    pub lineshape: Lineshape,
 }
 
 /// Rate matrix `A` for `dM/dt = A·M + B`, state `[Mza, Mzb, Bpr]`. `w1` in
-/// rad/s, `delta` in Hz. `dual_continuous` uncouples the dipolar pool.
+/// rad/s, `delta` in Hz. `dual_continuous` uncouples the dipolar pool. The
+/// bound-pool absorption uses the in-tree 2π super-Lorentzian lineshape
+/// (`super_lorentzian_g`): `Rrfb = π·w1²·G(δ, T2b)`.
 pub fn rate_matrix(p: &PoolParams, w1: f64, delta: f64, dual_continuous: bool) -> Mat3 {
     let rrfa = (w1 * w1 * p.t2a) / (1.0 + (2.0 * PI * delta * p.t2a).powi(2));
-    let (rrfb, wloc) = match p.lineshape {
-        Lineshape::SuperLorentzian => (
-            PI * w1 * w1 * absorption(Lineshape::SuperLorentzian, p.t2b, delta),
-            (1.0 / (15.0 * p.t2b * p.t2b)).sqrt(),
-        ),
-        Lineshape::Gaussian => (
-            w1 * w1 * absorption(Lineshape::Gaussian, p.t2b, delta),
-            (1.0 / (3.0 * p.t2b * p.t2b)).sqrt(),
-        ),
-    };
+    let rrfb = PI * w1 * w1 * super_lorentzian_g(delta.abs(), p.t2b);
+    let wloc = (1.0 / (15.0 * p.t2b * p.t2b)).sqrt();
 
     if dual_continuous {
         [
@@ -59,7 +53,6 @@ pub fn rate_matrix(p: &PoolParams, w1: f64, delta: f64, dual_continuous: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mtsat_b1::lineshape::Lineshape;
 
     fn pp() -> PoolParams {
         PoolParams {
@@ -71,7 +64,6 @@ mod tests {
             t2a: 70e-3,
             t2b: 12e-6,
             t1d: 6e-3,
-            lineshape: Lineshape::SuperLorentzian,
         }
     }
 
