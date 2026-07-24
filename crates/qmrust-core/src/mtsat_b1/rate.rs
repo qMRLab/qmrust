@@ -48,6 +48,50 @@ pub fn rate_matrix(p: &PoolParams, w1: f64, delta: f64) -> Mat5 {
     ]
 }
 
+/// Bound-pool RF saturation rates `(Rrfb_exc, Rrfd_exc)` from an excitation
+/// pulse of nominal flip angle `flip_deg` and duration `w_exc_dur` (s),
+/// on-resonance (`delta = 0`). `Rrfd_exc` is always zero: the excitation
+/// pulse is on-resonance and does not drive dipolar order.
+pub fn bound_exc_sat(flip_deg: f64, w_exc_dur: f64, t2b: f64) -> (f64, f64) {
+    let gamma = 42.577478518;
+    let b1 = flip_deg / (360.0 * gamma * w_exc_dur);
+    let w1 = 2.0 * PI * gamma * b1;
+    let rrfb = PI * w1 * w1 * super_lorentzian_g(0.0, t2b);
+    (rrfb, 0.0)
+}
+
+/// Excitation propagator for state `[Wx, Wy, Wz, Bz, D]`: a rotation by `fa`
+/// (rad) about the axis at phase `ph` (rad) in the transverse plane, applied
+/// to the free-water block `[Wx, Wy, Wz]`, combined with bound-pool and
+/// dipolar-order saturation decay `diag(Erfb, Erfd)` on `[Bz, D]` over the
+/// pulse duration `w_exc_dur` (s), given the saturation rates
+/// `(rrfb_exc, rrfd_exc)` from `bound_exc_sat`.
+pub fn excitation_matrix(fa: f64, ph: f64, rrfb_exc: f64, rrfd_exc: f64, w_exc_dur: f64) -> Mat5 {
+    let (c, s) = (fa.cos(), fa.sin());
+    let (cp, sp) = (ph.cos(), ph.sin());
+    let erfb = (-rrfb_exc * w_exc_dur).exp();
+    let erfd = (-rrfd_exc * w_exc_dur).exp();
+    [
+        [
+            c + (1.0 - c) * cp * cp,
+            (1.0 - c) * sp * cp,
+            -s * sp,
+            0.0,
+            0.0,
+        ],
+        [
+            (1.0 - c) * sp * cp,
+            c + (1.0 - c) * sp * sp,
+            s * cp,
+            0.0,
+            0.0,
+        ],
+        [s * sp, -s * cp, c, 0.0, 0.0],
+        [0.0, 0.0, 0.0, erfb, 0.0],
+        [0.0, 0.0, 0.0, 0.0, erfd],
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +131,43 @@ mod tests {
         assert!((a[1][2] - -5000.0).abs() < 1e-9);
         assert!((a[0][1] - -tpd).abs() < 1e-6);
         assert!((a[1][0] - tpd).abs() < 1e-6);
+    }
+
+    #[test]
+    fn bound_exc_sat_matches_reference_formula() {
+        let (flip_deg, w_exc_dur, t2b) = (90.0, 100e-6, 12e-6);
+        let gamma = 42.577478518;
+        let b1 = flip_deg / (360.0 * gamma * w_exc_dur);
+        let w1 = 2.0 * PI * gamma * b1;
+        let expected_rrfb = PI * w1 * w1 * super_lorentzian_g(0.0, t2b);
+
+        let (rrfb, rrfd) = bound_exc_sat(flip_deg, w_exc_dur, t2b);
+        assert!((rrfb - expected_rrfb).abs() < 1e-9 * expected_rrfb.abs().max(1.0));
+        assert_eq!(rrfd, 0.0);
+    }
+
+    #[test]
+    fn excitation_matrix_identity_at_zero_flip() {
+        let (rrfb_exc, rrfd_exc) = (500.0, 0.0);
+        let w_exc_dur = 100e-6;
+        let m = excitation_matrix(0.0, 0.0, rrfb_exc, rrfd_exc, w_exc_dur);
+        for (i, row) in m.iter().enumerate().take(3) {
+            for (j, &v) in row.iter().enumerate().take(3) {
+                let expected = if i == j { 1.0 } else { 0.0 };
+                assert!((v - expected).abs() < 1e-12);
+            }
+        }
+        let erfb = (-rrfb_exc * w_exc_dur).exp();
+        let erfd = (-rrfd_exc * w_exc_dur).exp();
+        assert!((m[3][3] - erfb).abs() < 1e-12);
+        assert!((m[4][4] - erfd).abs() < 1e-12);
+    }
+
+    #[test]
+    fn excitation_matrix_half_pi_rotates_wz_to_wy() {
+        let m = excitation_matrix(PI / 2.0, 0.0, 0.0, 0.0, 100e-6);
+        assert!(m[2][2].abs() < 1e-12);
+        assert!(m[0][2].abs() < 1e-12);
+        assert!((m[1][2] - 1.0).abs() < 1e-12);
     }
 }
