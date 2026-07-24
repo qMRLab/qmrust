@@ -4,4 +4,5 @@
 
 pub mod lineshape;
 pub mod mat3;
+pub mod pulse;
 pub mod rate;
