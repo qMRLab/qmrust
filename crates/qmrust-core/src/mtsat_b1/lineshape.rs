@@ -7,7 +7,7 @@
 
 use std::f64::consts::PI;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Lineshape {
     SuperLorentzian,
     Gaussian,

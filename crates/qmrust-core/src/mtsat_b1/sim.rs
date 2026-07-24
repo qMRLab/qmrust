@@ -9,14 +9,14 @@ use crate::mtsat_b1::mat3::{expm3, ident3, matvec3, solve3, sub3, Mat3, Vec3};
 use crate::mtsat_b1::pulse::{sat_pulse, sinc_exc_pulse, SatShape};
 use crate::mtsat_b1::rate::{rate_matrix, PoolParams};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FreqPattern {
     Single,
     DualAlternate,
     DualContinuous,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct SeqParams {
     pub num_sat_pulse: usize,
     pub pulse_dur: f64,
@@ -146,7 +146,7 @@ pub fn mamt_signal_with_step(
     m[0] * (p.flip_angle * std::f64::consts::PI / 180.0).sin()
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct VfaParams {
     pub fa1_deg: f64,
     pub fa2_deg: f64,
@@ -191,31 +191,36 @@ pub fn mtsat_sim(p: &SeqParams, vfa: &VfaParams, m0b: f64, raobs: f64, b1_sat: f
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub fn tests_sample_params() -> SeqParams {
     use crate::mtsat_b1::lineshape::Lineshape;
     use crate::mtsat_b1::pulse::SatShape;
+    SeqParams {
+        num_sat_pulse: 2,
+        pulse_dur: 0.768e-3,
+        pulse_gap_dur: 0.6e-3,
+        tr: 28e-3,
+        w_exc_dur: 3e-3,
+        num_excitation: 1,
+        freq_pattern: FreqPattern::DualAlternate,
+        delta: 7000.0,
+        flip_angle: 9.0,
+        sat_shape: SatShape::Hanning,
+        r: 26.0,
+        t2a: 70e-3,
+        t1d: 6e-3,
+        lineshape: Lineshape::SuperLorentzian,
+        m0a: 1.0,
+        rb: 1.0,
+        t2b: 12e-6,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     fn sample_params() -> SeqParams {
-        SeqParams {
-            num_sat_pulse: 2,
-            pulse_dur: 0.768e-3,
-            pulse_gap_dur: 0.6e-3,
-            tr: 28e-3,
-            w_exc_dur: 3e-3,
-            num_excitation: 1,
-            freq_pattern: FreqPattern::DualAlternate,
-            delta: 7000.0,
-            flip_angle: 9.0,
-            sat_shape: SatShape::Hanning,
-            r: 26.0,
-            t2a: 70e-3,
-            t1d: 6e-3,
-            lineshape: Lineshape::SuperLorentzian,
-            m0a: 1.0,
-            rb: 1.0,
-            t2b: 12e-6,
-        }
+        tests_sample_params()
     }
 
     #[test]
