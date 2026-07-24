@@ -48,7 +48,10 @@ crates/qmrust-core/src/
 ├── core/model.rs      the Model trait + value types (the contributor surface)
 ├── models/            per-model math + config + Model impl + builder
 │   ├── inversion_recovery/{config,fit,model}.rs
+│   ├── mt_sat/{config,fit,model}.rs
 │   └── qmt_spgr/{config,fit,adapter,lineshape,ode,pulse,sf}.rs
+├── mtsat_b1/          MTsat B1 correction: sequence sim, surface fit,
+│                      M0b/R1 calibration, correction factor, FitValues artifact
 ├── registry.rs        name / BIDS-suffix → builder  (the one dispatch point)
 ├── engine.rs          the parallel voxel-fitting engine (FitStrategy)
 ├── sim/               forward signal, noise, sim→fit round-trips, reports
@@ -72,7 +75,9 @@ The `qmrust` binary. Owns everything the core deliberately excludes:
 
 Subcommands: `fit`, `sim {signal|single-voxel|sensitivity|montecarlo}`, `dump-config`,
 `dump-sf`, `bidsify` (qMRLab `.mat` or NIfTI → byte-identical BIDS dataset; see
-[`DATA-PIPELINE.md`](DATA-PIPELINE.md)).
+[`DATA-PIPELINE.md`](DATA-PIPELINE.md)), `mtsat-b1` (simulate the MT-SPGR sequence
+surface and self-calibrate against a reference MTS dataset, producing the `FitValues`
+artifact consumed by `mt_sat`'s `b1_correction`).
 
 ### `qmrust-wasm` — the browser shell
 

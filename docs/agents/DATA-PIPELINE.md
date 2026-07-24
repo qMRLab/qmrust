@@ -218,6 +218,28 @@ supplies no `Protocol` at all: it carries only voxel data and a mask (plus
 any aux as sibling files), and the model reads its acquisition parameters
 straight from `--config` — `build` is handed an empty `Protocol`.
 
+### `mt_sat`'s B1-correction path selection
+
+`mt_sat` declares a single optional aux input, `B1map` (`required_inputs()`),
+and picks its correction purely from what the recipe and the dataset supply —
+no BIDS- or non-BIDS-specific branching:
+
+1. `b1_correction: { fitvalues, b1_ref }` present in the recipe *and* a
+   `B1map` resolved → the TardifLab correction (`mtsat_b1::correct`), using
+   the recipe-supplied `FitValues`.
+2. No `b1_correction`, but a `B1map` resolved → the empirical Helms factor
+   (`b1_correction_factor`, default 0.4).
+3. No `B1map` resolved at all → no correction; MTsat is reported uncorrected.
+
+The recipe's `b1_correction` is written as a **path** (`{ fitvalues: <file>,
+b1_ref: <µT> }`) because the artifact is produced by a separate step
+(`qmrust mtsat-b1`) and core never touches the filesystem. Before `build`,
+`qmrust-cli` (`inject_mt_sat_b1_correction`) reads that file, parses it into a
+`FitValues`, and replaces the path form in the raw config tree with the
+inlined struct — so `MtSatConfig::b1_correction` deserializes a real
+`FitValues` directly, and the same injection runs identically ahead of both
+the BIDS and non-BIDS `fit` paths.
+
 ---
 
 ## 5. The two feeders

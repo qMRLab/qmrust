@@ -1,0 +1,34 @@
+# Sequence/simulation config for `qmrust mtsat-b1 --seq <this file>`.
+#
+# Builds a TardifLab MTsat B1-correction artifact (FitValues): simulates the
+# steady-state MT-SPGR surface over a (M0b, B1, Raobs) grid, then
+# self-calibrates the M0b-vs-R1 line against a reference MTS BIDS dataset.
+#
+# `seq`/`vfa` are the sample MT-SPGR protocol (values from the reference
+# simSeq_M0b_R1obs.m); `grid` spans the simulation lattice; `b1_ref` (µT) is
+# the nominal saturation-pulse B1 the surface and calibration are built at.
+seq:
+  num_sat_pulse: 2
+  pulse_dur: 0.000768
+  pulse_gap_dur: 0.0006
+  tr: 0.028
+  w_exc_dur: 0.003
+  num_excitation: 1
+  freq_pattern: DualAlternate
+  delta: 7000
+  flip_angle: 9
+  sat_shape: Hanning
+  r: 26
+  t2a: 0.07
+  t1d: 0.006
+  lineshape: SuperLorentzian
+  m0a: 1
+  rb: 1
+  t2b: 0.000012
+vfa: { fa1_deg: 5, fa2_deg: 20, tr1: 0.03, tr2: 0.03 }
+grid:
+  m0b: { start: 0.0, step: 0.025, stop: 0.20 }
+  t1obs: [0.6, 0.8, 1.0, 1.4, 2.0, 3.0, 4.5]
+  b1_steps: 15
+  b1_max_factor: 1.3
+b1_ref: 9.0

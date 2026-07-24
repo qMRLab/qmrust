@@ -76,6 +76,28 @@ fn load_config_raw(
     qmrust_core::config::parse_config(&contents)
 }
 
+/// If a `mt_sat` recipe carries `b1_correction: { fitvalues: <path>, b1_ref }`,
+/// load and parse the artifact and inline it so the model config deserializes
+/// a real `FitValues` instead of the path form. Keeps file I/O in the shell;
+/// the core only ever deserializes data it is handed. A recipe without
+/// `b1_correction` (or a non-`mt_sat` model) is left untouched.
+fn inject_mt_sat_b1_correction(raw: &mut serde_yaml::Value) -> Result<()> {
+    let Some(b1c) = raw.get("b1_correction").cloned() else {
+        return Ok(());
+    };
+    let path = b1c
+        .get("fitvalues")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("b1_correction.fitvalues must be a path"))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading fitvalues {path}"))?;
+    let fv: qmrust_core::mtsat_b1::fitvalues::FitValues = serde_yaml::from_str(&text)?;
+    if let serde_yaml::Value::Mapping(m) = raw {
+        m.insert("b1_correction".into(), serde_yaml::to_value(fv)?);
+    }
+    Ok(())
+}
+
 /// Print the fully-resolved effective config (defaults applied + validated) as
 /// YAML. For qmt_spgr this prints the complete protocol/timing/pulse/fitting
 /// block that a short config expands to.
@@ -403,7 +425,10 @@ pub fn run_fit(
         (data_path, mat_path, r1map, b1map, b0map, mask_path)
     };
 
-    let (cfg, raw) = load_config_raw(&config_path)?;
+    let (cfg, mut raw) = load_config_raw(&config_path)?;
+    if cfg.model == "mt_sat" {
+        inject_mt_sat_b1_correction(&mut raw)?;
+    }
     let input = load_input(data_path.as_ref(), mat_path.as_ref(), mask_path.as_ref())?;
 
     // The mat/NIfTI path carries no BIDS sidecar metadata — the model reads
@@ -658,7 +683,10 @@ pub fn run_fit_bids(
             .ok();
     }
 
-    let (cfg, raw) = load_config_raw(&config_path)?;
+    let (cfg, mut raw) = load_config_raw(&config_path)?;
+    if cfg.model == "mt_sat" {
+        inject_mt_sat_b1_correction(&mut raw)?;
+    }
     let entry = qmrust_core::registry::by_name(&cfg.model).ok_or_else(|| {
         anyhow::anyhow!(
             "Unknown model: '{}'. Available: {}",
@@ -1903,5 +1931,107 @@ mod tests {
         )
         .unwrap();
         run_dump_config(config_path).expect("dump-config does not enforce protocol completeness");
+    }
+
+    /// A minimal, valid `FitValues` YAML — enough for `inject_mt_sat_b1_correction`
+    /// to parse and inline, and for the resulting model to apply a nonzero
+    /// correction.
+    fn sample_fitvalues_yaml() -> String {
+        use qmrust_core::mtsat_b1::fitvalues::{FitValues, M0bVsR1};
+        use qmrust_core::mtsat_b1::sim::{FreqPattern, SeqParams, VfaParams};
+        use qmrust_core::mtsat_b1::surface::SsSurface;
+
+        let mut coeffs = [0.0; 64];
+        coeffs[0] = 1.0;
+        coeffs[4] = 0.3; // gives the surface a B1 dependence
+        let fv = FitValues {
+            ss_surface: SsSurface { coeffs },
+            m0b_vs_r1: M0bVsR1 {
+                slope: 0.05,
+                intercept: 0.02,
+            },
+            seq: SeqParams {
+                num_sat_pulse: 2,
+                pulse_dur: 0.768e-3,
+                pulse_gap_dur: 0.6e-3,
+                tr: 28e-3,
+                w_exc_dur: 3e-3,
+                num_excitation: 1,
+                freq_pattern: FreqPattern::DualAlternate,
+                delta: 7000.0,
+                flip_angle: 9.0,
+                sat_shape: qmrust_core::mtsat_b1::pulse::SatShape::Hanning,
+                r: 26.0,
+                t2a: 70e-3,
+                t1d: 6e-3,
+                lineshape: qmrust_core::mtsat_b1::lineshape::Lineshape::SuperLorentzian,
+                m0a: 1.0,
+                rb: 1.0,
+                t2b: 12e-6,
+            },
+            vfa: VfaParams {
+                fa1_deg: 5.0,
+                fa2_deg: 20.0,
+                tr1: 30e-3,
+                tr2: 30e-3,
+            },
+            b1_ref: 6.8,
+        };
+        serde_yaml::to_string(&fv).unwrap()
+    }
+
+    /// Build the `mt_sat` model from a raw recipe, resolving any
+    /// `b1_correction` path form first — the same sequence `run_fit`/
+    /// `run_fit_bids` follow.
+    fn build_mt_sat_with_b1(raw: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+        let mut raw = raw.clone();
+        inject_mt_sat_b1_correction(&mut raw)?;
+        let entry = qmrust_core::registry::by_name("mt_sat").unwrap();
+        (entry.build)(&raw, &Protocol::default())
+    }
+
+    #[test]
+    fn mt_sat_recipe_loads_fitvalues_into_model() {
+        // A recipe pointing at a fitvalues.yaml must yield a model that
+        // applies the correction (B1 != 1 changes the fitted MTSAT).
+        let dir = TempDir::new("mtsat-b1-recipe");
+        let fv_path = dir.0.join("fv.yaml");
+        std::fs::write(&fv_path, sample_fitvalues_yaml()).unwrap();
+        let recipe = format!(
+            "model: mt_sat\nmtw: {{flip_angle: 6, repetition_time: 0.028}}\npdw: {{flip_angle: 6, repetition_time: 0.028}}\nt1w: {{flip_angle: 20, repetition_time: 0.018}}\nb1_correction: {{ fitvalues: {:?}, b1_ref: 6.8 }}\n",
+            fv_path
+        );
+        let raw: serde_yaml::Value = serde_yaml::from_str(&recipe).unwrap();
+        let model = build_mt_sat_with_b1(&raw).unwrap();
+
+        let empty_aux = qmrust_core::core::model::Aux::new();
+        let sig = model.forward(&[1000.0, 0.9, 1.5], &empty_aux);
+        let no_b1 = model.fit(&sig, &empty_aux)[0];
+        let mut aux_with_b1 = qmrust_core::core::model::Aux::new();
+        aux_with_b1.set("B1map", 1.2);
+        let with_b1 = model.fit(&sig, &aux_with_b1)[0];
+        assert!(
+            (with_b1 - no_b1).abs() > 1e-9,
+            "recipe-loaded FitValues had no effect: {no_b1} vs {with_b1}"
+        );
+    }
+
+    #[test]
+    fn mt_sat_recipe_without_b1_correction_still_parses() {
+        let raw: serde_yaml::Value = serde_yaml::from_str(
+            "model: mt_sat\nmtw: {flip_angle: 6, repetition_time: 0.028}\npdw: {flip_angle: 6, repetition_time: 0.028}\nt1w: {flip_angle: 20, repetition_time: 0.018}\n",
+        )
+        .unwrap();
+        build_mt_sat_with_b1(&raw).expect("no b1_correction key -> None, still builds");
+    }
+
+    #[test]
+    fn non_mt_sat_recipe_is_untouched_by_injection() {
+        let mut raw: serde_yaml::Value = serde_yaml::from_str(
+            "model: inversion_recovery\nmethod: magnitude\ninversion_times: [0.35, 0.5, 0.8]\n",
+        )
+        .unwrap();
+        inject_mt_sat_b1_correction(&mut raw).unwrap();
+        assert!(raw.get("b1_correction").is_none());
     }
 }
