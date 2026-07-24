@@ -146,6 +146,50 @@ pub fn mamt_signal_with_step(
     m[0] * (p.flip_angle * std::f64::consts::PI / 180.0).sin()
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct VfaParams {
+    pub fa1_deg: f64,
+    pub fa2_deg: f64,
+    pub tr1: f64,
+    pub tr2: f64,
+}
+
+/// Apparent R1 (1/s) and amplitude from the simulated VFA pair (b1_sat = 0),
+/// via the Helms VFA formulas. Ports MAMT_model_simVFA.m. The VFA sim uses its
+/// own short pulse/gap timing (pulse_dur = 1 ms, gap = 0.3 ms, 1 sat pulse).
+pub fn vfa_apparent(p: &SeqParams, vfa: &VfaParams, m0b: f64, raobs: f64) -> (f64, f64) {
+    let mut vp = *p;
+    vp.num_sat_pulse = 1;
+    vp.pulse_dur = 1e-3;
+    vp.pulse_gap_dur = 0.3e-3;
+    vp.num_excitation = 1;
+    vp.w_exc_dur = 3e-3;
+
+    let mut vp1 = vp;
+    vp1.tr = vfa.tr1;
+    let lfa = mamt_signal(&vp1, m0b, raobs, vfa.fa1_deg, 0.0);
+    let mut vp2 = vp;
+    vp2.tr = vfa.tr2;
+    let hfa = mamt_signal(&vp2, m0b, raobs, vfa.fa2_deg, 0.0);
+
+    let a1 = vfa.fa1_deg * std::f64::consts::PI / 180.0;
+    let a2 = vfa.fa2_deg * std::f64::consts::PI / 180.0;
+    let r1 = 0.5 * (hfa * a2 / vfa.tr2 - lfa * a1 / vfa.tr1) / (lfa / a1 - hfa / a2);
+    let aapp = lfa * hfa * (vfa.tr1 * a2 / a1 - vfa.tr2 * a1 / a2)
+        / (hfa * vfa.tr1 * a2 - lfa * vfa.tr2 * a1);
+    (r1, aapp)
+}
+
+/// Simulated MTsat (percent) for the given (M0b, Raobs, b1_sat): the MTsat
+/// formula applied to the simulated MT-weighted signal and the VFA apparent
+/// values, using the NOMINAL excitation flip (simSeq_M0b_R1obs.m line 100).
+pub fn mtsat_sim(p: &SeqParams, vfa: &VfaParams, m0b: f64, raobs: f64, b1_sat: f64) -> f64 {
+    let (r1app, aapp) = vfa_apparent(p, vfa, m0b, raobs);
+    let gre = mamt_signal(p, m0b, raobs, p.flip_angle, b1_sat);
+    let flip_rad = p.flip_angle * std::f64::consts::PI / 180.0;
+    100.0 * ((aapp * flip_rad / gre - 1.0) * r1app * p.tr - flip_rad * flip_rad / 2.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +240,33 @@ mod tests {
         let a = mamt_signal_with_step(&p, 0.1, 1.0, 9.0, 9.0, 50e-6);
         let b = mamt_signal_with_step(&p, 0.1, 1.0, 9.0, 9.0, 25e-6);
         assert!((a - b).abs() / b < 0.01, "{a} vs {b}");
+    }
+
+    #[test]
+    fn vfa_recovers_positive_r1_and_amplitude() {
+        let p = sample_params();
+        let vfa = VfaParams {
+            fa1_deg: 5.0,
+            fa2_deg: 20.0,
+            tr1: 30e-3,
+            tr2: 30e-3,
+        };
+        let (r1, a) = vfa_apparent(&p, &vfa, 0.1, 1.0);
+        assert!(r1 > 0.0 && r1 < 5.0, "R1app {r1}");
+        assert!(a > 0.0, "Aapp {a}");
+    }
+
+    #[test]
+    fn mtsat_sim_increases_with_bound_pool() {
+        let p = sample_params();
+        let vfa = VfaParams {
+            fa1_deg: 5.0,
+            fa2_deg: 20.0,
+            tr1: 30e-3,
+            tr2: 30e-3,
+        };
+        let low = mtsat_sim(&p, &vfa, 0.05, 1.0, 9.0);
+        let high = mtsat_sim(&p, &vfa, 0.15, 1.0, 9.0);
+        assert!(high > low, "{high} !> {low}");
     }
 }
