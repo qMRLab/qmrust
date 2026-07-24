@@ -4,9 +4,57 @@
 //! pulse train, inter-pulse gaps, the sinc water excitation, and TR-fill, until
 //! the post-saturation Mza settles (<0.05% change). Returns `Mza·sin(flip)`.
 
+use crate::models::qmt_spgr::lineshape::super_lorentzian_g;
 use crate::mtsat_b1::mat3::{expm3, ident3, matvec3, solve3, sub3, Mat3, Vec3};
 use crate::mtsat_b1::pulse::{sat_pulse, sinc_exc_pulse, SatShape};
-use crate::mtsat_b1::rate::{rate_matrix, PoolParams};
+use std::f64::consts::PI;
+
+// transitional: replaced when sim.rs adopts the 5-state engine. This is the
+// pre-5-state 3-pool (free/bound/dipolar) rate matrix, ported from
+// <ref>/functions/calc_RF_matrix_wDipolar2.m (Lee 2011 dipolar form).
+struct Pool3 {
+    ra: f64,
+    rb: f64,
+    r: f64,
+    m0a: f64,
+    m0b: f64,
+    t2a: f64,
+    t2b: f64,
+    t1d: f64,
+}
+
+/// Rate matrix `A` for `dM/dt = A·M + B`, state `[Mza, Mzb, Bpr]`. `w1` in
+/// rad/s, `delta` in Hz. `dual_continuous` uncouples the dipolar pool. The
+/// bound-pool absorption uses the in-tree 2π super-Lorentzian lineshape
+/// (`super_lorentzian_g`): `Rrfb = π·w1²·G(δ, T2b)`.
+fn rate_matrix_3pool(p: &Pool3, w1: f64, delta: f64, dual_continuous: bool) -> Mat3 {
+    let rrfa = (w1 * w1 * p.t2a) / (1.0 + (2.0 * PI * delta * p.t2a).powi(2));
+    let rrfb = PI * w1 * w1 * super_lorentzian_g(delta.abs(), p.t2b);
+    let wloc = (1.0 / (15.0 * p.t2b * p.t2b)).sqrt();
+
+    if dual_continuous {
+        [
+            [-(p.ra + p.r * p.m0b + rrfa), p.r * p.m0a, 0.0],
+            [p.r * p.m0b, -(p.rb + rrfb + p.r * p.m0a), 0.0],
+            [0.0, 0.0, -1.0 / p.t1d],
+        ]
+    } else {
+        let two_pi_delta = 2.0 * PI * delta;
+        [
+            [-(p.ra + p.r * p.m0b + rrfa), p.r * p.m0a, 0.0],
+            [
+                p.r * p.m0b,
+                -(p.rb + rrfb + p.r * p.m0a),
+                two_pi_delta * rrfb / wloc,
+            ],
+            [
+                0.0,
+                rrfb * (two_pi_delta / wloc),
+                -(rrfb * (two_pi_delta / wloc).powi(2) + 1.0 / p.t1d),
+            ],
+        ]
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FreqPattern {
@@ -61,7 +109,7 @@ pub fn mamt_signal_with_step(
             val
         }
     };
-    let pool = PoolParams {
+    let pool = Pool3 {
         ra,
         rb: p.rb,
         r: p.r,
@@ -91,7 +139,7 @@ pub fn mamt_signal_with_step(
 
     // Propagate one interval of constant (w1, delta) for duration `t`.
     let propagate = |m: &Vec3, w1: f64, delta: f64, t: f64| -> Vec3 {
-        let a: Mat3 = rate_matrix(&pool, w1, delta, dual_cont);
+        let a: Mat3 = rate_matrix_3pool(&pool, w1, delta, dual_cont);
         let scaled = [
             [a[0][0] * t, a[0][1] * t, a[0][2] * t],
             [a[1][0] * t, a[1][1] * t, a[1][2] * t],
