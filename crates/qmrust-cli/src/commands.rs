@@ -817,6 +817,96 @@ pub fn run_fit_bids(
     Ok(())
 }
 
+/// Resolve the dataset's single `mt_sat` (MTS) collection, fit it, and zip its
+/// `T1`/`MTSAT` output maps with the resolved `B1map` aux into per-voxel
+/// `(R1 [1/s], MTsat [%], B1 [relative])` triples — one per mask-included
+/// voxel with a positive MTsat (the same "valid" gate `mt_sat_b1::calibrate`
+/// applies before inverting the surface). Reuses the exact BIDS machinery
+/// `run_fit_bids` uses (`load_collection`, `run_model_fit`,
+/// `resolve_aux_and_mask`) rather than re-deriving any of it: the `mt_sat`
+/// model itself reads its acquisition (flip angles, TRs) from the MTS
+/// sidecars, so no model options are needed here beyond selecting the model.
+///
+/// A B1 map is required for the Tardif self-calibration (the surface is a
+/// function of B1); a dataset with no `TB1map` resolved for the collection is
+/// a hard error, not a silent skip.
+pub fn collect_mtsat_r1_b1(bids_dir: &Path) -> Result<Vec<(f64, f64, f64)>> {
+    let raw: serde_yaml::Value = serde_yaml::from_str("model: mt_sat\n")?;
+    let entry = qmrust_core::registry::by_name("mt_sat")
+        .ok_or_else(|| anyhow::anyhow!("mt_sat model not registered"))?;
+    let probe = (entry.describe)(&raw)?;
+    let schema = probe.protocol_schema();
+    let named_roles: Option<&'static [&'static str]> = match probe.measurement() {
+        MeasurementKind::Named { roles } => Some(roles),
+        MeasurementKind::Series { .. } => None,
+    };
+
+    let fs = StdFs {
+        root: bids_dir.to_path_buf(),
+    };
+    let bids_cfg = rust_bids::default_config();
+    let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
+    let table = rust_bids::parse_to_table(&fs, &vocab)?;
+    let collections = rust_bids::collections_for(&fs, &bids_cfg, entry.bids_suffix)?;
+    let c = match collections.as_slice() {
+        [one] => one,
+        [] => bail!(
+            "no {} collections found in {:?}",
+            entry.bids_suffix,
+            bids_dir
+        ),
+        many => bail!(
+            "expected exactly one {} collection for the mtsat-b1 reference dataset in {:?}, \
+             found {}",
+            entry.bids_suffix,
+            bids_dir,
+            many.len()
+        ),
+    };
+
+    let options: std::collections::BTreeMap<String, f64> = std::collections::BTreeMap::new();
+    let (data, proto, _header) = load_collection(&fs, c, &schema, &options, named_roles)?;
+    let model = (entry.build)(&raw, &proto)?;
+    let (aux, mask, _sources) =
+        resolve_aux_and_mask(&table, model.as_ref(), &c.entities, None, bids_dir)?;
+    let b1 = aux.get_map("B1map").ok_or_else(|| {
+        anyhow::anyhow!(
+            "no B1map (TB1map) resolved for the mtsat-b1 reference collection in {:?}; a B1 map \
+             is required to self-calibrate the Tardif M0b-vs-R1 line",
+            bids_dir
+        )
+    })?;
+
+    let results = run_model_fit(model.as_ref(), &data, &proto, mask.as_ref(), &aux)?;
+    let t1 = results
+        .get("T1")
+        .ok_or_else(|| anyhow::anyhow!("mt_sat fit produced no 'T1' map"))?;
+    let mtsat = results
+        .get("MTSAT")
+        .ok_or_else(|| anyhow::anyhow!("mt_sat fit produced no 'MTSAT' map"))?;
+
+    let (nx, ny, nz) = t1.dim();
+    let mut out = Vec::new();
+    for x in 0..nx {
+        for y in 0..ny {
+            for z in 0..nz {
+                if let Some(m) = mask.as_ref() {
+                    if !m[[x, y, z]] {
+                        continue;
+                    }
+                }
+                let t1v = t1[[x, y, z]];
+                let mtsatv = mtsat[[x, y, z]];
+                let b1v = b1[[x, y, z]];
+                if mtsatv > 0.0 && t1v > 0.0 && t1v.is_finite() && b1v.is_finite() {
+                    out.push((1.0 / t1v, mtsatv, b1v));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Locate a single input file for a collection by matching its full grouping
 /// `identity` (every entity the dataset groups by) plus `extra` constraints
 /// (the declared BIDS suffix, and any entity the model says indexes the input)

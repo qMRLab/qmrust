@@ -9,6 +9,7 @@ use std::path::PathBuf;
 mod bidsify;
 mod commands;
 mod io;
+mod mtsat_b1;
 mod progress;
 mod provenance;
 
@@ -150,6 +151,22 @@ enum Commands {
         #[arg(long)]
         out: PathBuf,
     },
+
+    /// Build an MTsat B1-correction artifact: simulate the sequence surface
+    /// and self-calibrate the M0b-vs-R1 line on a reference MTS dataset.
+    MtsatB1 {
+        /// Path to the sequence/grid YAML config (SeqParams + VfaParams + grid + b1_ref)
+        #[arg(long)]
+        seq: PathBuf,
+
+        /// BIDS dataset root holding the reference MTS collection (+ B1map)
+        #[arg(long)]
+        bids_dir: PathBuf,
+
+        /// Output path for the fitValues YAML artifact
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -271,5 +288,8 @@ fn main() -> Result<()> {
             subject,
             out,
         }),
+        Commands::MtsatB1 { seq, bids_dir, out } => {
+            mtsat_b1::run_mtsat_b1(mtsat_b1::MtSatB1Args { seq, bids_dir, out })
+        }
     }
 }
