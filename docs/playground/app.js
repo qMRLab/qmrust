@@ -52,12 +52,16 @@ const editor = { text: "", obj: null, valid: false };
 // those linearly with neighboring voxels invents in-between colours at the
 // boundary that were never fitted, so it uses nearest-neighbour instead —
 // every displayed pixel is then one real fitted value.
-const nvIn = new Niivue({ isResizeCanvas: true, backColor: [0.02, 0.02, 0.03, 1] });
+// `loadingText` is what NiiVue draws on an empty canvas (0 volumes) — blanked
+// here since both viewers only ever go empty transiently (before the first
+// volume/fit loads), not in a state a reader should read as "something is
+// loading".
+const nvIn = new Niivue({ isResizeCanvas: true, backColor: [0.02, 0.02, 0.03, 1], loadingText: "" });
 const nvOut = new Niivue({
   isResizeCanvas: true,
   backColor: [0.02, 0.02, 0.03, 1],
-  isColorbar: true,
   isNearestInterpolation: true,
+  loadingText: "",
 });
 
 async function loadWasm() {
@@ -108,6 +112,17 @@ function isPlainObject(v) {
 
 function isNumberArray(v) {
   return Array.isArray(v) && v.every((x) => typeof x === "number");
+}
+
+// A matrix: an array of same-shaped number arrays (e.g. a protocol table of
+// [angle, offset] rows). Generic on shape alone, like every other widget
+// here — never on a key name.
+function isNumberMatrix(v) {
+  return (
+    Array.isArray(v) &&
+    v.length > 0 &&
+    v.every((row) => isNumberArray(row) && row.length === v[0].length)
+  );
 }
 
 // Re-derives `editor.text` from `editor.obj` after a form edit, and refreshes
@@ -202,8 +217,29 @@ function buildWidget(value, path) {
     };
     return input;
   }
-  // Fallback for shapes a compact widget can't represent (array of arrays,
-  // array of objects, null): a small YAML textarea for just that subtree.
+  if (isNumberMatrix(value)) {
+    // One row per line ("a, b, c"), the same compact notation the plain
+    // number-array widget above uses — far more readable than the nested
+    // block-YAML (`- - a\n  - b`) the generic fallback below would otherwise
+    // produce for an array of arrays.
+    const ta = document.createElement("textarea");
+    ta.value = value.map((row) => row.join(", ")).join("\n");
+    ta.onchange = () => {
+      const rows = ta.value
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => line.split(",").map((s) => Number(s.trim())));
+      if (rows.every((row) => row.every((n) => Number.isFinite(n)))) {
+        setAtPath(editor.obj, path, rows);
+        commitObjEdit();
+      }
+    };
+    return ta;
+  }
+  // Fallback for shapes a compact widget can't represent (array of arrays of
+  // differing lengths, array of objects, null): a small YAML textarea for
+  // just that subtree.
   const ta = document.createElement("textarea");
   ta.value = value == null ? "" : yamlDump(value).trimEnd();
   ta.onchange = () => {
@@ -395,7 +431,11 @@ function buildMapVolume(template, flat, nx, ny, nz, name, unit) {
   // dark-end sentinel just written in for NaN and pull the window back out
   // to it.
   vol.trustCalMinMax = true;
-  vol.colorbarVisible = true;
+  // The colorbar is a custom HTML/CSS element beside the viewer (see
+  // `updateMapColorbar`), not NiiVue's own on-canvas one — this vendored
+  // build only draws that horizontally, along the canvas's bottom edge, with
+  // no vertical/right-side option.
+  vol.colorbarVisible = false;
   vol.calculateRAS();
   // `NVImage.zerosLike` clones `template` (the acquired image) before
   // zeroing it, and `clone()` runs the library's own `calMinMax()` over the
@@ -447,8 +487,10 @@ async function loadModel(name) {
   lastMaps = null;
   $("output").hidden = true;
   $("output").replaceChildren();
+  updateMapColorbar();
   $("voxel-title").textContent = "Voxel — click either viewer";
   $("voxel-value").textContent = "";
+  $("fit-timing").textContent = "";
   $("cal-min").value = "";
   $("cal-max").value = "";
   $("curve-note").textContent = "";
@@ -600,6 +642,7 @@ async function fitSlice() {
   const { meta, volume, maskU8, auxFlat } = current;
   const [nx, ny, nz, nt] = meta.dims;
   status("fitting…");
+  $("fit-timing").textContent = "";
   showProgress();
   $("fit").disabled = true;
   const t0 = performance.now();
@@ -641,7 +684,11 @@ async function fitSlice() {
   select.hidden = outputVolumes.length <= 1;
   showOutput(outputVolumes[0]?.name);
 
-  status(`fitted in ${Math.round(performance.now() - t0)} ms`);
+  // The top status line is prime real estate for every reader, but "fitted
+  // in Xs" only matters right beside the thing it timed — the frame
+  // scrubbing note under the inputs viewer — so it lives there instead.
+  status(`${meta.title}: ${nt} volumes, ${nx}×${ny}`);
+  $("fit-timing").textContent = `fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
   hideProgress();
   $("fit").disabled = false;
   if (current.lastVox) plotVoxel(current.lastVox.x, current.lastVox.y, current.lastVox.z);
@@ -650,6 +697,39 @@ async function fitSlice() {
 function seedCalRangeInputs(entry) {
   $("cal-min").value = entry.volume.cal_min;
   $("cal-max").value = entry.volume.cal_max;
+}
+
+// A vertical colour-scale legend beside the fitted-map viewer — NiiVue's own
+// `isColorbar` only draws horizontally along the canvas's bottom edge in
+// this vendored build, with no vertical/right-side placement, so this reads
+// the real LUT NiiVue would have used (`nv.colormap(name)`, the same colours
+// `setColormap` painted the volume with) and lays it out ourselves.
+function updateMapColorbar() {
+  const gradient = $("map-colorbar-gradient");
+  const labels = $("map-colorbar-labels");
+  if (!shownOutput) {
+    gradient.style.background = "none";
+    labels.replaceChildren();
+    return;
+  }
+  const lut = nvOut.colormap($("colormap").value || "gray");
+  const stops = [];
+  const nStops = 32;
+  for (let i = 0; i <= nStops; i++) {
+    const px = Math.round((i / nStops) * 255) * 4;
+    stops.push(`rgb(${lut[px]}, ${lut[px + 1]}, ${lut[px + 2]})`);
+  }
+  // Low value at the bottom, high at the top — the usual vertical-colorbar
+  // convention, matching the committed docsfig figures.
+  gradient.style.background = `linear-gradient(to top, ${stops.join(", ")})`;
+  const lo = shownOutput.volume.cal_min;
+  const hi = shownOutput.volume.cal_max;
+  labels.replaceChildren();
+  for (const v of [hi, (hi + lo) / 2, lo]) {
+    const span = document.createElement("span");
+    span.textContent = Number.isFinite(v) ? String(roundBound(v)) : "";
+    labels.append(span);
+  }
 }
 
 function showOutput(name) {
@@ -663,9 +743,9 @@ function showOutput(name) {
   const cmap = availableColormaps.includes(preferred) ? preferred : availableColormaps[0];
   if (availableColormaps.includes(cmap)) cmapSelect.value = cmap;
   nvOut.setColormap(entry.volume.id, cmapSelect.value || cmap);
-  nvOut.opts.isColorbar = true;
   seedCalRangeInputs(entry);
   nvOut.drawScene();
+  updateMapColorbar();
   if (current?.lastVox) updateVoxelValue(current.lastVox.x, current.lastVox.y, current.lastVox.z);
 }
 
@@ -674,6 +754,7 @@ function onColormapChange() {
   if (!entry) return;
   nvOut.setColormap(entry.volume.id, $("colormap").value);
   nvOut.drawScene();
+  updateMapColorbar();
 }
 
 // Reader-adjustable colour scale: min/max feed `volume.cal_min`/`cal_max`
@@ -688,6 +769,7 @@ function applyCalRange() {
   shownOutput.volume.cal_max = max;
   nvOut.updateGLVolume();
   nvOut.drawScene();
+  updateMapColorbar();
 }
 
 function resetCalRange() {
@@ -697,6 +779,7 @@ function resetCalRange() {
   seedCalRangeInputs(shownOutput);
   nvOut.updateGLVolume();
   nvOut.drawScene();
+  updateMapColorbar();
 }
 
 function populateColormaps() {
@@ -779,16 +862,58 @@ function plotVoxel(x, y, z) {
   const predicted = JSON.parse(
     wasm.forward(editor.text, Float64Array.from(params), JSON.stringify(voxelAux)),
   );
+  // A `Series` model's own measurement doesn't necessarily cover every
+  // acquired volume 1:1 — e.g. mono_t2's `drop_first_echo` excludes the
+  // first echo from the fit entirely, so `forward()` returns one fewer
+  // sample than `nt`. Blindly zipping that shorter array against `measured`
+  // by position would silently shift every later point onto the wrong
+  // volume. Instead, match each returned sample back to its volume by the
+  // same identity (`meta.volume_ids`) the fit itself used, leaving NaN
+  // (skipped when drawing) for any volume the fit excluded. `Named` models
+  // already key their measurement by role name, which is exact.
   const values = Array.isArray(predicted)
-    ? predicted.map((s) => s.value)
+    ? alignSeriesToVolumes(predicted, meta.volume_ids)
     : meta.volume_ids.map((r) => predicted[r]);
-  drawCurve(measured, values);
+  drawCurve(measured, values, meta.labels);
   $("curve-note").textContent = meta.params
     .map((p, k) => `${p} = ${params[k].toPrecision(3)}`)
     .join(", ");
 }
 
-function drawCurve(measured, predicted) {
+// Deep-ish equality for one row of `Series` params against a `forward()`
+// sample's own `params` — both are plain `{key: number}` objects, so a
+// numeric-tolerant compare over the union of keys is enough.
+function sameParams(a, b) {
+  const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
+  for (const k of keys) {
+    const x = a?.[k];
+    const y = b?.[k];
+    if (typeof x !== "number" || typeof y !== "number") return false;
+    if (Math.abs(x - y) > 1e-9 * Math.max(1, Math.abs(x), Math.abs(y))) return false;
+  }
+  return true;
+}
+
+function alignSeriesToVolumes(samples, volumeIds) {
+  const values = new Array(volumeIds.length).fill(NaN);
+  for (const sample of samples) {
+    const t = volumeIds.findIndex((row) => sameParams(row, sample.params));
+    if (t !== -1) values[t] = sample.value;
+  }
+  return values;
+}
+
+// Picks up to `max` evenly-spaced indices from `[0, n)`, always including the
+// first and last — used to thin x-axis tick labels so they don't overlap
+// when a series has many volumes.
+function tickIndices(n, max) {
+  if (n <= max) return Array.from({ length: n }, (_, k) => k);
+  const idx = new Set();
+  for (let i = 0; i < max; i++) idx.add(Math.round((i / (max - 1)) * (n - 1)));
+  return [...idx].sort((a, b) => a - b);
+}
+
+function drawCurve(measured, predicted, labels = []) {
   const c = $("curve");
   const dpr = window.devicePixelRatio || 1;
   const w = c.clientWidth || 380;
@@ -798,34 +923,91 @@ function drawCurve(measured, predicted) {
   const ctx = c.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const pad = 28;
-  const all = measured.concat(predicted).filter(Number.isFinite);
-  const lo = Math.min(...all), hi = Math.max(...all);
-  const sx = (k) => pad + (k / Math.max(1, measured.length - 1)) * (w - 2 * pad);
-  const sy = (v) => h - pad - ((v - lo) / (hi - lo || 1)) * (h - 2 * pad);
   const dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-  ctx.strokeStyle = dark ? "#30363d" : "#c7ced6";
+  const axisColor = dark ? "#30363d" : "#c7ced6";
+  const textColor = dark ? "#9aa7b2" : "#7c8797";
+  // Left/bottom padding sized for the axis value/label text this function
+  // now draws (unlabelled axes previously just looked like an empty box).
+  const padL = 52;
+  const padR = 14;
+  const padT = 20;
+  const padB = 32;
+  const all = measured.concat(predicted).filter(Number.isFinite);
+  const lo = all.length ? Math.min(...all) : 0;
+  const hi = all.length ? Math.max(...all) : 1;
+  const hiSafe = hi > lo ? hi : lo + 1;
+  const sx = (k) => padL + (k / Math.max(1, measured.length - 1)) * (w - padL - padR);
+  const sy = (v) => h - padB - ((v - lo) / (hiSafe - lo)) * (h - padT - padB);
+
+  ctx.strokeStyle = axisColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(pad, pad);
-  ctx.lineTo(pad, h - pad);
-  ctx.lineTo(w - pad, h - pad);
+  ctx.moveTo(padL, padT);
+  ctx.lineTo(padL, h - padB);
+  ctx.lineTo(w - padR, h - padB);
   ctx.stroke();
+
+  // Y-axis: signal value at the top, bottom and midpoint of the plotted range.
+  ctx.fillStyle = textColor;
+  ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (const v of [hi, (hi + lo) / 2, lo]) {
+    ctx.fillText(v.toPrecision(3), padL - 6, sy(v));
+  }
+  ctx.textAlign = "left";
+  ctx.save();
+  ctx.translate(12, (padT + h - padB) / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.fillText("signal", 0, 0);
+  ctx.restore();
+
+  // X-axis: a thinned set of each plotted volume's own identity label (the
+  // same strings the inputs viewer's frame scrubber shows), not a bare index
+  // — so a reader can tell *which* acquisition each point is, without this
+  // being keyed to any model-specific parameter name.
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (const k of tickIndices(measured.length, 6)) {
+    const label = labels[k] ?? String(k);
+    const short = label.length > 14 ? `${label.slice(0, 13)}…` : label;
+    ctx.fillText(short, sx(k), h - padB + 6);
+  }
+
+  // Forward-model line: skip (break the path across) any volume the fit's
+  // own measurement excluded (NaN here — see `alignSeriesToVolumes`), rather
+  // than drawing a misleading straight line through a point that was never
+  // predicted.
   ctx.strokeStyle = "#f0883e";
   ctx.lineWidth = 1.6;
   ctx.beginPath();
-  predicted.forEach((v, k) => (k ? ctx.lineTo(sx(k), sy(v)) : ctx.moveTo(sx(k), sy(v))));
+  let drawing = false;
+  predicted.forEach((v, k) => {
+    if (!Number.isFinite(v)) {
+      drawing = false;
+      return;
+    }
+    if (drawing) ctx.lineTo(sx(k), sy(v));
+    else ctx.moveTo(sx(k), sy(v));
+    drawing = true;
+  });
   ctx.stroke();
+
   ctx.fillStyle = "#38c0cf";
   measured.forEach((v, k) => {
+    if (!Number.isFinite(v)) return;
     ctx.beginPath();
     ctx.arc(sx(k), sy(v), 2.8, 0, 2 * Math.PI);
     ctx.fill();
   });
-  ctx.fillStyle = dark ? "#9aa7b2" : "#7c8797";
+
+  ctx.fillStyle = textColor;
   ctx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
-  ctx.fillText("● measured", pad, 14);
-  ctx.fillText("— forward model", pad + 78, 14);
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+  ctx.fillText("● measured", padL, 14);
+  ctx.fillText("— forward model", padL + 78, 14);
 }
 
 function onLocation(loc) {

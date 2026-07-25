@@ -204,6 +204,22 @@
     flex: 1 1 auto; min-height: 0;
   }
   .viewer canvas { width: 100%; height: 100%; display: block; }
+
+  /* Fitted-map viewer + its colour-scale legend, side by side. NiiVue's own
+     `isColorbar` only draws horizontally along the canvas's bottom edge in
+     this vendored build, with no vertical/right-side placement, so this is a
+     plain HTML/CSS bar built from the same LUT `nv.colormap()` returns. */
+  .viewer-row { display: flex; flex-direction: row; gap: 8px; flex: 1 1 auto; min-height: 0; }
+  .viewer-row .viewer { flex: 1 1 auto; }
+  .map-colorbar { display: flex; flex-direction: row; gap: 6px; flex-shrink: 0; width: 58px; }
+  .map-colorbar-gradient {
+    width: 16px; border-radius: 6px; border: 1px solid var(--line);
+  }
+  .map-colorbar-labels {
+    display: flex; flex-direction: column; justify-content: space-between;
+    font: 11px var(--mono); color: var(--ink-2); white-space: nowrap; padding: 2px 0;
+  }
+
   .out-controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
   .out-controls select { font-size: 12px; padding: 4px 8px; }
 
@@ -263,14 +279,20 @@
       <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
       <span class="frame-label" id="frame-label">—</span>
     </div>
-    <p class="local-note">Scroll over the viewer to step frames.</p>
+    <p class="local-note">Scroll over the viewer to step frames. <span id="fit-timing"></span></p>
   </div>
 
   <div class="viewer-out-wrap card">
     <div class="viewer-head">
       <h2 class="section-h" style="margin:0">Fitted map</h2>
     </div>
-    <div class="viewer" id="viewer-out"><canvas id="gl-out"></canvas></div>
+    <div class="viewer-row">
+      <div class="viewer" id="viewer-out"><canvas id="gl-out"></canvas></div>
+      <div class="map-colorbar">
+        <div class="map-colorbar-gradient" id="map-colorbar-gradient"></div>
+        <div class="map-colorbar-labels" id="map-colorbar-labels"></div>
+      </div>
+    </div>
     <div class="out-controls">
       <select id="output" hidden></select>
       <select id="colormap"></select>
