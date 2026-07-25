@@ -17,7 +17,7 @@ fn sample_times(dur: f64, step: f64) -> Vec<f64> {
 ///
 /// shape(t) = exp(-(t - Trf/2)^2 / (2*sigma2)) * 0.5*(1 - cos(2*pi*t/Trf)),
 /// with sigma2 = 2*ln(2) / (pi*bw)^2 and Trf = pulse_dur. Samples are taken
-/// at t = 0:step:pulse_dur (inclusive).
+/// at t = 0:step:pulse_dur (truncating — see the module docs).
 pub fn gausshann_omega(b1_rms: f64, pulse_dur: f64, bw: f64, step: f64) -> Vec<f64> {
     let t = sample_times(pulse_dur, step);
     let sigma2 = 2.0 * std::f64::consts::LN_2 / (PI * bw).powi(2);
