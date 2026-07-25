@@ -149,7 +149,7 @@ def forward_curve(qmrust, recipe_path, params, coll, voxel):
     """`qmrust sim signal` at `params` — the Rust forward model, verbatim."""
     cfg = yaml.safe_load(pathlib.Path(recipe_path).read_text())
     sim = {"params": params}
-    for name, key in (("B1map", "b1"), ("B0map", "b0")):
+    for name, key in (("B1map", "b1"), ("B0map", "b0"), ("R1map", "r1")):
         if name in coll.aux:
             sim[key] = float(nifti.slice2d(nifti.read_nii(coll.aux[name]))[voxel])
     cfg["sim"] = sim
@@ -204,9 +204,14 @@ def fig_curve(coll, model, out_dir, qmrust, repo_root):
     fig, ax = style.plt.subplots(figsize=(6.4, 3.4), facecolor=style.BG)
     ax.set_facecolor(style.BG)
     if named:
+        # MTR-style models carry no amplitude term, so measured and predicted
+        # live on unrelated absolute scales; normalize each to its own max so
+        # the bars compare shape/ratio, the only thing that is meaningful.
+        measured_n = np.array(measured) / max(np.max(np.abs(measured)), 1e-12)
+        predicted_n = np.array(predicted) / max(np.max(np.abs(predicted)), 1e-12)
         x = np.arange(len(measured))
-        ax.bar(x - 0.18, measured, width=0.34, label="measured", color="#58a6ff")
-        ax.bar(x + 0.18, predicted, width=0.34, label="forward model", color="#f0883e")
+        ax.bar(x - 0.18, measured_n, width=0.34, label="measured", color="#58a6ff")
+        ax.bar(x + 0.18, predicted_n, width=0.34, label="forward model", color="#f0883e")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, color=style.MUTED, fontsize=7)
     else:
@@ -222,7 +227,7 @@ def fig_curve(coll, model, out_dir, qmrust, repo_root):
         ax.plot(np.array(x)[order], np.array(measured)[order], "o",
                 color="#58a6ff", ms=4, label="measured")
         ax.set_xlabel(xkey or "volume", color=style.MUTED, fontsize=8)
-    ax.set_ylabel("signal", color=style.MUTED, fontsize=8)
+    ax.set_ylabel("normalized signal" if named else "signal", color=style.MUTED, fontsize=8)
     ax.tick_params(colors=style.MUTED, labelsize=7)
     for s in ax.spines.values():
         s.set_color(style.MUTED)

@@ -347,6 +347,11 @@ Try it on real data in the [playground](../../playground.md), or read [Browser &
 :::
 ::::
 
+```{figure} ../../figures/qmt_spgr/curve.webp
+:label: fig-qmt_spgr-curve
+One voxel's measured data with the model's forward signal at the fitted parameters. The curve is computed by the same Rust code that does the fitting.
+```
+
 ## Implementation
 
 - [`model.rs`](https://github.com/qmrlab/qmrust/blob/main/crates/qmrust-core/src/models/qmt_spgr/model.rs) — the `Model` implementation: measurement contract, protocol schema, BIDS outputs.
