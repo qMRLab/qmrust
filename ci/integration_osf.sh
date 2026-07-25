@@ -11,9 +11,13 @@ echo "Downloading qMRLab OSF datasets..."
 curl -L --fail -o "$DATA/ir.zip"       "https://osf.io/cmg9z/download?version=3"
 curl -L --fail -o "$DATA/qmt.zip"      "https://osf.io/pzqyn/download?version=2"
 curl -L --fail -o "$DATA/mono_t2.zip"  "https://osf.io/kujp3/download?version=3"
+curl -L --fail -o "$DATA/mtr.zip"      "https://osf.io/erm2s/download?version=2"
+curl -L --fail -o "$DATA/mtsat.zip"    "https://osf.io/c5wdb/download?version=4"
 unzip -o -q "$DATA/ir.zip"      -d "$DATA/ir"
 unzip -o -q "$DATA/qmt.zip"     -d "$DATA/qmt"
 unzip -o -q "$DATA/mono_t2.zip" -d "$DATA/mono_t2"
+unzip -o -q "$DATA/mtr.zip"     -d "$DATA/mtr"
+unzip -o -q "$DATA/mtsat.zip"   -d "$DATA/mtsat"
 
 # Locate the datasets by their key files (robust to archive folder layout).
 IR_MAT="$(find "$DATA/ir" -name 'IRData.mat' | head -1)"
@@ -35,6 +39,24 @@ MONO_REF_T2="$(find "$DATA/mono_t2" -path '*FitResults*' -name 'T2.nii.gz' | hea
 [ -n "$MONO_SE" ]     || { echo "SEdata.nii.gz not found in mono_t2 archive"; exit 1; }
 [ -n "$MONO_MASK" ]   || { echo "Mask.nii.gz not found in mono_t2 archive"; exit 1; }
 [ -n "$MONO_REF_T2" ] || { echo "FitResults/T2.nii.gz not found in mono_t2 archive"; exit 1; }
+
+# mt_ratio ships as a named set of separate .mat files (MTon.mat/MToff.mat,
+# + Mask.mat) with a qMRLab reference (FitResults/MTR.nii.gz).
+MTR_ON="$(find "$DATA/mtr" -name 'MTon.mat' | head -1)"
+MTR_REF="$(find "$DATA/mtr" -path '*FitResults*' -name 'MTR.nii.gz' | head -1)"
+[ -n "$MTR_ON" ]  || { echo "MTon.mat not found in MTR archive"; exit 1; }
+[ -n "$MTR_REF" ] || { echo "FitResults/MTR.nii.gz not found in MTR archive"; exit 1; }
+MTR_DIR="$(dirname "$MTR_ON")"
+
+# mt_sat ships as three per-role NIfTIs (MTw/PDw/T1w) with a qMRLab reference
+# (FitResults/MTSAT.nii.gz, T1.nii.gz, MTR.nii.gz).
+MTSAT_MTW="$(find "$DATA/mtsat" -name 'MTw.nii.gz' | head -1)"
+MTSAT_REF_SAT="$(find "$DATA/mtsat" -path '*FitResults*' -name 'MTSAT.nii.gz' | head -1)"
+MTSAT_REF_T1="$(find "$DATA/mtsat" -path '*FitResults*' -name 'T1.nii.gz' | head -1)"
+MTSAT_REF_MTR="$(find "$DATA/mtsat" -path '*FitResults*' -name 'MTR.nii.gz' | head -1)"
+[ -n "$MTSAT_MTW" ]     || { echo "MTw.nii.gz not found in MTsat archive"; exit 1; }
+[ -n "$MTSAT_REF_SAT" ] || { echo "FitResults/MTSAT.nii.gz not found in MTsat archive"; exit 1; }
+MTSAT_DIR="$(dirname "$MTSAT_MTW")"
 
 echo "Running IR fit..."
 "$BIN" fit --mat-data "$IR_MAT" --mask "$IR_MASK" \
@@ -58,9 +80,31 @@ echo "Running mono_t2 bidsify + BIDS-path fit..."
 "$BIN" fit --bids-dir "$DATA/mono_t2_bids" \
   --config recipes/bids/mono_t2_config.yaml --output-dir "$DATA/out_mono_t2"
 
+echo "Running mt_ratio bidsify + BIDS-path fit..."
+# bidsify reads the named set (one <role>.mat per role) from --mat-dir and its
+# Mask.mat; MTR has no acquisition arrays, so the recipes carry only the model
+# name (+ the BIDS recipe's mask block). The BIDS-path fit reassembles the
+# mt-on/mt-off named collection.
+"$BIN" bidsify --model mt_ratio --mat-dir "$MTR_DIR" \
+  --config recipes/non-bids/mt_ratio_config.yaml --subject 01 --out "$DATA/mtr_bids"
+"$BIN" fit --bids-dir "$DATA/mtr_bids" \
+  --config recipes/bids/mt_ratio_config.yaml --output-dir "$DATA/out_mtr"
+
+echo "Running mt_sat bidsify + BIDS-path fit..."
+# bidsify reads the per-role NIfTIs (MTw/PDw/T1w) from --nii-dir; the non-BIDS
+# recipe supplies each role's FlipAngle/RepetitionTimeExcitation, written into
+# the MTS sidecars. The BIDS-path fit folds those per-role sidecars back in.
+"$BIN" bidsify --model mt_sat --nii-dir "$MTSAT_DIR" \
+  --config recipes/non-bids/mt_sat_config.yaml --subject 01 --out "$DATA/mtsat_bids"
+"$BIN" fit --bids-dir "$DATA/mtsat_bids" \
+  --config recipes/bids/mt_sat_config.yaml --output-dir "$DATA/out_mtsat"
+
 echo "Asserting outputs..."
 for f in "$DATA/out_ir/T1.nii.gz" "$DATA/out_ramani/F.nii.gz" "$DATA/out_srp/F.nii.gz" \
-         "$DATA/out_mono_t2/qmrust/sub-01/anat/sub-01_T2map.nii.gz"; do
+         "$DATA/out_mono_t2/qmrust/sub-01/anat/sub-01_T2map.nii.gz" \
+         "$DATA/out_mtr/qmrust/sub-01/anat/sub-01_MTRmap.nii.gz" \
+         "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_MTsat.nii.gz" \
+         "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_T1map.nii.gz"; do
   test -s "$f" || { echo "MISSING or empty: $f"; exit 1; }
 done
 
@@ -74,5 +118,27 @@ echo "Comparing mono_t2 T2 map to qMRLab FitResults..."
 python3 ci/compare_maps.py \
   "$DATA/out_mono_t2/qmrust/sub-01/anat/sub-01_T2map.nii.gz" "$MONO_REF_T2" \
   --scale 1000 --rel-tol 0.01 --min-frac 0.90 --min-corr 0.95 --label mono_t2-T2
+
+# MTR is a closed-form ratio (no fit, no unit conversion — both in percent), so
+# agreement with qMRLab is exact to float rounding across the whole mask.
+echo "Comparing mt_ratio MTR map to qMRLab FitResults..."
+python3 ci/compare_maps.py \
+  "$DATA/out_mtr/qmrust/sub-01/anat/sub-01_MTRmap.nii.gz" "$MTR_REF" \
+  --rel-tol 0.001 --min-frac 0.99 --min-corr 0.999 --label mt_ratio-MTR
+
+# mt_sat is closed-form (no B1 map in this dataset -> the uncorrected Helms
+# path), so all three maps agree with qMRLab to double-precision round-off.
+# MTSAT's near-zero (background-adjacent) voxels make a *relative* tolerance
+# meaningless there, so its min-frac has margin while the correlation stays 1.
+echo "Comparing mt_sat maps to qMRLab FitResults..."
+python3 ci/compare_maps.py \
+  "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_MTsat.nii.gz" "$MTSAT_REF_SAT" \
+  --rel-tol 0.01 --min-frac 0.98 --min-corr 0.999 --label mt_sat-MTSAT
+python3 ci/compare_maps.py \
+  "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_T1map.nii.gz" "$MTSAT_REF_T1" \
+  --rel-tol 0.01 --min-frac 0.99 --min-corr 0.999 --label mt_sat-T1
+python3 ci/compare_maps.py \
+  "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_MTRmap.nii.gz" "$MTSAT_REF_MTR" \
+  --rel-tol 0.001 --min-frac 0.99 --min-corr 0.999 --label mt_sat-MTR
 
 echo "OSF integration OK"

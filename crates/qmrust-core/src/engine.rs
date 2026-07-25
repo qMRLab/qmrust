@@ -67,6 +67,13 @@ impl AuxMaps {
     pub fn empty() -> Self {
         Self { maps: vec![] }
     }
+    /// The raw 3D map for a declared aux input by name, if it was resolved.
+    pub fn get_map(&self, name: &str) -> Option<&Array3<f64>> {
+        self.maps
+            .iter()
+            .find(|(n, _)| n == name)
+            .and_then(|(_, m)| m.as_ref())
+    }
     /// Build the per-voxel `Aux` scalar bundle at (x,y,z).
     fn at(&self, x: usize, y: usize, z: usize) -> Aux {
         let mut a = Aux::new();

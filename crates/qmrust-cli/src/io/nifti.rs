@@ -109,6 +109,44 @@ pub fn read_map_nifti_with_header(path: &Path) -> Result<(Array3<f64>, NiftiHead
     Ok((arr, header))
 }
 
+/// Read a `Named` model's role volumes from a directory: one `<role>.nii.gz`
+/// per role (each a 3D scalar map), stacked into a 4D array in the given role
+/// order — column `i` is `roles[i]`. The BIDS-input counterpart to
+/// [`crate::io::mat::read_named_mat_volumes`]. The first role's spatial header
+/// is preserved for the output geometry. Every role file must exist and share
+/// the same spatial dims.
+pub fn read_named_nii_volumes(dir: &Path, roles: &[&str]) -> Result<(Array4<f64>, NiftiHeader)> {
+    let mut vols: Vec<ndarray::Array3<f64>> = Vec::with_capacity(roles.len());
+    let mut header: Option<NiftiHeader> = None;
+    let mut dims: Option<(usize, usize, usize)> = None;
+    for &role in roles {
+        let path = dir.join(format!("{role}.nii.gz"));
+        let (v, h) = read_map_nifti_with_header(&path)
+            .with_context(|| format!("reading named role '{role}' from {:?}", path))?;
+        let d = v.dim();
+        match dims {
+            None => dims = Some(d),
+            Some(expected) if expected != d => bail!(
+                "role '{}' has spatial dims {:?}, expected {:?} (from the first role)",
+                role,
+                d,
+                expected
+            ),
+            _ => {}
+        }
+        if header.is_none() {
+            header = Some(h);
+        }
+        vols.push(v);
+    }
+    let (nx, ny, nz) = dims.with_context(|| "a named model must declare at least one role")?;
+    let mut out = Array4::<f64>::zeros((nx, ny, nz, roles.len()));
+    for (t, v) in vols.iter().enumerate() {
+        out.index_axis_mut(ndarray::Axis(3), t).assign(v);
+    }
+    Ok((out, header.expect("checked non-empty above")))
+}
+
 /// Create a 3D header from a 4D reference header. Test-only: production output
 /// goes through [`write_map_nifti`] (3D for z > 1, 2D for a single slice).
 #[cfg(test)]

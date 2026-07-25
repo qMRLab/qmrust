@@ -1,0 +1,22 @@
+model: mt_sat
+
+# BIDS input: each MTS role's FlipAngle and RepetitionTimeExcitation come from
+# its JSON sidecar (via the model's protocol_schema), so the per-role
+# acquisition is NOT declared here.
+
+# TardifLab B1 correction: `fitvalues` names the artifact produced by
+# `qmrust mtsat-b1 --seq recipes/mtsat_b1_seq.yaml --bids-dir <ds> --out
+# fitvalues.yaml`. The artifact carries its own `b1_ref` (the nominal MT-pulse
+# B1rms) and all sequence params. When present, this correction replaces the
+# empirical Helms `b1_correction_factor` below. The CLI resolves and inlines
+# the artifact before the model is built, so this path form never reaches the
+# core.
+b1_correction:
+  fitvalues: fitvalues.yaml
+
+export_mtr: true
+
+# BIDS mask selection — disambiguates which mask to apply. If the dataset has
+# no matching mask, no masking is applied.
+mask:
+  desc: brain

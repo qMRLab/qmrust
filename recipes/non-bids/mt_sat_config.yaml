@@ -1,0 +1,19 @@
+model: mt_sat
+
+# Non-BIDS / bidsify protocol source: per-weighting nominal flip angle (deg)
+# and repetition time (s). bidsify writes these into the MTS sidecars
+# (FlipAngle / RepetitionTimeExcitation); a non-BIDS fit reads them directly.
+mtw: { flip_angle: 6, repetition_time: 0.028 }
+pdw: { flip_angle: 6, repetition_time: 0.028 }
+t1w: { flip_angle: 20, repetition_time: 0.018 }
+
+# Options (always used; not BIDS metadata).
+# B1 correction is applied only when a B1 map (TB1map) is supplied.
+b1_correction_factor: 0.4
+export_mtr: true
+
+# Non-BIDS input is a named set: one <role>.nii.gz per role under --nii-dir
+# (MTw.nii.gz, PDw.nii.gz, T1w.nii.gz); mask via --mask/--nii-mask. Example:
+#
+#   qmrust bidsify --model mt_sat --nii-dir <dir> \
+#     --config recipes/non-bids/mt_sat_config.yaml --subject 01 --out ds
