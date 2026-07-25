@@ -43,14 +43,25 @@ pub fn mtsat(
         return (0.0, 0.0);
     }
     let b = b1.unwrap_or(1.0);
+    // Model-based / calibration path (no empirical Helms factor): B1-correct the
+    // MTw excitation flip mechanistically, matching TardifLab ("flip achieved =
+    // flip prescribed × B1"). The B1²/(1/B1) terms below already B1-correct the
+    // PDw/T1w flips. On the vanilla Helms/Weiskopf path (apply_helms) the flip
+    // stays nominal and the empirical (1-f)/(1-f·B1) factor absorbs this
+    // residual — scaling here too would double-correct.
+    let alpha_mt = if !apply_helms && b1.is_some() {
+        acq.alpha_mt * b
+    } else {
+        acq.alpha_mt
+    };
     let r1 = 0.5 * b * b * ((acq.alpha_t1 / acq.tr_t1) * t1w - (acq.alpha_pd / acq.tr_pd) * pdw)
         / (pdw / acq.alpha_pd - t1w / acq.alpha_t1);
     let a = (1.0 / b)
         * (acq.tr_pd * acq.alpha_t1 / acq.alpha_pd - acq.tr_t1 * acq.alpha_pd / acq.alpha_t1)
         * (pdw * t1w)
         / (acq.tr_pd * acq.alpha_t1 * t1w - acq.tr_t1 * acq.alpha_pd * pdw);
-    let mut mtsat = 100.0
-        * (acq.tr_mt * (acq.alpha_mt * (a / mtw) - 1.0) * r1 - acq.alpha_mt * acq.alpha_mt / 2.0);
+    let mut mtsat =
+        100.0 * (acq.tr_mt * (alpha_mt * (a / mtw) - 1.0) * r1 - alpha_mt * alpha_mt / 2.0);
     if apply_helms {
         if let Some(b1v) = b1 {
             mtsat *= (1.0 - b1_factor) / (1.0 - b1_factor * b1v);
@@ -159,5 +170,35 @@ mod tests {
     fn mtr_matches_definition_and_guards_zero() {
         assert!((mtr(200.0, 150.0) - 25.0).abs() < 1e-12);
         assert_eq!(mtr(0.0, 5.0), 0.0);
+    }
+
+    #[test]
+    fn model_based_path_b1_corrects_the_mtw_excitation_flip() {
+        // Physical B1: transmit field scales ALL flip angles. Simulate the
+        // acquisition with every flip × b, then the model-based path
+        // (apply_helms=false, B1 present) must recover the true MTsat/T1 —
+        // the B1²/(1/B1) terms handle PDw/T1w, alpha_mt·B1 handles MTw.
+        let n = acq(); // nominal 6/6/20 deg, TR 28/28/18 ms
+        let b = 1.2_f64;
+        let scaled = Acq {
+            alpha_mt: n.alpha_mt * b,
+            alpha_pd: n.alpha_pd * b,
+            alpha_t1: n.alpha_t1 * b,
+            ..n
+        };
+        let (true_a, true_t1, true_sat) = (1000.0, 0.9, 1.5);
+        let (mtw, pdw, t1w) = forward_signals(&scaled, true_a, true_t1, true_sat);
+
+        // Model-based / calibration path: apply_helms = false.
+        let (mtsat_out, r1) = mtsat(&n, mtw, pdw, t1w, Some(b), false, 0.4);
+        assert!(
+            (mtsat_out - true_sat).abs() < 1e-6,
+            "model-based MTsat should recover truth: {mtsat_out} vs {true_sat}"
+        );
+        assert!(
+            (1.0 / r1 - true_t1).abs() < 1e-6,
+            "T1: {} vs {true_t1}",
+            1.0 / r1
+        );
     }
 }
