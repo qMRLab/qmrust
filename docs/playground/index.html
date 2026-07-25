@@ -3,21 +3,35 @@
 <title>qmrust playground</title>
 <style>
   :root { color-scheme: dark; }
-  body { margin: 0; padding: 12px; background: #0d1117; color: #e6edf3;
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { padding: 10px; background: #0d1117; color: #e6edf3;
          font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  select, button { background: #161b22; color: #e6edf3; border: 1px solid #30363d;
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  select, button, input[type=range] { background: #161b22; color: #e6edf3; border: 1px solid #30363d;
                    border-radius: 6px; padding: 5px 9px; font: inherit; }
   button { cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
   #status { color: #9aa7b2; }
-  .panels { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px; }
-  figure { margin: 0; }
-  figcaption { color: #9aa7b2; font-size: 11px; margin-top: 3px; }
-  canvas { image-rendering: pixelated; border: 1px solid #30363d; border-radius: 4px;
-           cursor: crosshair; }
-  #fallback { border: 1px solid #30363d; border-radius: 6px; padding: 12px; }
+  #fallback { border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-bottom: 10px; }
   code { background: #161b22; padding: 1px 4px; border-radius: 3px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .viewer { position: relative; border: 1px solid #30363d; border-radius: 6px;
+            background: #010409; height: 320px; overflow: hidden; }
+  .viewer canvas { width: 100%; height: 100%; display: block; }
+  .viewer-head { display: flex; justify-content: space-between; align-items: center;
+                 gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+  .viewer-head h2 { font-size: 12px; font-weight: 600; color: #9aa7b2; margin: 0;
+                     text-transform: uppercase; letter-spacing: .04em; }
+  .frame-row { display: flex; align-items: center; gap: 8px; }
+  .frame-row input[type=range] { flex: 1; min-width: 120px; }
+  .frame-label { color: #9aa7b2; min-width: 10em; text-align: right; }
+  .plot-wrap { grid-column: 1 / -1; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px;
+               margin-top: 10px; }
+  .plot-wrap h2 { font-size: 12px; font-weight: 600; color: #9aa7b2; margin: 0 0 4px;
+                  text-transform: uppercase; letter-spacing: .04em; }
+  #curve { width: 100%; height: 170px; display: block; }
+  #curve-note { color: #9aa7b2; }
 </style>
 <div class="row">
   <label for="model">Model</label>
@@ -26,8 +40,32 @@
   <span id="status">loading…</span>
 </div>
 <div id="fallback" hidden>
-  <p><strong>The WebAssembly build is not present.</strong> Build it, then reload:</p>
+  <p><strong>The WebAssembly build is not present.</strong> The viewers below still work —
+  fitting needs the wasm package. Build it, then reload:</p>
   <pre><code>cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg</code></pre>
 </div>
-<div class="panels" id="panels"></div>
+<div class="grid">
+  <div>
+    <div class="viewer-head">
+      <h2>Inputs</h2>
+      <div class="frame-row">
+        <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
+        <span class="frame-label" id="frame-label">—</span>
+      </div>
+    </div>
+    <div class="viewer"><canvas id="gl-in"></canvas></div>
+  </div>
+  <div>
+    <div class="viewer-head">
+      <h2>Fitted map</h2>
+      <select id="output" hidden></select>
+    </div>
+    <div class="viewer"><canvas id="gl-out"></canvas></div>
+  </div>
+  <div class="plot-wrap">
+    <h2 id="voxel-title">Voxel — click the inputs viewer</h2>
+    <canvas id="curve"></canvas>
+    <div id="curve-note"></div>
+  </div>
+</div>
 <script type="module" src="./app.js"></script>

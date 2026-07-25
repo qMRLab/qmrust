@@ -43,11 +43,30 @@ what reminds you to regenerate.
 ## Playground
 
 The playground is a standalone app in `playground/`, embedded via an iframe
-because MyST sanitizes page HTML. Its wasm package is built by CI and is not
-committed:
+because MyST sanitizes page HTML. It renders with
+[NiiVue](https://github.com/niivue/niivue), which reads the bundled `.nii.gz`
+files directly — no hand-rolled NIfTI parsing in `app.js`. Its wasm package is
+built by CI and is not committed:
 
 ```bash
 cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg
+```
+
+### Vendored NiiVue
+
+`playground/vendor/niivue.js` is a committed, pre-bundled copy of
+`@niivue/niivue`: the published ESM has bare imports (`gl-matrix`, `fflate`,
+`nifti-reader-js`, `zarrita`, `@lukeed/uuid`, `@ungap/structured-clone`,
+`array-equal`) that a browser can't resolve directly, and the docs build must
+not reach the network at page-load time. Regenerate it with:
+
+```bash
+mkdir /tmp/niivue-build && cd /tmp/niivue-build
+npm init -y
+npm install @niivue/niivue@0.69.0 esbuild
+echo 'export { Niivue, NVImage, NVMesh, SLICE_TYPE, DRAG_MODE } from "@niivue/niivue";' > entry.js
+npx esbuild entry.js --bundle --format=esm --minify --outfile=niivue.js
+cp niivue.js <repo>/docs/playground/vendor/niivue.js
 ```
 
 `playground.md`'s iframe references the app with a relative `src`
