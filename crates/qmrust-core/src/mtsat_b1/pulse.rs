@@ -30,6 +30,14 @@ pub fn gausshann_omega(b1_rms: f64, pulse_dur: f64, bw: f64, step: f64) -> Vec<f
         })
         .collect();
     let mean_sq: f64 = shape.iter().map(|&s| s * s).sum::<f64>() / shape.len() as f64;
+    // A degenerate pulse — one so short that every sample lands on a
+    // Hann-window zero — carries no energy; normalizing it would divide by zero
+    // and return inf/NaN amplitudes. Reject the configuration explicitly.
+    assert!(
+        mean_sq > 0.0,
+        "mtsat_b1: gausshann pulse has no energy to RMS-normalize \
+         (pulse_dur={pulse_dur}s, step={step}s leave every sample on a Hann zero)"
+    );
     let scale = 2.0 * PI * crate::mtsat_b1::GAMMA * b1_rms / mean_sq.sqrt();
     shape.iter().map(|&s| s * scale).collect()
 }
@@ -69,5 +77,13 @@ mod tests {
             (max_idx as isize - mid as isize).abs() <= 1,
             "expected peak near mid-pulse (index {mid}), got {max_idx}"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "no energy")]
+    fn degenerate_pulse_has_no_energy_and_is_rejected() {
+        // A one-step-long pulse puts both samples on Hann-window zeros, so there
+        // is nothing to RMS-normalize — reject rather than return inf/NaN.
+        gausshann_omega(9.0, 50e-6, 200.0, 50e-6);
     }
 }
