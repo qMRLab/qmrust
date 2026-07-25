@@ -1,6 +1,9 @@
 //! Time-varying RF pulse shape for the FLASH saturation train, ported from
 //! <ref>/functions/MAMT_preparePulses.m. Amplitudes are returned as `w1(t)`
-//! (rad/s), sampled every `step` seconds over [0, pulse_dur] inclusive.
+//! (rad/s) on the grid `0:step:pulse_dur` (the reference's truncating
+//! semantics): the final sample is the largest whole `step` at or below
+//! `pulse_dur`, not clamped up to `pulse_dur`. `sim.rs` drives the train for
+//! `ceil(pulse_dur/step)` steps, matching the reference's `PulseDur`.
 
 use std::f64::consts::PI;
 
