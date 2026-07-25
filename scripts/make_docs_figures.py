@@ -285,24 +285,46 @@ def _compressed_size(arr, dtype):
 
 
 def _pick_probe_voxels(mask, shape):
-    """Deterministic candidate voxels: in-mask nearest the mask centroid,
-    then the mask-centroid rule generalized to a handful of fixed offsets
-    around it (or the slice center, when there is no mask) — always the same
-    voxels for the same slice, so probes are reproducible across runs."""
-    h, w = shape
+    """Deterministic candidate voxels, as `(x, y)` — indices along `dims[0]`
+    (the array's first/`nx` axis) and `dims[1]` (second/`ny` axis)
+    respectively, NIfTI's own on-disk voxel-index order: in-mask nearest the
+    mask centroid, then the mask-centroid rule generalized to a handful of
+    fixed offsets around it (or the slice center, when there is no mask) —
+    always the same voxels for the same slice, so probes are reproducible
+    across runs."""
+    nx, ny = shape
     if mask is not None and mask.any():
-        idx = np.argwhere(mask)
+        idx = np.argwhere(mask)  # rows are (axis0, axis1) = (x, y)
         centroid = idx.mean(axis=0)
         order = np.argsort(((idx - centroid) ** 2).sum(axis=1))
         return [tuple(int(v) for v in idx[i]) for i in order[:8]]
-    cy, cx = h // 2, w // 2
+    cx, cy = nx // 2, ny // 2
     offsets = [(0, 0), (-3, -3), (-3, 3), (3, -3), (3, 3), (0, 6), (6, 0), (-6, -6)]
     out = []
-    for dy, dx in offsets:
-        y, x = cy + dy, cx + dx
-        if 0 <= y < h and 0 <= x < w:
-            out.append((y, x))
+    for dx, dy in offsets:
+        x, y = cx + dx, cy + dy
+        if 0 <= x < nx and 0 <= y < ny:
+            out.append((x, y))
     return out
+
+
+def _verify_probes(data_path, probes, sub):
+    """Guard the `(x, y)` convention: the bundle's own on-disk data at each
+    probe's `(x, y)` must equal the sample the probe was derived from — a
+    transposed convention is caught here, not only by a downstream consumer
+    reading the contract literally."""
+    check = nifti.read_nii(data_path)
+    for p in probes:
+        x, y = p["x"], p["y"]
+        for t, v in enumerate(sub):
+            expected = float(np.nan_to_num(v[x, y]))
+            got = float(check[x, y, t]) if check.ndim == 3 else float(check[x, y])
+            if not math.isclose(expected, got, rel_tol=1e-5, abs_tol=1e-6):
+                raise AssertionError(
+                    f"{data_path}: probe (x={x}, y={y}) t={t} reads {got} from "
+                    f"the bundle but was derived from {expected} — x/y convention "
+                    "mismatch between the probe and the written NIfTI"
+                )
 
 
 def _fit_bundle(qmrust, recipe, data_path, aux_paths):
@@ -329,15 +351,22 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
     """Write the playground payload for one model as real NIfTI:
 
     `<model>.nii.gz` (float32, shape (nx, ny, 1, nt)), `<model>_mask.nii.gz`
-    when the collection has a mask, and `<model>.json` with metadata plus a
-    handful of CLI-fitted `probes` voxels the browser's own fit must match.
+    when the collection has a mask, `<model>_<auxname>.nii.gz` per aux input
+    the collection resolved (so the fit that produced `probes` is
+    reproducible from the shipped payload alone), and `<model>.json` with
+    metadata plus a handful of CLI-fitted `probes` voxels the browser's own
+    fit must match.
+
+    A probe's `x`/`y` are indices along `dims[0]`/`dims[1]` — the array's
+    first and second axes, NIfTI's own on-disk voxel-index order (`data[x,
+    y, 0, t]`), not row/column image-display order. `_verify_probes` checks
+    this against the just-written file before returning.
 
     Downsamples by the smallest integer factor whose *compressed* payload
     (data + mask) fits `max_bytes` — gzip changes the size-vs-resolution
     arithmetic, so the budget must be measured on-disk, not on raw floats.
     """
     vols = [nifti.slice2d(nifti.read_nii(p)) for _, p in coll.volumes]
-    ny, nx = vols[0].shape
     nt = len(vols)
     mask = (
         nifti.slice2d(nifti.read_nii(coll.mask)) > 0
@@ -387,42 +416,44 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
         for o in model["outputs"] if not o["diagnostic"]
     ]
 
-    # Downsampled aux inputs, written at the same factor the bundle was
-    # built at, so a fit of this exact bundle uses matching aux resolution.
+    # Downsampled aux inputs, written into the bundle at the same factor the
+    # data was built at, so a fit of this exact bundle — CLI or browser —
+    # uses matching aux resolution and reproduces the same fit.
     recipe = str(repo_root / model["recipes"]["non_bids"])
-    maps = {}
-    with tempfile.TemporaryDirectory() as aux_tmpdir:
-        aux_paths = {}
-        for name, path in coll.aux.items():
-            if name not in _AUX_FLAG:
-                continue
-            a = nifti.slice2d(nifti.read_nii(path))[::factor, ::factor]
-            a_path = pathlib.Path(aux_tmpdir) / f"{name}.nii.gz"
-            nifti.write_nii(a_path, a.reshape(a.shape + (1,)), "f4")
-            aux_paths[name] = a_path
-        try:
-            maps = _fit_bundle(qmrust, recipe, data_path, aux_paths)
-        except (RuntimeError, OSError) as e:
-            print(f"  probes: skipped, bundle fit failed ({e})", file=sys.stderr)
-            maps = {}
+    aux_paths = {}
+    aux_files = {}
+    for name, path in coll.aux.items():
+        if name not in _AUX_FLAG:
+            continue
+        a = nifti.slice2d(nifti.read_nii(path))[::factor, ::factor]
+        a_path = out_dir / f"{model['name']}_{name}.nii.gz"
+        nifti.write_nii(a_path, a.reshape(a.shape + (1,)), "f4")
+        aux_paths[name] = a_path
+        aux_files[name] = a_path.name
+    try:
+        maps = _fit_bundle(qmrust, recipe, data_path, aux_paths)
+    except (RuntimeError, OSError) as e:
+        print(f"  probes: skipped, bundle fit failed ({e})", file=sys.stderr)
+        maps = {}
 
     probes = []
     if maps:
-        for y, x in _pick_probe_voxels(msub > 0 if msub is not None else None, (h, w)):
+        for x, y in _pick_probe_voxels(msub > 0 if msub is not None else None, (h, w)):
             expected = {}
             ok = True
             for o in outputs:
                 arr = maps.get(o["name"])
-                if arr is None or y >= arr.shape[0] or x >= arr.shape[1]:
+                if arr is None or x >= arr.shape[0] or y >= arr.shape[1]:
                     ok = False
                     break
-                v = float(arr[y, x])
+                v = float(arr[x, y])
                 if not math.isfinite(v):
                     ok = False
                     break
                 expected[o["name"]] = v
             if ok and expected:
                 probes.append({"x": x, "y": y, "expected": expected})
+        _verify_probes(data_path, probes, [v[::factor, ::factor] for v in vols])
 
     meta = {
         "model": model["name"],
@@ -437,6 +468,7 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
         "files": {
             "data": data_path.name,
             "mask": mask_path.name if mask_path else None,
+            "aux": aux_files,
         },
         "probes": probes,
     }

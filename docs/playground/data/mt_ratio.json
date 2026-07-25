@@ -28,7 +28,8 @@
  "config": "model: mt_ratio\n\n# MTR = 100 * (MToff - MTon) / MToff. There is no acquisition protocol and no\n# fit options, so this config carries nothing but the model name.\n#\n# Two uses:\n#   - bidsify a qMRLab named set (one <role>.mat per role \u2014 MTon.mat, MToff.mat\n#     \u2014 plus Mask.mat) from --mat-dir; this config is the --config input:\n#\n#       qmrust bidsify --model mt_ratio --mat-dir <dir> \\\n#         --config recipes/non-bids/mt_ratio_config.yaml --subject 01 --out ds\n#\n#   - fit a stacked 4D NIfTI whose two volumes are [mt-on, mt-off], with the\n#     mask via --mask:\n#\n#       qmrust fit --data mton_mtoff.nii.gz --mask Mask.mat \\\n#         --config recipes/non-bids/mt_ratio_config.yaml --output-dir out_mtr\n",
  "files": {
   "data": "mt_ratio.nii.gz",
-  "mask": "mt_ratio_mask.nii.gz"
+  "mask": "mt_ratio_mask.nii.gz",
+  "aux": {}
  },
  "probes": [
   {
@@ -39,22 +40,22 @@
    }
   },
   {
-   "x": 63,
-   "y": 64,
+   "x": 64,
+   "y": 63,
    "expected": {
     "MTR": 31.643720571595306
    }
   },
   {
-   "x": 65,
-   "y": 67,
+   "x": 67,
+   "y": 65,
    "expected": {
     "MTR": 16.881402795222
    }
   },
   {
-   "x": 64,
-   "y": 63,
+   "x": 63,
+   "y": 64,
    "expected": {
     "MTR": 13.188798411418535
    }
@@ -67,22 +68,22 @@
    }
   },
   {
-   "x": 62,
-   "y": 63,
+   "x": 63,
+   "y": 62,
    "expected": {
     "MTR": 18.855234677212643
    }
   },
   {
-   "x": 66,
-   "y": 67,
+   "x": 67,
+   "y": 66,
    "expected": {
     "MTR": 13.643307872923206
    }
   },
   {
-   "x": 65,
-   "y": 68,
+   "x": 68,
+   "y": 65,
    "expected": {
     "MTR": 7.694824146881754
    }

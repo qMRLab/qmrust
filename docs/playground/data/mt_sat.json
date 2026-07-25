@@ -40,7 +40,8 @@
  "config": "model: mt_sat\n\n# Non-BIDS / bidsify protocol source: per-weighting nominal flip angle (deg)\n# and repetition time (s). bidsify writes these into the MTS sidecars\n# (FlipAngle / RepetitionTimeExcitation); a non-BIDS fit reads them directly.\nmtw: { flip_angle: 6, repetition_time: 0.028 }\npdw: { flip_angle: 6, repetition_time: 0.028 }\nt1w: { flip_angle: 20, repetition_time: 0.018 }\n\n# Options (always used; not BIDS metadata).\n# B1 correction is applied only when a B1 map (TB1map) is supplied.\nb1_correction_factor: 0.4\nexport_mtr: true\n\n# Non-BIDS input is a named set: one <role>.nii.gz per role under --nii-dir\n# (MTw.nii.gz, PDw.nii.gz, T1w.nii.gz); mask via --mask/--nii-mask. Example:\n#\n#   qmrust bidsify --model mt_sat --nii-dir <dir> \\\n#     --config recipes/non-bids/mt_sat_config.yaml --subject 01 --out ds\n",
  "files": {
   "data": "mt_sat.nii.gz",
-  "mask": null
+  "mask": null,
+  "aux": {}
  },
  "probes": [
   {
@@ -62,8 +63,8 @@
    }
   },
   {
-   "x": 67,
-   "y": 61,
+   "x": 61,
+   "y": 67,
    "expected": {
     "MTSAT": 2.497199228190386,
     "T1": 1.6553896663110148,
@@ -71,8 +72,8 @@
    }
   },
   {
-   "x": 61,
-   "y": 67,
+   "x": 67,
+   "y": 61,
    "expected": {
     "MTSAT": 1.8158273402394647,
     "T1": 2.51953588893889,
@@ -89,8 +90,8 @@
    }
   },
   {
-   "x": 70,
-   "y": 64,
+   "x": 64,
+   "y": 70,
    "expected": {
     "MTSAT": 2.4813291387988357,
     "T1": 1.5341340097660514,
@@ -98,8 +99,8 @@
    }
   },
   {
-   "x": 64,
-   "y": 70,
+   "x": 70,
+   "y": 64,
    "expected": {
     "MTSAT": 0.6952289613980133,
     "T1": 2.0534358448873458,

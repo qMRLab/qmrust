@@ -96,6 +96,13 @@ previewing locally.
 - **`<model>_mask.nii.gz`** — present only when the collection has a mask;
   same in-plane dims as the data file (`(nx, ny, 1)`), float32, values `0.0`
   or `1.0`.
+- **`<model>_<auxname>.nii.gz`** — one per auxiliary input the collection
+  resolved (`B1map`, `B0map`, `R1map`), present only for models that declare
+  and find one. Same in-plane dims and downsample `factor` as the data file
+  (`(nx, ny, 1)`), float32. Shipped so a model whose recipe uses an aux input
+  to constrain the fit (e.g. `qmt_spgr`'s `use_r1map_to_constrain_r1f`) is
+  reproducible in the browser exactly as the CLI fit it — without the aux,
+  those outputs cannot match `probes`.
 - **`<model>.json`** — the sidecar metadata:
   - `model`, `title` — registry identity and display title.
   - `dims` — `[nx, ny, 1, nt]`, matching the `.nii.gz` header.
@@ -110,21 +117,34 @@ previewing locally.
   - `outputs` — `[{name, unit}]` for every non-diagnostic output map.
   - `config` — the full text of the model's non-BIDS recipe YAML, ready to
     hand to `wasm`/CLI fit calls as-is.
-  - `files` — `{data, mask}`, the filenames (relative to this directory) of
-    the two `.nii.gz` payloads above; `mask` is `null` when the collection
-    has none.
+  - `files` — `{data, mask, aux}`: `data`/`mask` are the `.nii.gz` filenames
+    above (`mask` is `null` when the collection has none); `aux` is an object
+    mapping aux input name (e.g. `"R1map"`) to its `.nii.gz` filename, empty
+    when the model resolved none. A consumer that fits this bundle must load
+    every entry in `aux` and pass it through alongside `data`/`mask` — a
+    partial fit (data only) will not reproduce `probes` for a model whose
+    recipe constrains the fit with an aux input.
   - `probes` — a short list of oracle voxels for verifying a browser fit
     against the CLI's, numerically instead of by eye. Each entry is
-    `{"x": <col>, "y": <row>, "expected": {<output name>: <value>, ...}}`,
-    where `x`/`y` index the `(nx, ny)` plane the same way `dims[0]`/`dims[1]`
-    do. Voxels are chosen deterministically: the in-mask voxels nearest the
-    mask centroid (or, with no mask, the slice center plus a handful of fixed
+    `{"x": <i>, "y": <j>, "expected": {<output name>: <value>, ...}}`, where
+    `x`/`y` are indices into the `.nii.gz` array's first and second axes
+    respectively — i.e. `data[x, y, 0, t]` for plane `t` — the same order as
+    `dims[0]`/`dims[1]` and NIfTI's own on-disk voxel-index order. This is
+    **not** row/column image-display order (where the first index is
+    usually the row = the second spatial axis); a consumer that addresses
+    voxels by `(row, col)` must swap before comparing against `x`/`y`. Voxels
+    are chosen deterministically: the in-mask voxels nearest the mask
+    centroid (or, with no mask, the slice center plus a handful of fixed
     offsets around it), most-central first. Every probe was produced by
-    fitting the *exact* `<model>.nii.gz` (and, when present, its aux inputs at
-    the same downsample factor) with `qmrust fit`, so a probe is present only
-    when every one of that model's outputs was finite at that voxel. A
-    scrambled read of the data volume (wrong axis order, wrong plane) will
-    fail these checks immediately, rather than only looking wrong on screen.
+    fitting the *exact* `<model>.nii.gz` bundle (data, mask, and every file
+    in `files.aux`) with `qmrust fit`, so a probe is present only when every
+    one of that model's outputs was finite at that voxel, and
+    `_verify_probes` (in `make_docs_figures.py`) re-reads the written
+    `.nii.gz` immediately after and asserts each probe's `(x, y)` addresses
+    the same sample it was derived from — so a transposed convention fails
+    at generation time, not only downstream. A scrambled read of the data
+    volume (wrong axis order, wrong plane) will fail these checks
+    immediately, rather than only looking wrong on screen.
 
 `index.json` is unchanged: `{"models": [<model name>, ...]}`, one entry per
 model with a bundle.

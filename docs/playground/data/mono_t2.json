@@ -149,44 +149,45 @@
  "config": "model: mono_t2\n\n# non-BIDS: protocol from this file; mask via --mask/--nii-mask.\n# All times are in seconds (BIDS/SI). qMRLab mono_t2 default protocol:\n# 30 spin echoes, 12.8 ms spacing (12.8..384 ms).\necho_times:\n- 0.0128\n- 0.0256\n- 0.0384\n- 0.0512\n- 0.064\n- 0.0768\n- 0.0896\n- 0.1024\n- 0.1152\n- 0.128\n- 0.1408\n- 0.1536\n- 0.1664\n- 0.1792\n- 0.192\n- 0.2048\n- 0.2176\n- 0.2304\n- 0.2432\n- 0.256\n- 0.2688\n- 0.2816\n- 0.2944\n- 0.3072\n- 0.32\n- 0.3328\n- 0.3456\n- 0.3584\n- 0.3712\n- 0.384\n\n# Algorithm options (always used; not BIDS metadata).\nfit_type: exponential\ndrop_first_echo: false\noffset_term: false\n",
  "files": {
   "data": "mono_t2.nii.gz",
-  "mask": "mono_t2_mask.nii.gz"
+  "mask": "mono_t2_mask.nii.gz",
+  "aux": {}
  },
  "probes": [
   {
-   "x": 23,
-   "y": 25,
+   "x": 25,
+   "y": 23,
    "expected": {
     "T2": 0.09133737066864842,
     "M0": 1309.8859492665222
    }
   },
   {
-   "x": 24,
-   "y": 25,
+   "x": 25,
+   "y": 24,
    "expected": {
     "T2": 0.13576091743732316,
     "M0": 1434.7533313317476
    }
   },
   {
-   "x": 23,
-   "y": 26,
+   "x": 26,
+   "y": 23,
    "expected": {
     "T2": 0.07296242158622636,
     "M0": 1181.2736205351441
    }
   },
   {
-   "x": 23,
-   "y": 24,
+   "x": 24,
+   "y": 23,
    "expected": {
     "T2": 0.08228214122189782,
     "M0": 1193.6469830862584
    }
   },
   {
-   "x": 24,
-   "y": 26,
+   "x": 26,
+   "y": 24,
    "expected": {
     "T2": 0.09375001953173911,
     "M0": 1170.6490366609899
@@ -201,16 +202,16 @@
    }
   },
   {
-   "x": 22,
-   "y": 25,
+   "x": 25,
+   "y": 22,
    "expected": {
     "T2": 0.3,
     "M0": 1671.6062423087617
    }
   },
   {
-   "x": 22,
-   "y": 26,
+   "x": 26,
+   "y": 22,
    "expected": {
     "T2": 0.3,
     "M0": 1483.7796308000459

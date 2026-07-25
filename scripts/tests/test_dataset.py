@@ -28,7 +28,7 @@ def named_model(**over):
         },
         "protocol_schema": [],
         "required_inputs": [],
-        "outputs": [],
+        "outputs": [{"name": "MTR", "bids_suffix": "MTR", "unit": "%", "diagnostic": False}],
         "params": [{"name": "MTR", "lower": None, "upper": None, "fixed": False}],
         "recipes": {"bids": "recipe.yaml", "non_bids": "recipe.yaml", "sim": None},
     }
@@ -92,6 +92,66 @@ class TestNamedVolumeMatching(unittest.TestCase):
             plane_means = [planes[:, :, t].mean() for t in range(nt)]
             # volume_ids[0] == "MTon" must be the darker (saturated) plane.
             self.assertLess(plane_means[0], plane_means[1])
+
+
+class TestProbeConvention(unittest.TestCase):
+    """`probes[].x`/`.y` must index the bundle exactly like `dims[0]`/`dims[1]`
+    do — NIfTI's own on-disk voxel order — not row/column image-display
+    order. An asymmetric per-voxel value pattern makes a transposed
+    convention fail immediately, unlike the constant-valued fixture above."""
+
+    def _dataset(self, tmp):
+        anat = pathlib.Path(tmp) / "sub-01" / "anat"
+        anat.mkdir(parents=True)
+        # 4 (x) by 5 (y): value = 10*x + y, so every off-diagonal voxel
+        # changes under an x/y swap.
+        grid = [[10 * x + y for y in range(5)] for x in range(4)]
+        nifti.write_nii(anat / "sub-01_mt-off_MTR.nii.gz", grid)
+        (anat / "sub-01_mt-off_MTR.json").write_text("{}")
+        nifti.write_nii(anat / "sub-01_mt-on_MTR.nii.gz",
+                        [[v / 2 for v in row] for row in grid])
+        (anat / "sub-01_mt-on_MTR.json").write_text("{}")
+        return tmp
+
+    def _bundle(self, tmp):
+        (tmp / "recipe.yaml").write_text("model: mt_ratio\n")
+        model = named_model()
+        coll = dataset.find(tmp, model)
+        out_dir = tmp / "bundle"
+        figs.bundle_slice(
+            coll, model, out_dir, max_bytes=10_000, repo_root=tmp,
+            qmrust="./target/release/qmrust",
+        )
+        return coll, out_dir, model
+
+    def test_probe_xy_matches_bundle_storage_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            self._dataset(tmp)
+            _, out_dir, model = self._bundle(tmp)
+            meta = json.loads((out_dir / f"{model['name']}.json").read_text())
+            data = nifti.read_nii(out_dir / meta["files"]["data"])
+            self.assertTrue(meta["probes"], "no probes recorded")
+            for p in meta["probes"]:
+                x, y = p["x"], p["y"]
+                # plane 0 is MTon = grid/2 at (x, y); a transposed convention
+                # would read (10*y + x)/2 here instead.
+                self.assertAlmostEqual(float(data[x, y, 0]), (10 * x + y) / 2, places=4)
+
+    def test_verify_probes_rejects_a_transposed_convention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            self._dataset(tmp)
+            coll, out_dir, model = self._bundle(tmp)
+            data_path = out_dir / f"{model['name']}.nii.gz"
+            sub = [nifti.slice2d(nifti.read_nii(p)) for _, p in coll.volumes]
+            probes = [{"x": 1, "y": 3}]
+            figs._verify_probes(data_path, probes, sub)  # matches: no raise
+            # A source transposed relative to what was written (the bug this
+            # guards against) must be caught, not silently accepted.
+            transposed = [v.T for v in sub]
+            with self.assertRaises(AssertionError):
+                figs._verify_probes(data_path, probes, transposed)
 
 
 if __name__ == "__main__":
