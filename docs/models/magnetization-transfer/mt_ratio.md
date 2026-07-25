@@ -37,12 +37,12 @@ Computes the magnetization transfer ratio from two images: one acquired with an 
 
 ## What the model reads
 
-A fixed set of 2 role-labeled volumes. Order does not matter — each volume is matched to its role by name.
+A fixed set of 2 role-labeled volumes. Order does not matter — each volume is matched to its role by its BIDS filename entities.
 
-| Role |
-|---|
-| `MTon` |
-| `MToff` |
+| Role | Entities |
+|---|---|
+| `MTon` | `mt-on` |
+| `MToff` | `mt-off` |
 
 ## Inputs
 

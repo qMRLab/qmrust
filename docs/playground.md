@@ -10,7 +10,10 @@ WebAssembly unchanged, so the numbers here come from exactly the same Rust
 code the command-line tool runs — no server, no upload, no Python.
 
 Pick a model, press **Fit slice**, then click a voxel to see its measured data
-against the model's forward signal at the fitted parameters.
+against the model's forward signal at the fitted parameters — available for
+models whose fitted parameters are all written as output maps. A model with
+nuisance parameters that are not exported as maps (its fit still succeeds;
+only the per-voxel curve view is unavailable) reports why when you click.
 
 :::{iframe} ./playground/index.html
 :width: 100%

@@ -25,7 +25,7 @@ One important constraint carries over from the core's purity: there is no
 `.mat`/BIDS protocol source in the browser, so acquisition parameters (e.g.
 inversion times, qMT protocol rows) must be given explicitly in the config
 YAML string passed to every `api`/`wasm` call. See
-[`crates/qmrust-wasm/README.md`](../crates/qmrust-wasm/README.md) for the full
+[`crates/qmrust-wasm/README.md`](../../crates/qmrust-wasm/README.md) for the full
 function-by-function API reference and build recipe.
 
 ## Planned: a browser UI

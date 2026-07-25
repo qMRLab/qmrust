@@ -60,6 +60,23 @@ def find(bids_dir, model):
                 ordered.append(match)
         if len(ordered) == len(rows):
             volumes = ordered
+    elif model["measurement"]["kind"] == "named":
+        # Order to the model's own canonical roles: BIDS filename entity
+        # tokens (e.g. "mt-on"), never glob order.
+        roles = model["measurement"]["roles"]
+        ordered = []
+        pool = list(volumes)
+        for role in roles:
+            tokens = [f"{e['key']}-{e['value']}" for e in role["entities"]]
+            match = next(
+                (v for v in pool if all(t in v[1].name for t in tokens)),
+                None,
+            )
+            if match:
+                pool.remove(match)
+                ordered.append(match)
+        if len(ordered) == len(roles):
+            volumes = ordered
 
     deriv = bids_dir / "derivatives"
     aux = {}

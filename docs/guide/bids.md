@@ -103,5 +103,5 @@ not by file order.
 Sidecar fields resolved through `protocol_schema()` are read as-is — qmrust expects them
 in BIDS/SI units, so an `InversionTime` sidecar value of `0.35` means 350 ms, and the
 resulting fitted map (e.g. `T1map`) is in seconds too. See the "Units — BIDS-native (SI)"
-principle in [`CLAUDE.md`](../CLAUDE.md) for the full rule and how it differs from
+principle in [`CLAUDE.md`](../../CLAUDE.md) for the full rule and how it differs from
 qMRLab (milliseconds).

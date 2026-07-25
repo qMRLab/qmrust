@@ -64,8 +64,9 @@ function draw(canvas, values, h, w, cmap, mask) {
   ctx.putImageData(img, 0, 0);
 }
 
-function panel(caption, canvas) {
+function panel(caption, canvas, kind) {
   const fig = document.createElement("figure");
+  if (kind) fig.dataset.panel = kind;
   const cap = document.createElement("figcaption");
   cap.textContent = caption;
   fig.append(canvas, cap);
@@ -77,7 +78,12 @@ function showInputs(meta) {
   const panels = $("panels");
   panels.replaceChildren();
   const c = document.createElement("canvas");
-  const first = meta.data4.subarray(0, h * w);
+  // `data4` is t-fastest (voxel i's time course occupies [i*nt, (i+1)*nt)),
+  // matching the layout `fit_volume` expects — so volume 0 is every voxel's
+  // first sample, not the first h*w floats.
+  const n = h * w;
+  const first = new Float64Array(n);
+  for (let i = 0; i < n; i++) first[i] = meta.data4[i * nt];
   draw(c, first, h, w, CMAPS.gray, meta.maskU8);
   c.onclick = (e) => plotVoxel(meta, e, c);
   panels.append(panel(`${meta.labels[0]} — click a voxel`, c));
@@ -85,6 +91,7 @@ function showInputs(meta) {
 }
 
 function fitSlice(meta) {
+  if (!meta) { status("no bundle loaded — pick a model first"); return; }
   status("fitting…");
   const t0 = performance.now();
   // `dims` is `&[usize]` on the Rust side, so it must arrive as a Uint32Array,
@@ -98,12 +105,13 @@ function fitSlice(meta) {
   lastMaps = maps;
   const [h, w] = meta.dims;
   const panels = $("panels");
+  panels.querySelectorAll("[data-panel=output]").forEach((el) => el.remove());
   for (const o of meta.outputs) {
     const values = maps[o.name];
     if (!values) continue;
     const c = document.createElement("canvas");
     draw(c, values, h, w, CMAPS.magma, meta.maskU8);
-    panels.append(panel(`${o.name}${o.unit ? ` [${o.unit}]` : ""}`, c));
+    panels.append(panel(`${o.name}${o.unit ? ` [${o.unit}]` : ""}`, c, "output"));
   }
   status(`fitted in ${Math.round(performance.now() - t0)} ms`);
 }
@@ -116,7 +124,15 @@ function plotVoxel(meta, event, canvas) {
   const y = Math.floor(((event.clientY - rect.top) / rect.height) * h);
   const i = y * w + x;
   const measured = [];
-  for (let t = 0; t < nt; t++) measured.push(meta.data4[i + t * h * w]);
+  for (let t = 0; t < nt; t++) measured.push(meta.data4[i * nt + t]);
+  const outputNames = new Set(meta.outputs.map((o) => o.name));
+  if (!meta.params.every((p) => outputNames.has(p))) {
+    status(
+      "this model's nuisance parameters are not written as output maps, " +
+      "so no curve is available",
+    );
+    return;
+  }
   const params = meta.params.map((p) => lastMaps[p]?.[i] ?? NaN);
   if (params.some((v) => !Number.isFinite(v))) { status("no fit at that voxel"); return; }
   const predicted = JSON.parse(wasm.forward(meta.config, Float64Array.from(params), "{}"));
@@ -186,9 +202,12 @@ async function main() {
     try {
       current = await loadBundle(select.value);
     } catch (e) {
+      current = null;
+      $("fit").disabled = true;
       status(`could not load bundle "${select.value}" (${e.message})`);
       return;
     }
+    $("fit").disabled = !wasm;
     lastMaps = null;
     showInputs(current);
   };

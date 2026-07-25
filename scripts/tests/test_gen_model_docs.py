@@ -71,8 +71,14 @@ class TestRendering(unittest.TestCase):
         self.assertNotIn("| `MTR` | `MTRmap` | % | — | free |", table)
 
     def test_named_roles_are_labeled_by_role(self):
-        m = minimal_model(measurement={"kind": "named",
-                                       "roles": ["MTon", "MToff"], "rows": []})
+        m = minimal_model(measurement={
+            "kind": "named",
+            "roles": [
+                {"role": "MTon", "entities": [{"key": "mt", "value": "on"}]},
+                {"role": "MToff", "entities": [{"key": "mt", "value": "off"}]},
+            ],
+            "rows": [],
+        })
         self.assertEqual(g.identity_labels(m), ["MTon", "MToff"])
 
     def test_diagnostics_are_separated_from_quantitative_maps(self):

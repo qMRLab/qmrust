@@ -12,7 +12,9 @@ The curve panel's forward signal comes from `qmrust sim signal`, so the physics
 lives in Rust and is never reimplemented here.
 """
 import argparse
+import gzip
 import json
+import math
 import pathlib
 import subprocess
 import sys
@@ -43,7 +45,17 @@ def _title_for(identity, path):
 
 def fig_inputs(coll, model, out_dir):
     n = len(coll.volumes)
-    titles = [_title_for(identity, path) for identity, path in coll.volumes]
+    named = model["measurement"]["kind"] == "named"
+    if named:
+        # `dataset.find` has already ordered `coll.volumes` to the model's
+        # canonical roles, so the role name is a truer title than anything
+        # derived from the filename.
+        roles = model["measurement"]["roles"]
+        titles = [r["role"] for r in roles] if len(roles) == n else [
+            _title_for(identity, path) for identity, path in coll.volumes
+        ]
+    else:
+        titles = [_title_for(identity, path) for identity, path in coll.volumes]
     panel = 3.2 if any("\n" in t for t in titles) else 2.0
     fig, axes = style.grid(n, panel=panel)
     for ax, (identity, path), title in zip(axes, coll.volumes, titles):
@@ -193,7 +205,7 @@ def fig_curve(coll, model, out_dir, qmrust, repo_root):
 
     named = model["measurement"]["kind"] == "named"
     labels = [label_for(i) or p.name for i, p in coll.volumes] if not named else [
-        r for r in model["measurement"]["roles"]
+        r["role"] for r in model["measurement"]["roles"]
     ]
     try:
         predicted = forward_curve(qmrust, recipe, params, coll, voxel)
@@ -205,13 +217,20 @@ def fig_curve(coll, model, out_dir, qmrust, repo_root):
     ax.set_facecolor(style.BG)
     if named:
         # MTR-style models carry no amplitude term, so measured and predicted
-        # live on unrelated absolute scales; normalize each to its own max so
-        # the bars compare shape/ratio, the only thing that is meaningful.
-        measured_n = np.array(measured) / max(np.max(np.abs(measured)), 1e-12)
-        predicted_n = np.array(predicted) / max(np.max(np.abs(predicted)), 1e-12)
+        # live on unrelated absolute scales. Normalizing each bar pair to its
+        # own max would hide a role mismatch by construction (both bars would
+        # always reach 1.0). Instead plot the measured values as-is and scale
+        # the forward curve by a single common factor (least-squares, not
+        # per-bar), so a real discrepancy between measured and predicted
+        # remains visible.
+        measured_a = np.array(measured)
+        predicted_a = np.array(predicted)
+        denom = np.sum(predicted_a**2)
+        scale = np.sum(measured_a * predicted_a) / denom if denom > 0 else 1.0
         x = np.arange(len(measured))
-        ax.bar(x - 0.18, measured_n, width=0.34, label="measured", color="#58a6ff")
-        ax.bar(x + 0.18, predicted_n, width=0.34, label="forward model", color="#f0883e")
+        ax.bar(x - 0.18, measured_a, width=0.34, label="measured", color="#58a6ff")
+        ax.bar(x + 0.18, predicted_a * scale, width=0.34,
+               label="forward model (scaled)", color="#f0883e")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, color=style.MUTED, fontsize=7)
     else:
@@ -241,7 +260,7 @@ def fig_curve(coll, model, out_dir, qmrust, repo_root):
                 color="#f0883e", lw=1.6, label="forward model")
         ax.plot(np.array(x)[order], np.array(measured)[order], "o",
                 color="#58a6ff", ms=4, label="measured")
-    ax.set_ylabel("normalized signal" if named else "signal", color=style.MUTED, fontsize=8)
+    ax.set_ylabel("signal", color=style.MUTED, fontsize=8)
     ax.tick_params(colors=style.MUTED, labelsize=7)
     for s in ax.spines.values():
         s.set_color(style.MUTED)
@@ -258,14 +277,65 @@ def fig_curve(coll, model, out_dir, qmrust, repo_root):
     return True
 
 
-def bundle_slice(coll, model, out_dir, max_bytes):
-    """Write a downsampled slice + config as a playground payload.
+_AUX_FLAG = {"B1map": "--b1map", "B0map": "--b0map", "R1map": "--r1map"}
 
-    Downsamples by the smallest integer factor whose payload fits `max_bytes`,
-    so a 30-echo 320x260 dataset costs the same as a 9-TI 128x128 one.
+
+def _compressed_size(arr, dtype):
+    return len(gzip.compress(nifti.encode(arr, dtype)))
+
+
+def _pick_probe_voxels(mask, shape):
+    """Deterministic candidate voxels: in-mask nearest the mask centroid,
+    then the mask-centroid rule generalized to a handful of fixed offsets
+    around it (or the slice center, when there is no mask) — always the same
+    voxels for the same slice, so probes are reproducible across runs."""
+    h, w = shape
+    if mask is not None and mask.any():
+        idx = np.argwhere(mask)
+        centroid = idx.mean(axis=0)
+        order = np.argsort(((idx - centroid) ** 2).sum(axis=1))
+        return [tuple(int(v) for v in idx[i]) for i in order[:8]]
+    cy, cx = h // 2, w // 2
+    offsets = [(0, 0), (-3, -3), (-3, 3), (3, -3), (3, 3), (0, 6), (6, 0), (-6, -6)]
+    out = []
+    for dy, dx in offsets:
+        y, x = cy + dy, cx + dx
+        if 0 <= y < h and 0 <= x < w:
+            out.append((y, x))
+    return out
+
+
+def _fit_bundle(qmrust, recipe, data_path, aux_paths):
+    """Fit the exact bundle NIfTI with the CLI; returns {output_name: 2D array}."""
+    with tempfile.TemporaryDirectory() as d:
+        d = pathlib.Path(d)
+        cmd = [qmrust, "fit", "--data", str(data_path),
+               "--config", recipe, "--output-dir", str(d / "out")]
+        for name, path in aux_paths.items():
+            flag = _AUX_FLAG.get(name)
+            if flag:
+                cmd += [flag, str(path)]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip() or "fit failed")
+        out = {}
+        for p in sorted((d / "out").rglob("*.nii*")):
+            name = p.name.split(".")[0].split("_")[-1]
+            out[name] = np.atleast_2d(nifti.read_nii(p))
+        return out
+
+
+def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
+    """Write the playground payload for one model as real NIfTI:
+
+    `<model>.nii.gz` (float32, shape (nx, ny, 1, nt)), `<model>_mask.nii.gz`
+    when the collection has a mask, and `<model>.json` with metadata plus a
+    handful of CLI-fitted `probes` voxels the browser's own fit must match.
+
+    Downsamples by the smallest integer factor whose *compressed* payload
+    (data + mask) fits `max_bytes` — gzip changes the size-vs-resolution
+    arithmetic, so the budget must be measured on-disk, not on raw floats.
     """
-    import math
-
     vols = [nifti.slice2d(nifti.read_nii(p)) for _, p in coll.volumes]
     ny, nx = vols[0].shape
     nt = len(vols)
@@ -275,51 +345,103 @@ def bundle_slice(coll, model, out_dir, max_bytes):
         == vols[0].shape
         else None
     )
-    planes = nt + (1 if mask is not None else 0)
+
+    def build(factor):
+        sub = [v[::factor, ::factor] for v in vols]
+        h, w = sub[0].shape
+        flat = np.zeros((h, w, 1, nt), dtype=np.float32)
+        for t, v in enumerate(sub):
+            flat[:, :, 0, t] = np.nan_to_num(v)
+        msub = mask[::factor, ::factor].astype(np.float32) if mask is not None else None
+        return h, w, flat, msub
+
     factor = 1
-    while math.ceil(ny / factor) * math.ceil(nx / factor) * planes * 4 > max_bytes:
+    while True:
+        h, w, flat, msub = build(factor)
+        size = _compressed_size(flat, "f4")
+        if msub is not None:
+            size += _compressed_size(msub.reshape(h, w, 1), "f4")
+        if size <= max_bytes or (h <= 1 and w <= 1):
+            break
         factor += 1
 
-    sub = [v[::factor, ::factor] for v in vols]
-    h, w = sub[0].shape
-    flat = np.zeros((h, w, 1, nt), dtype="<f4")
-    for t, v in enumerate(sub):
-        flat[:, :, 0, t] = np.nan_to_num(v)
-    payload = [flat.reshape(-1)]
-    if mask is not None:
-        payload.append(mask[::factor, ::factor].astype("<f4").reshape(-1))
-
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / f"{model['name']}.f32").write_bytes(
-        np.concatenate(payload).astype("<f4").tobytes()
-    )
+    data_path = out_dir / f"{model['name']}.nii.gz"
+    nifti.write_nii(data_path, flat, "f4")
+    mask_path = None
+    if msub is not None:
+        mask_path = out_dir / f"{model['name']}_mask.nii.gz"
+        nifti.write_nii(mask_path, msub.reshape(h, w, 1), "f4")
+
     named = model["measurement"]["kind"] == "named"
+    volume_ids = (
+        [r["role"] for r in model["measurement"]["roles"]] if named
+        else [identity for identity, _ in coll.volumes]
+    )
+    labels = (
+        [r["role"] for r in model["measurement"]["roles"]] if named
+        else [label_for(i) for i, _ in coll.volumes]
+    )
+    outputs = [
+        {"name": o["name"], "unit": o["unit"]}
+        for o in model["outputs"] if not o["diagnostic"]
+    ]
+
+    # Downsampled aux inputs, written at the same factor the bundle was
+    # built at, so a fit of this exact bundle uses matching aux resolution.
+    recipe = str(repo_root / model["recipes"]["non_bids"])
+    maps = {}
+    with tempfile.TemporaryDirectory() as aux_tmpdir:
+        aux_paths = {}
+        for name, path in coll.aux.items():
+            if name not in _AUX_FLAG:
+                continue
+            a = nifti.slice2d(nifti.read_nii(path))[::factor, ::factor]
+            a_path = pathlib.Path(aux_tmpdir) / f"{name}.nii.gz"
+            nifti.write_nii(a_path, a.reshape(a.shape + (1,)), "f4")
+            aux_paths[name] = a_path
+        try:
+            maps = _fit_bundle(qmrust, recipe, data_path, aux_paths)
+        except (RuntimeError, OSError) as e:
+            print(f"  probes: skipped, bundle fit failed ({e})", file=sys.stderr)
+            maps = {}
+
+    probes = []
+    if maps:
+        for y, x in _pick_probe_voxels(msub > 0 if msub is not None else None, (h, w)):
+            expected = {}
+            ok = True
+            for o in outputs:
+                arr = maps.get(o["name"])
+                if arr is None or y >= arr.shape[0] or x >= arr.shape[1]:
+                    ok = False
+                    break
+                v = float(arr[y, x])
+                if not math.isfinite(v):
+                    ok = False
+                    break
+                expected[o["name"]] = v
+            if ok and expected:
+                probes.append({"x": x, "y": y, "expected": expected})
+
     meta = {
         "model": model["name"],
         "title": model["title"],
         "dims": [h, w, 1, nt],
         "factor": factor,
-        "volume_ids": (
-            model["measurement"]["roles"] if named
-            else [identity for identity, _ in coll.volumes]
-        ),
-        "labels": (
-            model["measurement"]["roles"] if named
-            else [label_for(i) for i, _ in coll.volumes]
-        ),
+        "volume_ids": volume_ids,
+        "labels": labels,
         "params": [p["name"] for p in model["params"]],
-        "outputs": [
-            {"name": o["name"], "unit": o["unit"]}
-            for o in model["outputs"] if not o["diagnostic"]
-        ],
-        "config": (
-            pathlib.Path(model["recipes"]["non_bids"]).read_text()
-        ),
-        "data": f"{model['name']}.f32",
-        "mask": mask is not None,
+        "outputs": outputs,
+        "config": (repo_root / model["recipes"]["non_bids"]).read_text(),
+        "files": {
+            "data": data_path.name,
+            "mask": mask_path.name if mask_path else None,
+        },
+        "probes": probes,
     }
     (out_dir / f"{model['name']}.json").write_text(json.dumps(meta, indent=1))
-    return factor, h, w
+    return factor, h, w, len(probes)
 
 
 def main(argv=None):
@@ -357,11 +479,11 @@ def main(argv=None):
         if fig_curve(coll, model, out_dir, args.qmrust, args.repo_root):
             print("  curve.webp")
         if args.bundle_slice:
-            factor, h, w = bundle_slice(
+            factor, h, w, n_probes = bundle_slice(
                 coll, model, args.repo_root / "docs" / "playground" / "data",
-                args.max_bytes,
+                args.max_bytes, args.repo_root, args.qmrust,
             )
-            print(f"  bundle: {h}x{w} (downsampled {factor}x)")
+            print(f"  bundle: {h}x{w} (downsampled {factor}x, {n_probes} probes)")
 
     if args.bundle_slice:
         data_dir = args.repo_root / "docs" / "playground" / "data"

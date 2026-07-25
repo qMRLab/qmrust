@@ -47,7 +47,7 @@ def identity_labels(model):
     """One label per acquired volume, from the identities the model reads."""
     meas = model["measurement"]
     if meas["kind"] == "named":
-        return list(meas["roles"])
+        return [r["role"] for r in meas["roles"]]
     return [", ".join(f"{k}={num(v)}" for k, v in row.items()) for row in meas["rows"]]
 
 
@@ -120,11 +120,18 @@ def render_acquisition(model):
     if meas["kind"] == "named":
         body += [
             f"A fixed set of {len(meas['roles'])} role-labeled volumes. Order "
-            "does not matter — each volume is matched to its role by name.",
+            "does not matter — each volume is matched to its role by its "
+            "BIDS filename entities.",
             "",
-            "| Role |",
-            "|---|",
-        ] + [f"| `{r}` |" for r in meas["roles"]]
+            "| Role | Entities |",
+            "|---|---|",
+        ] + [
+            "| `{}` | {} |".format(
+                r["role"],
+                ", ".join(f"`{e['key']}-{e['value']}`" for e in r["entities"]),
+            )
+            for r in meas["roles"]
+        ]
     else:
         keys = sorted({k for row in meas["rows"] for k in row})
         body += [

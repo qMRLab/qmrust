@@ -9,6 +9,7 @@ import struct
 import numpy as np
 
 _DTYPES = {2: "u1", 4: "<i2", 8: "<i4", 16: "<f4", 64: "<f8"}
+_DTYPE_CODES = {"u1": (2, "u1"), "f4": (16, "<f4"), "f8": (64, "<f8")}
 
 
 def _open(path, mode="rb"):
@@ -32,24 +33,38 @@ def read_nii(path):
     return np.squeeze(data.reshape(shape, order="F")).astype(float)
 
 
-def write_nii(path, arr):
-    """Write `arr` as a float64 NIfTI-1. Used for single-voxel fit inputs."""
-    arr = np.asarray(arr, dtype="<f8")
+def encode(arr, dtype="f8"):
+    """The raw (uncompressed) NIfTI-1 bytes for `arr`.
+
+    `dtype` is one of `"f4"` (float32), `"f8"` (float64), `"u1"` (uint8).
+    """
+    code, np_dtype = _DTYPE_CODES[dtype]
+    arr = np.asarray(arr, dtype=np_dtype)
     shape = arr.shape
+    itemsize = arr.itemsize
     hdr = bytearray(348)
     struct.pack_into("<i", hdr, 0, 348)
     dim = [len(shape)] + list(shape) + [1] * (7 - len(shape))
     struct.pack_into("<8h", hdr, 40, *dim)
-    struct.pack_into("<h", hdr, 70, 64)      # datatype: float64
-    struct.pack_into("<h", hdr, 72, 64)      # bitpix
+    struct.pack_into("<h", hdr, 70, code)               # datatype
+    struct.pack_into("<h", hdr, 72, itemsize * 8)        # bitpix
     struct.pack_into("<f", hdr, 108, 352.0)  # vox_offset
     struct.pack_into("<f", hdr, 76, 1.0)     # pixdim[0]
     for i in range(1, 5):
         struct.pack_into("<f", hdr, 76 + 4 * i, 1.0)
     struct.pack_into("<f", hdr, 112, 1.0)    # scl_slope
     hdr[344:348] = b"n+1\x00"
+    return bytes(hdr) + b"\x00" * 4 + arr.tobytes(order="F")
+
+
+def write_nii(path, arr, dtype="f8"):
+    """Write `arr` as a NIfTI-1 file (gzip-compressed when `path` ends `.gz`).
+
+    Defaults to float64, used for single-voxel fit inputs; pass `dtype="f4"`
+    for the smaller float32 payload the playground bundles use.
+    """
     with _open(path, "wb") as f:
-        f.write(bytes(hdr) + b"\x00" * 4 + arr.tobytes(order="F"))
+        f.write(encode(arr, dtype))
 
 
 def slice2d(arr):

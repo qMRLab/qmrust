@@ -39,13 +39,13 @@ Derives the MT saturation parameter from three spoiled gradient-echo volumes —
 
 ## What the model reads
 
-A fixed set of 3 role-labeled volumes. Order does not matter — each volume is matched to its role by name.
+A fixed set of 3 role-labeled volumes. Order does not matter — each volume is matched to its role by its BIDS filename entities.
 
-| Role |
-|---|
-| `MTw` |
-| `PDw` |
-| `T1w` |
+| Role | Entities |
+|---|---|
+| `MTw` | `flip-1`, `mt-on` |
+| `PDw` | `flip-1`, `mt-off` |
+| `T1w` | `flip-2`, `mt-off` |
 
 ### Where the protocol comes from
 

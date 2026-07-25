@@ -76,8 +76,23 @@ pub struct Output {
 pub struct MeasurementCard {
     /// `"series"` or `"named"`.
     pub kind: String,
-    pub roles: Vec<String>,
+    pub roles: Vec<RoleCard>,
     pub rows: Vec<BTreeMap<String, f64>>,
+}
+
+/// One role of a `Named` measurement, with the BIDS filename entities that
+/// identify it — the fact a docs consumer needs to match a role to a volume
+/// by entity, not by glob or array position.
+#[derive(Serialize)]
+pub struct RoleCard {
+    pub role: String,
+    pub entities: Vec<EntityCard>,
+}
+
+#[derive(Serialize)]
+pub struct EntityCard {
+    pub key: String,
+    pub value: String,
 }
 
 #[derive(Serialize)]
@@ -150,7 +165,22 @@ fn card(entry: &ModelEntry, repo_root: &Path) -> Result<ModelCard> {
     let measurement = match model.measurement() {
         MeasurementKind::Named { roles } => MeasurementCard {
             kind: "named".to_string(),
-            roles: roles.iter().map(|r| r.to_string()).collect(),
+            roles: roles
+                .iter()
+                .enumerate()
+                .map(|(i, r)| RoleCard {
+                    role: r.to_string(),
+                    entities: model
+                        .bids_volume(i)
+                        .entities
+                        .into_iter()
+                        .map(|(key, value)| EntityCard {
+                            key: key.to_string(),
+                            value,
+                        })
+                        .collect(),
+                })
+                .collect(),
             rows: vec![],
         },
         MeasurementKind::Series { rows } => MeasurementCard {
@@ -342,5 +372,26 @@ mod tests {
             .params
             .iter()
             .all(|p| p.lower.is_none() && p.upper.is_none()));
+    }
+
+    #[test]
+    fn named_model_roles_declare_entities() {
+        // A docs consumer matches a role to a filesystem volume by entity
+        // token (e.g. "mt-on"), never by glob or array position. A role with
+        // no entities would silently fall back to guessing order.
+        let cat = build(&repo_root()).unwrap();
+        for m in &cat.models {
+            if m.measurement.kind != "named" {
+                continue;
+            }
+            for r in &m.measurement.roles {
+                assert!(
+                    !r.entities.is_empty(),
+                    "{}: role '{}' declares no entities",
+                    m.name,
+                    r.role
+                );
+            }
+        }
     }
 }
