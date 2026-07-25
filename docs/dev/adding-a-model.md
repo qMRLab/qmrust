@@ -31,7 +31,21 @@ exists.
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name + BIDS
    suffix + `build` + `describe` + `dump`).
-4. Add tests: a forward → fit round-trip, and config parse/validate.
+4. Fill in that entry's `doc: ModelDoc` — title, category, a one-paragraph
+   summary, the LaTeX equation, `symbols` matching `param_names()`, citation
+   keys added to `docs/references.bib`, and the recipe paths. Then regenerate
+   the site's model pages:
+
+   ```bash
+   cargo build --release -p qmrust-cli
+   ./target/release/qmrust catalog > catalog.json
+   python3 scripts/gen_model_docs.py --catalog catalog.json
+   ```
+
+   The model's page, its gallery card, and its sidebar entry are generated
+   from that metadata — there is no page to write by hand. CI fails the build
+   if the committed pages are stale, so run this before committing.
+5. Add tests: a forward → fit round-trip, and config parse/validate.
 
 That's it. Use `models/inversion_recovery/` as the minimal reference model
 (its `protocol_schema()` maps `InversionTime` off the BIDS sidecar);
