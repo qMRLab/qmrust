@@ -8,7 +8,10 @@
 use std::f64::consts::PI;
 
 fn sample_times(dur: f64, step: f64) -> Vec<f64> {
-    let n = (dur / step).round() as usize; // tSat = 0:step:dur
+    // 0:step:dur (MATLAB colon semantics): the largest whole number of steps at
+    // or below dur — the grid never overshoots the pulse. The +epsilon keeps an
+    // exact multiple from being dropped by floating-point error.
+    let n = (dur / step + 1e-9).floor() as usize;
     (0..=n).map(|i| i as f64 * step).collect()
 }
 
