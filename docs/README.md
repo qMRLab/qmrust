@@ -50,6 +50,20 @@ committed:
 cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg
 ```
 
+`playground.md`'s iframe references the app with a relative `src`
+(`./playground/index.html`). MyST does not rewrite iframe paths the way it
+rewrites images, and book-theme's client router serves `/playground` without
+a trailing slash, so a relative `src` alone resolves to a different (broken)
+target depending on how a visitor arrives at the page. CI's build step copies
+the app to `_build/html/playground/playground/` and then rewrites that
+`src` to an absolute, `BASE_URL`-prefixed path
+(`${BASE_URL}/playground/playground/index.html`) in the built page only —
+never in the committed Markdown, whose relative form stays deployment-target
+agnostic for local preview. A local `myst start`/`myst build` preview keeps
+the unrewritten relative `src`, so the playground page's own iframe should be
+checked directly by URL, at `/playground/playground/index.html`, when
+previewing locally.
+
 ## Agent-facing docs
 
 `agents/` documents the architecture and data pipeline for coding agents. It is

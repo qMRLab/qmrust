@@ -66,8 +66,21 @@ jobs:
           BASE_URL: /${{ github.event.repository.name }}
         run: myst build --html
 
-      - name: Copy the playground app
-        run: cp -r docs/playground docs/_build/html/playground/playground
+      - name: Copy the playground app and pin its iframe target
+        env:
+          BASE_URL: /${{ github.event.repository.name }}
+        run: |
+          cp -r docs/playground docs/_build/html/playground/playground
+          python3 -c '
+          import os, pathlib
+          base = os.environ["BASE_URL"]
+          page = pathlib.Path("docs/_build/html/playground/index.html")
+          html = page.read_text()
+          old = "src=\"./playground/index.html\""
+          new = f"src=\"{base}/playground/playground/index.html\""
+          assert html.count(old) == 1, "playground iframe src marker not found or not unique"
+          page.write_text(html.replace(old, new))
+          '
 
       - uses: actions/upload-pages-artifact@v3
         with:
