@@ -2,12 +2,12 @@
  "model": "inversion_recovery",
  "title": "Inversion recovery T1",
  "dims": [
-  64,
-  64,
+  128,
+  128,
   1,
   9
  ],
- "factor": 2,
+ "factor": 1,
  "volume_ids": [
   {
    "InversionTime": 0.35
@@ -60,6 +60,66 @@
   }
  ],
  "config": "model: inversion_recovery\n\n# non-BIDS: protocol from this file; mask via --mask\n# All times are in seconds (BIDS/SI).\ninversion_times:\n- 0.350\n- 0.500\n- 0.650\n- 0.800\n- 0.950\n- 1.100\n- 1.250\n- 1.400\n- 1.700\nrepetition_time: 2.5\n\n# Algorithm options (always used; not BIDS metadata).\nmethod: magnitude\nt1_range:\n  start: 0.001\n  stop: 5.0\n  step: 0.001\nzoom:\n  iterations: 2\n  points: 21\n",
- "data": "inversion_recovery.f32",
- "mask": true
+ "files": {
+  "data": "inversion_recovery.nii.gz",
+  "mask": "inversion_recovery_mask.nii.gz"
+ },
+ "probes": [
+  {
+   "x": 59,
+   "y": 63,
+   "expected": {
+    "T1": 0.9364
+   }
+  },
+  {
+   "x": 59,
+   "y": 62,
+   "expected": {
+    "T1": 0.47030000000000005
+   }
+  },
+  {
+   "x": 60,
+   "y": 63,
+   "expected": {
+    "T1": 2.6550000000000002
+   }
+  },
+  {
+   "x": 60,
+   "y": 62,
+   "expected": {
+    "T1": 0.45380000000000004
+   }
+  },
+  {
+   "x": 58,
+   "y": 63,
+   "expected": {
+    "T1": 0.8405
+   }
+  },
+  {
+   "x": 59,
+   "y": 64,
+   "expected": {
+    "T1": 5.0
+   }
+  },
+  {
+   "x": 58,
+   "y": 62,
+   "expected": {
+    "T1": 0.869
+   }
+  },
+  {
+   "x": 60,
+   "y": 64,
+   "expected": {
+    "T1": 5.0
+   }
+  }
+ ]
 }
