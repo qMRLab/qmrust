@@ -421,13 +421,25 @@ section (exact signatures, invariants, and the verification commands), and
   wasm, the browser build reuses the exact fitting code and produces identical numbers.
 - **Each model owns its config.** Per-model `serde` structs parsed from the model's own
   YAML sub-tree; no monolithic config struct.
-- **Inputs are declared, not hardcoded.** Models declare auxiliary inputs (with BIDS
-  locators); the shell resolves them. The compute layer only ever sees named scalars.
-- **Behaviour-preserving by contract.** Refactors are validated against byte-identical
-  fit outputs (the CI OSF job runs the real pipelines end-to-end).
-- **Seams over speculation (YAGNI).** `FitStrategy::MatrixWise` remains a declared seam
-  (`bail!` until a model needs it). The BIDS sidecar→`Protocol` path began as a seam and
-  is now realized by the `rust-bids` crate.
+- **Inputs are declared, not hardcoded.** A model names the auxiliary inputs it needs;
+  the shell finds and loads them. The compute layer only ever sees named scalars.
+  *Instance:* qMT declares `R1map`/`B1map`/`B0map` with BIDS locators and reads them by
+  name — no R1/B1/B0 list exists anywhere in the shell.
+- **A derived artifact travels with the frame it was built in.** When the shell turns
+  data into an artifact and later feeds that artifact back to transform data, both
+  directions must run through the *same* computation, and the artifact must carry the
+  parameters that fix its frame of reference. Nothing in the types catches an artifact
+  calibrated in one frame and applied in another — so the reuse is made structural, not
+  hoped for. *Instance:* `mt_sat`'s B1-correction surface is built and applied by the one
+  `mt_sat` computation, and its `FitValues` carries the `b1_ref` and sequence parameters
+  it was calibrated at.
+- **Behaviour-preserving by contract.** A refactor is only correct if it leaves the fit
+  outputs byte-identical. *Instance:* the CI OSF job re-runs the real pipelines end-to-end
+  and diffs the maps.
+- **Seams over speculation (YAGNI).** Leave a typed seam where a capability is foreseeable
+  but unbuilt — not speculative machinery. *Instance:* `FitStrategy::MatrixWise` is a
+  `bail!` seam until a model needs it; the BIDS sidecar→`Protocol` path began as a seam and
+  is now the `rust-bids` crate.
 
 ---
 
