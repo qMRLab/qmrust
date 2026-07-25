@@ -22,10 +22,16 @@ async function loadWasm() {
   }
 }
 
+async function fetchOrThrow(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return r;
+}
+
 async function loadBundle(name) {
   if (bundles[name]) return bundles[name];
-  const meta = await (await fetch(`./data/${name}.json`)).json();
-  const buf = await (await fetch(`./data/${meta.data}`)).arrayBuffer();
+  const meta = await (await fetchOrThrow(`./data/${name}.json`)).json();
+  const buf = await (await fetchOrThrow(`./data/${meta.data}`)).arrayBuffer();
   const all = new Float32Array(buf);
   const [h, w, nz, nt] = meta.dims;
   const spatial = h * w * nz;
@@ -155,17 +161,34 @@ function drawCurve(measured, predicted, labels) {
 
 async function main() {
   wasm = await loadWasm();
-  const index = await (await fetch("./data/index.json")).json();
+  let index;
+  try {
+    index = await (await fetchOrThrow("./data/index.json")).json();
+  } catch (e) {
+    status(`could not load ./data/index.json (${e.message})`);
+    return;
+  }
   const select = $("model");
   for (const name of index.models) {
-    const meta = await loadBundle(name);
+    let meta;
+    try {
+      meta = await loadBundle(name);
+    } catch (e) {
+      status(`could not load bundle "${name}" (${e.message})`);
+      continue;
+    }
     const opt = document.createElement("option");
     opt.value = name; opt.textContent = meta.title;
     select.append(opt);
   }
   $("fit").disabled = !wasm;
   const select_model = async () => {
-    current = await loadBundle(select.value);
+    try {
+      current = await loadBundle(select.value);
+    } catch (e) {
+      status(`could not load bundle "${select.value}" (${e.message})`);
+      return;
+    }
     lastMaps = null;
     showInputs(current);
   };

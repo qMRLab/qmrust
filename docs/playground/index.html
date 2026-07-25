@@ -27,7 +27,7 @@
 </div>
 <div id="fallback" hidden>
   <p><strong>The WebAssembly build is not present.</strong> Build it, then reload:</p>
-  <pre><code>wasm-pack build crates/qmrust-wasm --target web --out-dir docs/playground/pkg</code></pre>
+  <pre><code>cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg</code></pre>
 </div>
 <div class="panels" id="panels"></div>
 <script type="module" src="./app.js"></script>
