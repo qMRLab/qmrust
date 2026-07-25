@@ -2022,9 +2022,10 @@ mod tests {
 
     #[test]
     fn mt_sat_recipe_stray_b1_ref_is_ignored() {
-        // A `b1_ref` in the recipe's `b1_correction` block is no longer
-        // parsed — it is ignored (not an error, not a warning). The
-        // artifact's own `b1_ref` (6.8 here) is what's inlined and used.
+        // The `b1_ref` serialized in the fitvalues artifact is authoritative;
+        // any `b1_ref` in the recipe's `b1_correction` block is ignored (not an
+        // error, not a warning). Here the recipe's 9.9 is dropped and the
+        // artifact's own 6.8 is inlined and used.
         let dir = TempDir::new("mtsat-b1-ref-mismatch");
         let fv_path = dir.0.join("fv.yaml");
         std::fs::write(&fv_path, sample_fitvalues_yaml()).unwrap();
