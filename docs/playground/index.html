@@ -2,42 +2,179 @@
 <meta charset="utf-8">
 <title>qmrust playground</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    --bg:#eef1f4; --panel:#fff; --panel-2:#f5f7f9; --ink:#161b21; --ink-2:#455060;
+    --muted:#7c8797; --line:#d6dde4; --accent:#0f9bab; --accent-ink:#0b7c8a;
+    --good:#1f9d64; --bad:#c0503a; --field:#fff;
+    --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --shadow: 0 1px 2px rgba(20,30,45,.06), 0 10px 30px rgba(20,30,45,.07);
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0b0e12; --panel:#141a21; --panel-2:#0f151b; --ink:#e7edf3; --ink-2:#a9b6c4;
+      --muted:#6c7887; --line:#232c37; --accent:#38c0cf; --accent-ink:#5fd3e0;
+      --good:#3ecb86; --bad:#e0765c; --field:#0e141a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#0b0e12; --panel:#141a21; --panel-2:#0f151b; --ink:#e7edf3; --ink-2:#a9b6c4;
+    --muted:#6c7887; --line:#232c37; --accent:#38c0cf; --accent-ink:#5fd3e0;
+    --good:#3ecb86; --bad:#e0765c; --field:#0e141a;
+  }
+  :root[data-theme="light"] {
+    --bg:#eef1f4; --panel:#fff; --panel-2:#f5f7f9; --ink:#161b21; --ink-2:#455060;
+    --muted:#7c8797; --line:#d6dde4; --accent:#0f9bab; --accent-ink:#0b7c8a;
+    --good:#1f9d64; --bad:#c0503a; --field:#fff;
+  }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body { padding: 10px; background: #0d1117; color: #e6edf3;
-         font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-  select, button, input[type=range] { background: #161b22; color: #e6edf3; border: 1px solid #30363d;
-                   border-radius: 6px; padding: 5px 9px; font: inherit; }
+  body {
+    background: var(--bg); color: var(--ink); font: 13px/1.5 var(--sans);
+    padding: 14px;
+  }
+  h1, h2, h3 { font-family: var(--sans); }
+  code, pre, textarea, input, select, .mono { font-family: var(--mono); }
+  .section-h {
+    font: 700 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); margin: 0 0 8px;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: var(--shadow); padding: 14px;
+  }
+  input, select, textarea, button {
+    background: var(--field); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 9px; padding: 6px 9px; font: 13px var(--mono);
+  }
+  input:focus, select:focus, textarea:focus, button:focus-visible {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
   button { cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
-  #status { color: #9aa7b2; }
-  #fallback { border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-bottom: 10px; }
-  code { background: #161b22; padding: 1px 4px; border-radius: 3px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .viewer { position: relative; border: 1px solid #30363d; border-radius: 6px;
-            background: #010409; max-height: 340px; max-width: 100%;
-            overflow: hidden; margin: 0 auto; }
+  button.primary { background: var(--accent); color: #04262a; border-color: var(--accent-ink); font-weight: 600; }
+  #status { color: var(--muted); }
+  #status.error { color: var(--bad); }
+
+  #fallback {
+    border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px;
+    margin-bottom: 12px; background: var(--panel-2);
+  }
+  #fallback pre { overflow-x: auto; }
+
+  .topbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 380px 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 14px;
+    align-items: start;
+  }
+  /* Capped so a model with a deeply-nested recipe (e.g. many fitting
+     sub-groups) scrolls internally instead of stretching the whole grid row
+     and leaving a large empty gap beside the (fixed-height) viewers. */
+  .recipe-card {
+    grid-column: 1; grid-row: 1 / span 2;
+    max-height: 760px; overflow-y: auto;
+  }
+  .viewer-in-wrap { grid-column: 2; grid-row: 1; }
+  .viewer-out-wrap { grid-column: 3; grid-row: 1; }
+  .curve-wrap { grid-column: 2 / span 2; grid-row: 2; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .recipe-card, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap { grid-column: 1; grid-row: auto; }
+  }
+
+  /* recipe editor */
+  .seg {
+    display: inline-flex; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px; gap: 2px;
+  }
+  .seg button {
+    border: none; background: transparent; border-radius: 999px; padding: 5px 14px;
+    font: 600 12px var(--sans); color: var(--muted);
+  }
+  .seg button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+  .seg button:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+
+  .model-line { margin: 12px 0; color: var(--ink-2); }
+  .model-line select { margin-left: 4px; }
+
+  .yaml-wrap { position: relative; }
+  .yaml-pill {
+    position: absolute; top: 8px; right: 8px; font: 700 10px var(--mono);
+    text-transform: uppercase; letter-spacing: .06em; padding: 2px 8px; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+  }
+  .yaml-pill.valid { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, var(--line)); }
+  .yaml-pill.invalid { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+  #cfg-yaml {
+    width: 100%; min-height: 360px; resize: vertical; font-size: 12px; line-height: 1.5;
+    background: var(--field);
+  }
+
+  .form-fields { display: flex; flex-direction: column; gap: 10px; }
+  .group {
+    border: 1px solid var(--line); border-radius: 12px; padding: 10px; background: var(--panel-2);
+  }
+  .group > .group-title {
+    font: 700 11px var(--mono); text-transform: uppercase; letter-spacing: .07em;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .group .form-fields { gap: 8px; }
+  .field-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
+  }
+  .field-label { color: var(--ink-2); font: 12px var(--sans); }
+  .field-key { display: block; color: var(--muted); font: 11px var(--mono); }
+  .field-row input, .field-row textarea { width: 100%; }
+  .field-row textarea { min-height: 44px; resize: vertical; }
+
+  .switch { position: relative; display: inline-block; width: 38px; height: 22px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0; background: var(--line); border-radius: 999px; cursor: pointer;
+    transition: background .15s;
+  }
+  .switch .slider::before {
+    content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px;
+    background: var(--panel); border-radius: 50%; transition: transform .15s;
+  }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(16px); }
+  .switch input:focus-visible + .slider { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+
+  .local-note { color: var(--muted); font-size: 11px; margin: 10px 0; }
+  .recipe-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+
+  /* viewers */
+  .viewer-head {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; margin-bottom: 8px; flex-wrap: wrap;
+  }
+  .viewer-head select { font-size: 12px; padding: 4px 8px; }
+  .frame-row { display: flex; align-items: center; gap: 8px; flex: 1; margin-top: 8px; }
+  .frame-row input[type=range] { flex: 1; min-width: 90px; accent-color: var(--accent); }
+  .frame-label { color: var(--muted); min-width: 8em; text-align: right; font-size: 12px; }
+  .viewer {
+    position: relative; border-radius: 12px; overflow: hidden;
+    background: #010409; margin: 0; width: 100%;
+  }
   .viewer canvas { width: 100%; height: 100%; display: block; }
-  .viewer-head { display: flex; justify-content: space-between; align-items: center;
-                 gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
-  .viewer-head h2 { font-size: 12px; font-weight: 600; color: #9aa7b2; margin: 0;
-                     text-transform: uppercase; letter-spacing: .04em; }
-  .frame-row { display: flex; align-items: center; gap: 8px; }
-  .frame-row input[type=range] { flex: 1; min-width: 120px; }
-  .frame-label { color: #9aa7b2; min-width: 10em; text-align: right; }
-  .plot-wrap { grid-column: 1 / -1; border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px;
-               margin-top: 10px; }
-  .plot-wrap h2 { font-size: 12px; font-weight: 600; color: #9aa7b2; margin: 0 0 4px;
-                  text-transform: uppercase; letter-spacing: .04em; }
+  .out-controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .out-controls select { font-size: 12px; padding: 4px 8px; }
+
   #curve { width: 100%; height: 170px; display: block; }
-  #curve-note { color: #9aa7b2; }
+  #curve-note { color: var(--muted); margin-top: 4px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
 </style>
-<div class="row">
-  <label for="model">Model</label>
-  <select id="model"></select>
-  <button id="fit">Fit slice</button>
+<div class="topbar">
   <span id="status">loading…</span>
 </div>
 <div id="fallback" hidden>
@@ -45,26 +182,49 @@
   fitting needs the wasm package. Build it, then reload:</p>
   <pre><code>cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg</code></pre>
 </div>
-<div class="grid">
-  <div>
-    <div class="viewer-head">
-      <h2>Inputs</h2>
-      <div class="frame-row">
-        <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
-        <span class="frame-label" id="frame-label">—</span>
-      </div>
+<div class="layout">
+  <div class="recipe-card card">
+    <div class="section-h">Recipe</div>
+    <div class="seg" role="tablist" aria-label="Recipe editor view">
+      <button id="tab-form" class="active" role="tab" aria-selected="true">Form</button>
+      <button id="tab-yaml" role="tab" aria-selected="false">YAML</button>
     </div>
-    <div class="viewer" id="viewer-in"><canvas id="gl-in"></canvas></div>
+    <div class="model-line">model: <select id="model"></select></div>
+    <div id="form-view"><div id="form-fields" class="form-fields"></div></div>
+    <div id="yaml-view" class="yaml-wrap" hidden>
+      <span id="yaml-pill" class="yaml-pill valid">valid</span>
+      <textarea id="cfg-yaml" spellcheck="false"></textarea>
+    </div>
+    <p class="local-note">Edits are local to your browser — nothing is uploaded or saved.</p>
+    <div class="recipe-actions">
+      <button id="fit" class="primary">Fit slice</button>
+    </div>
   </div>
-  <div>
+
+  <div class="viewer-in-wrap">
     <div class="viewer-head">
-      <h2>Fitted map</h2>
+      <h2 class="section-h" style="margin:0">Inputs</h2>
+    </div>
+    <div class="viewer card" id="viewer-in"><canvas id="gl-in"></canvas></div>
+    <div class="frame-row">
+      <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
+      <span class="frame-label" id="frame-label">—</span>
+    </div>
+  </div>
+
+  <div class="viewer-out-wrap">
+    <div class="viewer-head">
+      <h2 class="section-h" style="margin:0">Fitted map</h2>
+    </div>
+    <div class="viewer card" id="viewer-out"><canvas id="gl-out"></canvas></div>
+    <div class="out-controls">
       <select id="output" hidden></select>
+      <select id="colormap"></select>
     </div>
-    <div class="viewer" id="viewer-out"><canvas id="gl-out"></canvas></div>
   </div>
-  <div class="plot-wrap">
-    <h2 id="voxel-title">Voxel — click the inputs viewer</h2>
+
+  <div class="curve-wrap card">
+    <h2 class="section-h" id="voxel-title">Voxel — click either viewer</h2>
     <canvas id="curve"></canvas>
     <div id="curve-note"></div>
   </div>

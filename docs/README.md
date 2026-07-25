@@ -69,6 +69,20 @@ npx esbuild entry.js --bundle --format=esm --minify --outfile=niivue.js
 cp niivue.js <repo>/docs/playground/vendor/niivue.js
 ```
 
+### Vendored js-yaml
+
+`playground/vendor/js-yaml.js` is a committed, pre-bundled copy of `js-yaml`,
+used by the recipe editor's Form ⇄ YAML sync. Regenerate it with:
+
+```bash
+mkdir /tmp/jsyaml-build && cd /tmp/jsyaml-build
+npm init -y
+npm install js-yaml esbuild
+echo 'export { load, dump } from "js-yaml";' > entry.js
+npx esbuild entry.js --bundle --format=esm --minify --outfile=js-yaml.js
+cp js-yaml.js <repo>/docs/playground/vendor/js-yaml.js
+```
+
 `playground.md`'s iframe references the app with a relative `src`
 (`./playground/index.html`). MyST does not rewrite iframe paths the way it
 rewrites images, and book-theme's client router serves `/playground` without

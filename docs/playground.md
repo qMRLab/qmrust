@@ -9,15 +9,19 @@ Everything below runs in **your browser**. `qmrust-core` compiles to
 WebAssembly unchanged, so the numbers here come from exactly the same Rust
 code the command-line tool runs — no server, no upload, no Python.
 
-Pick a model, press **Fit slice**, then click a voxel to see its measured data
-against the model's forward signal at the fitted parameters — available for
-models whose fitted parameters are all written as output maps. A model with
-nuisance parameters that are not exported as maps (its fit still succeeds;
-only the per-voxel curve view is unavailable) reports why when you click.
+Pick a model, edit its recipe if you like — as a form or as raw YAML, they
+stay in sync — press **Fit slice**, then click a voxel in either viewer to see
+its measured data against the model's forward signal at the fitted
+parameters. Edits are local to your browser and are what actually gets
+fitted, so changing a fit option and re-fitting visibly changes the map.
+Available for models whose fitted parameters are all written as output maps;
+a model with nuisance parameters that are not exported as maps (its fit still
+succeeds; only the per-voxel curve view is unavailable) reports why when you
+click.
 
 :::{iframe} ./playground/index.html
 :width: 100%
-:height: 700px
+:height: 830px
 Live fitting in WebAssembly. Each model ships one downsampled slice from the
 qmrust example dataset.
 :::

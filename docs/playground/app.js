@@ -3,25 +3,39 @@
 // gzipped NIfTI-1 files; NiiVue reads and displays them directly (no reimplemented
 // NIfTI parsing here). The only array handling this file owns is the flattening
 // between a loaded NVImage's native voxel order and `fit_volume`'s C-order
-// `[nx,ny,nz,nt]` contract (see crates/qmrust-wasm/src/api.rs).
+// `[nx,ny,nz,nt]` contract (see crates/qmrust-wasm/src/api.rs), and a generic
+// YAML-tree walk that turns a model's recipe into form widgets without ever
+// naming a model or parameter.
 import { Niivue, NVImage } from "./vendor/niivue.js";
+import { load as yamlLoad, dump as yamlDump } from "./vendor/js-yaml.js";
 
 const $ = (id) => document.getElementById(id);
-const status = (m) => ($("status").textContent = m);
+const status = (m, isError = false) => {
+  const el = $("status");
+  el.textContent = m;
+  el.classList.toggle("error", isError);
+};
 
 // Colormap per output unit, never per model/output name — mirrors
 // scripts/docsfig/style.py's CMAP_BY_UNIT so the playground and the static
-// figures agree.
+// figures agree. Only used as a *default*; the dropdown lets a reader
+// override it with any colormap the vendored build actually ships.
 const CMAP_BY_UNIT = { s: "magma", "1/s": "viridis", "%": "cividis", "": "inferno" };
+const CANDIDATE_COLORMAPS = ["gray", "viridis", "magma", "inferno", "plasma", "hot", "cool", "turbo", "cividis"];
 
 let wasm = null;
 const bundleCache = {};
 let current = null; // { meta, volume (NVImage), maskU8 (Uint8Array|null), frame }
 let lastMaps = null; // { [outputName]: Float64Array }, C-order [nx,ny,nz]
 let outputVolumes = []; // [{ name, unit, volume }]
+let availableColormaps = [];
+
+// Recipe editor state: `text` is always the source of truth handed to
+// fit_volume; `obj` is its parsed form (null while the text is invalid).
+const editor = { text: "", obj: null, valid: false };
 
 const nvIn = new Niivue({ isResizeCanvas: true, backColor: [0.02, 0.02, 0.03, 1] });
-const nvOut = new Niivue({ isResizeCanvas: true, backColor: [0.02, 0.02, 0.03, 1] });
+const nvOut = new Niivue({ isResizeCanvas: true, backColor: [0.02, 0.02, 0.03, 1], isColorbar: true });
 
 async function loadWasm() {
   try {
@@ -47,6 +61,188 @@ async function loadBundle(name) {
   bundleCache[name] = meta;
   return meta;
 }
+
+// ---------------------------------------------------------------------------
+// Recipe editor: a generic walk over the parsed YAML tree. Nothing here
+// branches on a model, parameter, or key name — every widget kind is chosen
+// purely from the JS type of the value found at that path.
+
+function getAtPath(root, path) {
+  let node = root;
+  for (const k of path) node = node?.[k];
+  return node;
+}
+
+function setAtPath(root, path, value) {
+  let node = root;
+  for (const k of path.slice(0, -1)) node = node[k];
+  node[path.at(-1)] = value;
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+function isNumberArray(v) {
+  return Array.isArray(v) && v.every((x) => typeof x === "number");
+}
+
+// Re-derives `editor.text` from `editor.obj` after a form edit, and refreshes
+// the (possibly hidden) YAML textarea + status pill to match.
+function commitObjEdit() {
+  editor.text = yamlDump(editor.obj);
+  editor.valid = true;
+  $("cfg-yaml").value = editor.text;
+  setYamlPill(true);
+}
+
+function fieldRow(label, path, widget) {
+  const row = document.createElement("div");
+  row.className = "field-row";
+  const labelWrap = document.createElement("div");
+  const labelSpan = document.createElement("span");
+  labelSpan.className = "field-label";
+  labelSpan.textContent = label.replace(/_/g, " ");
+  const keySpan = document.createElement("span");
+  keySpan.className = "field-key";
+  keySpan.textContent = path.join(".");
+  labelWrap.append(labelSpan, keySpan);
+  row.append(labelWrap, widget);
+  return row;
+}
+
+function buildWidget(value, path) {
+  if (typeof value === "boolean") {
+    const label = document.createElement("label");
+    label.className = "switch";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = value;
+    input.onchange = () => {
+      setAtPath(editor.obj, path, input.checked);
+      commitObjEdit();
+    };
+    const slider = document.createElement("span");
+    slider.className = "slider";
+    label.append(input, slider);
+    return label;
+  }
+  if (typeof value === "number") {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.step = "any";
+    input.value = String(value);
+    input.onchange = () => {
+      const v = Number(input.value);
+      setAtPath(editor.obj, path, Number.isFinite(v) ? v : value);
+      commitObjEdit();
+    };
+    return input;
+  }
+  if (isNumberArray(value)) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value.join(", ");
+    input.onchange = () => {
+      const parsed = input.value
+        .split(",")
+        .map((s) => Number(s.trim()))
+        .filter((n) => !Number.isNaN(n));
+      setAtPath(editor.obj, path, parsed);
+      commitObjEdit();
+    };
+    return input;
+  }
+  if (typeof value === "string") {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = value;
+    input.onchange = () => {
+      setAtPath(editor.obj, path, input.value);
+      commitObjEdit();
+    };
+    return input;
+  }
+  // Fallback for shapes a compact widget can't represent (array of arrays,
+  // array of objects, null): a small YAML textarea for just that subtree.
+  const ta = document.createElement("textarea");
+  ta.value = value == null ? "" : yamlDump(value).trimEnd();
+  ta.onchange = () => {
+    try {
+      const parsed = ta.value.trim() === "" ? null : yamlLoad(ta.value);
+      setAtPath(editor.obj, path, parsed);
+      commitObjEdit();
+    } catch (e) {
+      // Leave the underlying object untouched; the textarea keeps the
+      // reader's (currently unparsable) text so they can keep fixing it.
+    }
+  };
+  return ta;
+}
+
+function buildGroup(container, entries, path) {
+  for (const [key, value] of entries) {
+    const childPath = [...path, key];
+    if (isPlainObject(value)) {
+      const group = document.createElement("div");
+      group.className = "group";
+      const title = document.createElement("div");
+      title.className = "group-title";
+      title.textContent = key;
+      const fields = document.createElement("div");
+      fields.className = "form-fields";
+      group.append(title, fields);
+      buildGroup(fields, Object.entries(value), childPath);
+      container.append(group);
+    } else {
+      container.append(fieldRow(key, childPath, buildWidget(value, childPath)));
+    }
+  }
+}
+
+function renderForm() {
+  const container = $("form-fields");
+  container.replaceChildren();
+  if (!editor.obj || typeof editor.obj !== "object") return;
+  buildGroup(container, Object.entries(editor.obj), []);
+}
+
+function setYamlPill(valid) {
+  const pill = $("yaml-pill");
+  pill.textContent = valid ? "valid" : "invalid";
+  pill.classList.toggle("valid", valid);
+  pill.classList.toggle("invalid", !valid);
+}
+
+// Sets the editor from a fresh string (model load, or typed into the YAML
+// view). Rebuilds the form only when the text parses, so a reader mid-typo
+// in the YAML view doesn't have the form yanked out from under them.
+function setEditorText(text) {
+  editor.text = text;
+  $("cfg-yaml").value = text;
+  try {
+    editor.obj = yamlLoad(text);
+    editor.valid = true;
+    setYamlPill(true);
+    renderForm();
+  } catch (e) {
+    editor.valid = false;
+    setYamlPill(false);
+  }
+}
+
+function showTab(tab) {
+  const isForm = tab === "form";
+  $("tab-form").classList.toggle("active", isForm);
+  $("tab-yaml").classList.toggle("active", !isForm);
+  $("tab-form").setAttribute("aria-selected", String(isForm));
+  $("tab-yaml").setAttribute("aria-selected", String(!isForm));
+  $("form-view").hidden = !isForm;
+  $("yaml-view").hidden = isForm;
+  if (isForm && editor.valid) renderForm();
+}
+
+// ---------------------------------------------------------------------------
 
 // Every element of `flat` (C-order `[nx,ny,nz]`, i.e. index `(x*ny+y)*nz+z`,
 // matching fit_volume's own output convention) read from `volume` via its
@@ -116,15 +312,16 @@ function buildMapVolume(template, flat, nx, ny, nz, name, unit) {
   return vol;
 }
 
-// The two viewers show a single slice each; sizing their box to the data's
-// own aspect ratio (rather than a fixed square) avoids letterboxing the
-// slice inside empty space on either side.
+// The two viewers show a single slice each, at the data's own aspect ratio
+// (rather than a fixed square) so neither letterboxes into empty margins —
+// and, since both wraps sit in equal-width grid columns, an identical
+// aspect ratio keeps them exactly the same size and top-aligned.
 function sizeViewers(nx, ny) {
   const aspect = `${nx} / ${ny}`;
   for (const id of ["viewer-in", "viewer-out"]) {
     const el = $(id);
     el.style.aspectRatio = aspect;
-    el.style.height = "340px";
+    el.style.height = "360px";
     el.style.width = "auto";
   }
   nvIn.resizeListener();
@@ -145,7 +342,7 @@ async function loadModel(name) {
   try {
     meta = await loadBundle(name);
   } catch (e) {
-    status(`could not load bundle "${name}" (${e.message})`);
+    status(`could not load bundle "${name}" (${e.message})`, true);
     return;
   }
 
@@ -155,9 +352,10 @@ async function loadModel(name) {
   lastMaps = null;
   $("output").hidden = true;
   $("output").replaceChildren();
-  $("voxel-title").textContent = "Voxel — click the inputs viewer";
+  $("voxel-title").textContent = "Voxel — click either viewer";
   $("curve-note").textContent = "";
   clearCurve();
+  setEditorText(meta.config);
 
   const [nx, ny, nz, nt] = meta.dims;
   let volume, maskVolume;
@@ -169,7 +367,7 @@ async function loadModel(name) {
       colorbarVisible: false,
     });
   } catch (e) {
-    status(`could not load "${meta.files.data}" (${e.message})`);
+    status(`could not load "${meta.files.data}" (${e.message})`, true);
     return;
   }
   let maskU8 = null;
@@ -178,7 +376,7 @@ async function loadModel(name) {
       maskVolume = await NVImage.loadFromUrl({ url: `./data/${meta.files.mask}` });
       maskU8 = readMask(maskVolume, nx, ny, nz);
     } catch (e) {
-      status(`could not load "${meta.files.mask}" (${e.message})`);
+      status(`could not load "${meta.files.mask}" (${e.message})`, true);
       return;
     }
   }
@@ -196,7 +394,7 @@ async function loadModel(name) {
       auxFlat[auxName] = Array.from(readScalarVolume(auxVolume, nx, ny, nz));
       auxVolumes[auxName] = auxVolume;
     } catch (e) {
-      status(`could not load "${filename}" (${e.message})`);
+      status(`could not load "${filename}" (${e.message})`, true);
       return;
     }
   }
@@ -222,23 +420,35 @@ function onFrameChange() {
 
 async function fitSlice() {
   if (!current) { status("pick a model first"); return; }
-  if (!wasm) { status("wasm unavailable — build the package to fit"); return; }
+  if (!wasm) { status("wasm unavailable — build the package to fit", true); return; }
+  if (!editor.valid) {
+    status("recipe YAML is invalid — fix it before fitting", true);
+    return;
+  }
   const { meta, volume, maskU8, auxFlat } = current;
   const [nx, ny, nz, nt] = meta.dims;
   status("fitting…");
   const t0 = performance.now();
   const data = readVolumeSeries(volume, nx, ny, nz, nt);
-  // `dims` is `&[usize]` on the Rust side, so it must arrive as a Uint32Array,
-  // not a plain JS array. fit_volume returns a JS Map (serde-wasm-bindgen's
-  // default encoding for a Rust BTreeMap).
-  const raw = wasm.fit_volume(
-    meta.config,
-    data,
-    Uint32Array.from([nx, ny, nz, nt]),
-    JSON.stringify(meta.volume_ids),
-    maskU8 ?? undefined,
-    JSON.stringify(auxFlat),
-  );
+  let raw;
+  try {
+    // `dims` is `&[usize]` on the Rust side, so it must arrive as a
+    // Uint32Array, not a plain JS array. fit_volume returns a JS Map
+    // (serde-wasm-bindgen's default encoding for a Rust BTreeMap). The
+    // config passed here is the *edited* recipe text, not the pristine
+    // bundle config — this is what makes the form/YAML editor live.
+    raw = wasm.fit_volume(
+      editor.text,
+      data,
+      Uint32Array.from([nx, ny, nz, nt]),
+      JSON.stringify(meta.volume_ids),
+      maskU8 ?? undefined,
+      JSON.stringify(auxFlat),
+    );
+  } catch (e) {
+    status(`fit failed: ${e?.message ?? e}`, true);
+    return;
+  }
   const maps = Object.fromEntries(raw);
   lastMaps = maps;
 
@@ -271,8 +481,34 @@ function showOutput(name) {
   for (const v of [...nvOut.volumes]) nvOut.removeVolume(v);
   if (!entry) return;
   nvOut.addVolume(entry.volume);
-  nvOut.setColormap(entry.volume.id, CMAP_BY_UNIT[entry.unit] ?? "inferno");
+  const cmapSelect = $("colormap");
+  const preferred = CMAP_BY_UNIT[entry.unit] ?? "inferno";
+  const cmap = availableColormaps.includes(preferred) ? preferred : availableColormaps[0];
+  if (availableColormaps.includes(cmap)) cmapSelect.value = cmap;
+  nvOut.setColormap(entry.volume.id, cmapSelect.value || cmap);
+  nvOut.opts.isColorbar = true;
   nvOut.drawScene();
+}
+
+function onColormapChange() {
+  const entry = outputVolumes.find((o) => o.name === $("output").value) ?? outputVolumes[0];
+  if (!entry) return;
+  nvOut.setColormap(entry.volume.id, $("colormap").value);
+  nvOut.drawScene();
+}
+
+function populateColormaps() {
+  const select = $("colormap");
+  select.replaceChildren();
+  const have = new Set(nvOut.colormaps());
+  availableColormaps = CANDIDATE_COLORMAPS.filter((c) => have.has(c));
+  if (availableColormaps.length === 0) availableColormaps = ["gray"];
+  for (const name of availableColormaps) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.append(opt);
+  }
 }
 
 function clearCurve() {
@@ -322,7 +558,7 @@ function plotVoxel(x, y, z) {
     voxelAux[auxName] = auxVolume.getValue(x, y, z, 0);
   }
   const predicted = JSON.parse(
-    wasm.forward(meta.config, Float64Array.from(params), JSON.stringify(voxelAux)),
+    wasm.forward(editor.text, Float64Array.from(params), JSON.stringify(voxelAux)),
   );
   const values = Array.isArray(predicted)
     ? predicted.map((s) => s.value)
@@ -348,7 +584,8 @@ function drawCurve(measured, predicted) {
   const lo = Math.min(...all), hi = Math.max(...all);
   const sx = (k) => pad + (k / Math.max(1, measured.length - 1)) * (w - 2 * pad);
   const sy = (v) => h - pad - ((v - lo) / (hi - lo || 1)) * (h - 2 * pad);
-  ctx.strokeStyle = "#30363d";
+  const dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+  ctx.strokeStyle = dark ? "#30363d" : "#c7ced6";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(pad, pad);
@@ -360,21 +597,39 @@ function drawCurve(measured, predicted) {
   ctx.beginPath();
   predicted.forEach((v, k) => (k ? ctx.lineTo(sx(k), sy(v)) : ctx.moveTo(sx(k), sy(v))));
   ctx.stroke();
-  ctx.fillStyle = "#58a6ff";
+  ctx.fillStyle = "#38c0cf";
   measured.forEach((v, k) => {
     ctx.beginPath();
     ctx.arc(sx(k), sy(v), 2.8, 0, 2 * Math.PI);
     ctx.fill();
   });
-  ctx.fillStyle = "#9aa7b2";
+  ctx.fillStyle = dark ? "#9aa7b2" : "#7c8797";
   ctx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
   ctx.fillText("● measured", pad, 14);
   ctx.fillText("— forward model", pad + 78, 14);
 }
 
+function onLocation(loc) {
+  if (!current || !loc?.vox) return;
+  const [x, y, z] = loc.vox.map((v) => Math.round(v));
+  const [nx, ny, nz] = current.meta.dims;
+  if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) return;
+  plotVoxel(x, y, z);
+}
+
 async function main() {
   await nvIn.attachTo("gl-in");
   await nvOut.attachTo("gl-out");
+  populateColormaps();
+
+  // Synced crosshairs both ways, so dragging in either viewer moves the
+  // other; click handling is registered on both instances too, so a click
+  // on the fitted map updates the voxel curve exactly as one on the inputs
+  // viewer does.
+  nvIn.broadcastTo([nvOut], { "2d": true, "3d": true });
+  nvOut.broadcastTo([nvIn], { "2d": true, "3d": true });
+  nvIn.onLocationChange = onLocation;
+  nvOut.onLocationChange = onLocation;
 
   wasm = await loadWasm();
 
@@ -382,7 +637,7 @@ async function main() {
   try {
     index = await (await fetchOrThrow("./data/index.json")).json();
   } catch (e) {
-    status(`could not load ./data/index.json (${e.message})`);
+    status(`could not load ./data/index.json (${e.message})`, true);
     return;
   }
 
@@ -392,7 +647,7 @@ async function main() {
     try {
       meta = await loadBundle(name);
     } catch (e) {
-      status(`could not load bundle "${name}" (${e.message})`);
+      status(`could not load bundle "${name}" (${e.message})`, true);
       continue;
     }
     const opt = document.createElement("option");
@@ -405,13 +660,10 @@ async function main() {
   $("frame").oninput = onFrameChange;
   $("fit").onclick = fitSlice;
   $("output").onchange = (e) => showOutput(e.target.value);
-  nvIn.onLocationChange = (loc) => {
-    if (!current || !loc?.vox) return;
-    const [x, y, z] = loc.vox.map((v) => Math.round(v));
-    const [nx, ny, nz] = current.meta.dims;
-    if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) return;
-    plotVoxel(x, y, z);
-  };
+  $("colormap").onchange = onColormapChange;
+  $("tab-form").onclick = () => showTab("form");
+  $("tab-yaml").onclick = () => showTab("yaml");
+  $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
 
   if (select.options.length) {
     await loadModel(select.value);
@@ -422,4 +674,4 @@ async function main() {
 main();
 
 // Read-only state accessor for automated smoke-testing; no UI depends on this.
-window.__playground = { maps: () => lastMaps };
+window.__playground = { maps: () => lastMaps, editor: () => editor };
