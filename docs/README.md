@@ -129,6 +129,11 @@ previewing locally.
     `volume_ids`.
   - `params` — the model's fit parameter names, in fit order.
   - `outputs` — `[{name, unit}]` for every non-diagnostic output map.
+  - `enums` — `[{key, values}]`: config keys restricted to a fixed set of
+    values (`crates/qmrust-core/src/registry.rs`'s `ModelDoc::enums`), for
+    rendering a dropdown instead of free text in the playground's Form view.
+    `key` is a dotted path from the config root (e.g. `"qmt_spgr.model"`,
+    `"fit_type"`); a model with no such fields has an empty list.
   - `config` — the full text of the model's non-BIDS recipe YAML, ready to
     hand to `wasm`/CLI fit calls as-is.
   - `files` — `{data, mask, aux}`: `data`/`mask` are the `.nii.gz` filenames

@@ -36,6 +36,16 @@ pub struct ModelCard {
     pub n_volumes: usize,
     pub strategy: String,
     pub effective_config: String,
+    /// Config keys restricted to a fixed set of values (dropdowns, not free
+    /// text). See `qmrust_core::registry::ModelDoc::enums`.
+    pub enums: Vec<EnumField>,
+}
+
+#[derive(Serialize)]
+pub struct EnumField {
+    /// Config key, dotted for a nested group (e.g. `"pulse.shape"`).
+    pub key: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -259,6 +269,14 @@ fn card(entry: &ModelEntry, repo_root: &Path) -> Result<ModelCard> {
         }
         .to_string(),
         effective_config,
+        enums: doc
+            .enums
+            .iter()
+            .map(|(key, values)| EnumField {
+                key: key.to_string(),
+                values: values.iter().map(|v| v.to_string()).collect(),
+            })
+            .collect(),
     })
 }
 
@@ -372,6 +390,80 @@ mod tests {
             .params
             .iter()
             .all(|p| p.lower.is_none() && p.upper.is_none()));
+    }
+
+    fn get_nested<'a>(v: &'a serde_yaml::Value, dotted_key: &str) -> Option<&'a serde_yaml::Value> {
+        let mut node = v;
+        for part in dotted_key.split('.') {
+            node = node.get(part)?;
+        }
+        Some(node)
+    }
+
+    fn set_nested(v: &mut serde_yaml::Value, dotted_key: &str, new_value: &str) {
+        let parts: Vec<&str> = dotted_key.split('.').collect();
+        let mut node = v;
+        for part in &parts[..parts.len() - 1] {
+            node = node
+                .as_mapping_mut()
+                .unwrap()
+                .entry(serde_yaml::Value::String(part.to_string()))
+                .or_insert(serde_yaml::Value::Mapping(Default::default()));
+        }
+        node.as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String(parts.last().unwrap().to_string()),
+            serde_yaml::Value::String(new_value.to_string()),
+        );
+    }
+
+    #[test]
+    fn declared_enums_match_validate_options() {
+        // Every enum a model declares in `ModelDoc::enums` (the dropdown the
+        // playground's Form view renders) must actually be accepted by that
+        // model's own `validate_options`, and the recipe's current value must
+        // be one of the declared choices — otherwise the dropdown and the
+        // model silently disagree.
+        let root = repo_root();
+        for entry in qmrust_core::registry::all() {
+            if entry.doc.enums.is_empty() {
+                continue;
+            }
+            let recipe_path = root.join(entry.doc.recipes.non_bids);
+            let text = std::fs::read_to_string(&recipe_path)
+                .unwrap_or_else(|e| panic!("{}: reading {:?}: {e}", entry.name, recipe_path));
+            let base: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+
+            for (key, values) in entry.doc.enums {
+                let current = get_nested(&base, key)
+                    .unwrap_or_else(|| panic!("{}: recipe has no key '{}'", entry.name, key));
+                let current_str = current.as_str().unwrap_or_else(|| {
+                    panic!(
+                        "{}: key '{}' is not a string in the recipe",
+                        entry.name, key
+                    )
+                });
+                assert!(
+                    values.contains(&current_str),
+                    "{}: recipe's current value '{}' for '{}' is not among declared {:?}",
+                    entry.name,
+                    current_str,
+                    key,
+                    values
+                );
+
+                for value in *values {
+                    let mut cfg = base.clone();
+                    set_nested(&mut cfg, key, value);
+                    (entry.build)(&cfg, &qmrust_core::core::model::Protocol::default())
+                        .unwrap_or_else(|e| {
+                            panic!(
+                                "{}: declared enum value '{}' for '{}' rejected by validate_options: {e}",
+                                entry.name, value, key
+                            )
+                        });
+                }
+            }
+        }
     }
 
     #[test]

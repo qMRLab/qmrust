@@ -66,6 +66,15 @@
 
   .topbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 
+  .progress-wrap {
+    height: 6px; border-radius: 999px; background: var(--panel-2);
+    border: 1px solid var(--line); overflow: hidden; margin: -4px 0 12px;
+  }
+  .progress-bar {
+    height: 100%; width: 0%; background: var(--accent);
+    transition: width .12s linear;
+  }
+
   .layout {
     display: grid;
     grid-template-columns: 380px 1fr 1fr;
@@ -167,6 +176,16 @@
   .out-controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
   .out-controls select { font-size: 12px; padding: 4px 8px; }
 
+  .range-controls {
+    display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap;
+    color: var(--ink-2); font-size: 12px;
+  }
+  .range-controls label { display: flex; gap: 5px; align-items: center; }
+  .range-controls input[type=number] { width: 6.5em; font-size: 12px; padding: 4px 7px; }
+  .range-controls button { font-size: 12px; padding: 4px 10px; }
+
+  .voxel-value { color: var(--ink-2); font: 12px var(--mono); margin: 2px 0 8px; }
+
   #curve { width: 100%; height: 170px; display: block; }
   #curve-note { color: var(--muted); margin-top: 4px; }
 
@@ -176,6 +195,9 @@
 </style>
 <div class="topbar">
   <span id="status">loading…</span>
+</div>
+<div id="progress-wrap" class="progress-wrap" hidden>
+  <div id="progress-bar" class="progress-bar"></div>
 </div>
 <div id="fallback" hidden>
   <p><strong>The WebAssembly build is not present.</strong> The viewers below still work —
@@ -201,30 +223,37 @@
     </div>
   </div>
 
-  <div class="viewer-in-wrap">
+  <div class="viewer-in-wrap card">
     <div class="viewer-head">
       <h2 class="section-h" style="margin:0">Inputs</h2>
     </div>
-    <div class="viewer card" id="viewer-in"><canvas id="gl-in"></canvas></div>
+    <div class="viewer" id="viewer-in"><canvas id="gl-in"></canvas></div>
     <div class="frame-row">
       <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
       <span class="frame-label" id="frame-label">—</span>
     </div>
+    <p class="local-note">Scroll over the viewer to step frames.</p>
   </div>
 
-  <div class="viewer-out-wrap">
+  <div class="viewer-out-wrap card">
     <div class="viewer-head">
       <h2 class="section-h" style="margin:0">Fitted map</h2>
     </div>
-    <div class="viewer card" id="viewer-out"><canvas id="gl-out"></canvas></div>
+    <div class="viewer" id="viewer-out"><canvas id="gl-out"></canvas></div>
     <div class="out-controls">
       <select id="output" hidden></select>
       <select id="colormap"></select>
+    </div>
+    <div class="range-controls">
+      <label>min <input type="number" id="cal-min" step="any"></label>
+      <label>max <input type="number" id="cal-max" step="any"></label>
+      <button id="cal-reset" type="button">reset range</button>
     </div>
   </div>
 
   <div class="curve-wrap card">
     <h2 class="section-h" id="voxel-title">Voxel — click either viewer</h2>
+    <div id="voxel-value" class="voxel-value"></div>
     <canvas id="curve"></canvas>
     <div id="curve-note"></div>
   </div>

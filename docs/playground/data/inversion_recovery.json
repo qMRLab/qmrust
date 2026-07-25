@@ -59,6 +59,15 @@
    "unit": "s"
   }
  ],
+ "enums": [
+  {
+   "key": "method",
+   "values": [
+    "magnitude",
+    "complex"
+   ]
+  }
+ ],
  "config": "model: inversion_recovery\n\n# non-BIDS: protocol from this file; mask via --mask\n# All times are in seconds (BIDS/SI).\ninversion_times:\n- 0.350\n- 0.500\n- 0.650\n- 0.800\n- 0.950\n- 1.100\n- 1.250\n- 1.400\n- 1.700\nrepetition_time: 2.5\n\n# Algorithm options (always used; not BIDS metadata).\nmethod: magnitude\nt1_range:\n  start: 0.001\n  stop: 5.0\n  step: 0.001\nzoom:\n  iterations: 2\n  points: 21\n",
  "files": {
   "data": "inversion_recovery.nii.gz",

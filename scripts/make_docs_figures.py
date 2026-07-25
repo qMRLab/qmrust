@@ -415,6 +415,7 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
         {"name": o["name"], "unit": o["unit"]}
         for o in model["outputs"] if not o["diagnostic"]
     ]
+    enums = model.get("enums", [])
 
     # Downsampled aux inputs, written into the bundle at the same factor the
     # data was built at, so a fit of this exact bundle — CLI or browser —
@@ -464,6 +465,7 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
         "labels": labels,
         "params": [p["name"] for p in model["params"]],
         "outputs": outputs,
+        "enums": enums,
         "config": (repo_root / model["recipes"]["non_bids"]).read_text(),
         "files": {
             "data": data_path.name,
@@ -486,8 +488,11 @@ def main(argv=None):
     ap.add_argument("--qmrust", default="./target/release/qmrust")
     ap.add_argument("--bundle-slice", action="store_true",
                     help="also write playground data slices")
-    ap.add_argument("--max-bytes", type=int, default=250_000,
-                    help="per-model playground payload budget")
+    ap.add_argument("--max-bytes", type=int, default=600_000,
+                    help="per-model playground payload budget, measured on the "
+                    "gzip-compressed .nii.gz (not raw float32) — generous enough "
+                    "that every model ships at full native resolution and only "
+                    "downsamples if it genuinely doesn't fit")
     args = ap.parse_args(argv)
 
     out_root = args.out or (args.repo_root / "docs" / "figures")

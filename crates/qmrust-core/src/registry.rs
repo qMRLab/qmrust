@@ -69,6 +69,12 @@ pub struct ModelDoc {
     /// Repo-relative module directory, for source links.
     pub source_dir: &'static str,
     pub recipes: Recipes,
+    /// Config keys whose value is one of a fixed set, for rendering a
+    /// dropdown instead of free text. `key` supports a dotted path into a
+    /// nested config group (e.g. `"pulse.shape"`). Each set here must be
+    /// accepted by the model's own `validate_options` — enforced by
+    /// `qmrust-cli`'s `catalog::tests::declared_enums_match_validate_options`.
+    pub enums: &'static [(&'static str, &'static [&'static str])],
 }
 
 pub struct ModelEntry {
@@ -106,6 +112,7 @@ pub fn all() -> &'static [ModelEntry] {
                     non_bids: "recipes/non-bids/mt_ratio_config.yaml",
                     sim: None,
                 },
+                enums: &[],
             },
         },
         ModelEntry {
@@ -137,6 +144,7 @@ pub fn all() -> &'static [ModelEntry] {
                     non_bids: "recipes/non-bids/mt_sat_config.yaml",
                     sim: None,
                 },
+                enums: &[],
             },
         },
         ModelEntry {
@@ -167,6 +175,7 @@ pub fn all() -> &'static [ModelEntry] {
                     non_bids: "recipes/non-bids/mono_t2_config.yaml",
                     sim: None,
                 },
+                enums: &[("fit_type", &["exponential", "linear"])],
             },
         },
         ModelEntry {
@@ -199,6 +208,7 @@ pub fn all() -> &'static [ModelEntry] {
                     non_bids: "recipes/non-bids/irt1_config.yaml",
                     sim: None,
                 },
+                enums: &[("method", &["magnitude", "complex"])],
             },
         },
         ModelEntry {
@@ -240,6 +250,11 @@ F &= M_{0r}/M_{0f}, \qquad k_f F = k_r
                     non_bids: "recipes/non-bids/qmt_config_ramani.yaml",
                     sim: Some("recipes/sim/qmt_sim_ramani.yaml"),
                 },
+                enums: &[
+                    ("qmt_spgr.model", &["Ramani", "SledPikeRP"]),
+                    ("qmt_spgr.lineshape", &["SuperLorentzian"]),
+                    ("qmt_spgr.pulse.shape", &["gausshann"]),
+                ],
             },
         },
     ]

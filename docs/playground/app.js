@@ -26,16 +26,34 @@ const CANDIDATE_COLORMAPS = ["gray", "viridis", "magma", "inferno", "plasma", "h
 let wasm = null;
 const bundleCache = {};
 let current = null; // { meta, volume (NVImage), maskU8 (Uint8Array|null), frame }
-let lastMaps = null; // { [outputName]: Float64Array }, C-order [nx,ny,nz]
-let outputVolumes = []; // [{ name, unit, volume }]
+let lastMaps = null; // { [outputName]: Float64Array }, C-order [nx,ny,nz] — every
+// entry fit_volume returns, i.e. the model's full output_names(), not just the
+// quantitative maps in meta.outputs.
+let outputVolumes = []; // [{ name, unit, volume, defaultCalMin, defaultCalMax }]
+let shownOutput = null; // the outputVolumes entry currently drawn in the fitted-map viewer
 let availableColormaps = [];
+// Config keys restricted to a fixed set of values (dotted path -> allowed
+// values), from this model's bundle `enums` — the catalog/registry decides
+// which keys get a dropdown, never a name or key hard-coded here.
+let enumFields = new Map();
 
 // Recipe editor state: `text` is always the source of truth handed to
 // fit_volume; `obj` is its parsed form (null while the text is invalid).
 const editor = { text: "", obj: null, valid: false };
 
+// The inputs viewer shows an acquired image, so linear interpolation (the
+// default) is the right look. The fitted-map viewer shows per-voxel
+// quantitative values with hard NaN boundaries at the mask edge; blending
+// those linearly with neighboring voxels invents in-between colours at the
+// boundary that were never fitted, so it uses nearest-neighbour instead —
+// every displayed pixel is then one real fitted value.
 const nvIn = new Niivue({ isResizeCanvas: true, backColor: [0.02, 0.02, 0.03, 1] });
-const nvOut = new Niivue({ isResizeCanvas: true, backColor: [0.02, 0.02, 0.03, 1], isColorbar: true });
+const nvOut = new Niivue({
+  isResizeCanvas: true,
+  backColor: [0.02, 0.02, 0.03, 1],
+  isColorbar: true,
+  isNearestInterpolation: true,
+});
 
 async function loadWasm() {
   try {
@@ -112,6 +130,22 @@ function fieldRow(label, path, widget) {
 }
 
 function buildWidget(value, path) {
+  const enumValues = enumFields.get(path.join("."));
+  if (enumValues && typeof value === "string") {
+    const select = document.createElement("select");
+    for (const opt of enumValues) {
+      const o = document.createElement("option");
+      o.value = opt;
+      o.textContent = opt;
+      select.append(o);
+    }
+    select.value = value;
+    select.onchange = () => {
+      setAtPath(editor.obj, path, select.value);
+      commitObjEdit();
+    };
+    return select;
+  }
   if (typeof value === "boolean") {
     const label = document.createElement("label");
     label.className = "switch";
@@ -182,6 +216,11 @@ function buildWidget(value, path) {
 
 function buildGroup(container, entries, path) {
   for (const [key, value] of entries) {
+    // `model` at the config root is the reserved key that selects the model
+    // itself — part of the config format, not a per-model field — and the
+    // model dropdown above the recipe editor already owns it, so a form row
+    // for it here would just be a redundant, editable duplicate.
+    if (path.length === 0 && key === "model") continue;
     const childPath = [...path, key];
     if (isPlainObject(value)) {
       const group = document.createElement("div");
@@ -349,12 +388,17 @@ async function loadModel(name) {
   for (const v of [...nvIn.volumes]) nvIn.removeVolume(v);
   for (const v of [...nvOut.volumes]) nvOut.removeVolume(v);
   outputVolumes = [];
+  shownOutput = null;
   lastMaps = null;
   $("output").hidden = true;
   $("output").replaceChildren();
   $("voxel-title").textContent = "Voxel — click either viewer";
+  $("voxel-value").textContent = "";
+  $("cal-min").value = "";
+  $("cal-max").value = "";
   $("curve-note").textContent = "";
   clearCurve();
+  enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
   setEditorText(meta.config);
 
   const [nx, ny, nz, nt] = meta.dims;
@@ -418,6 +462,66 @@ function onFrameChange() {
   $("frame-label").textContent = current.meta.labels[t] ?? "";
 }
 
+function showProgress() {
+  $("progress-wrap").hidden = false;
+  setProgress(0);
+}
+function setProgress(pct) {
+  $("progress-bar").style.width = `${Math.max(0, Math.min(100, pct))}%`;
+}
+function hideProgress() {
+  $("progress-wrap").hidden = true;
+}
+// Lets the browser paint (and stay responsive to input) between fit blocks —
+// a plain microtask/`setTimeout(0)` does not reliably yield before the next
+// paint in every engine, but a rAF round-trip does.
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
+// `fit_volume` is one synchronous call with no progress callback across the
+// wasm boundary, so real (not simulated) progress requires splitting the work
+// ourselves: fit contiguous row-blocks of the slice — `x` is the slowest-
+// varying axis in the C-order `[nx,ny,nz,nt]`/`[nx,ny,nz]` layout `data`/
+// `maskU8`/`auxFlat` already use, so a row range is a contiguous subarray —
+// and stitch each block's returned maps into the full-size buffers, yielding
+// to the event loop between blocks so the progress bar paints and the page
+// stays responsive. Each block is an independent voxelwise fit, so the
+// stitched result is exactly the single-call result (verified by `probes`).
+async function fitVolumeWithProgress(nx, ny, nz, nt, data, maskU8, auxFlat) {
+  const spatial = nx * ny * nz;
+  const blocks = Math.min(nx, 24);
+  const rowsPerBlock = Math.max(1, Math.ceil(nx / blocks));
+  let maps = null;
+  for (let rowStart = 0; rowStart < nx; rowStart += rowsPerBlock) {
+    const rowEnd = Math.min(nx, rowStart + rowsPerBlock);
+    const rows = rowEnd - rowStart;
+    const lo = rowStart * ny * nz;
+    const hi = rowEnd * ny * nz;
+    const blockData = data.subarray(lo * nt, hi * nt);
+    const blockMask = maskU8 ? maskU8.subarray(lo, hi) : undefined;
+    const blockAux = {};
+    for (const [k, v] of Object.entries(auxFlat)) blockAux[k] = v.slice(lo, hi);
+    const raw = wasm.fit_volume(
+      editor.text,
+      blockData,
+      Uint32Array.from([rows, ny, nz, nt]),
+      JSON.stringify(current.meta.volume_ids),
+      blockMask,
+      JSON.stringify(blockAux),
+    );
+    const blockMaps = Object.fromEntries(raw);
+    if (!maps) {
+      maps = {};
+      for (const name of Object.keys(blockMaps)) maps[name] = new Float64Array(spatial).fill(NaN);
+    }
+    for (const [name, flat] of Object.entries(blockMaps)) maps[name].set(flat, lo);
+    setProgress((rowEnd / nx) * 100);
+    await nextFrame();
+  }
+  return maps ?? {};
+}
+
 async function fitSlice() {
   if (!current) { status("pick a model first"); return; }
   if (!wasm) { status("wasm unavailable — build the package to fit", true); return; }
@@ -428,28 +532,19 @@ async function fitSlice() {
   const { meta, volume, maskU8, auxFlat } = current;
   const [nx, ny, nz, nt] = meta.dims;
   status("fitting…");
+  showProgress();
+  $("fit").disabled = true;
   const t0 = performance.now();
   const data = readVolumeSeries(volume, nx, ny, nz, nt);
-  let raw;
+  let maps;
   try {
-    // `dims` is `&[usize]` on the Rust side, so it must arrive as a
-    // Uint32Array, not a plain JS array. fit_volume returns a JS Map
-    // (serde-wasm-bindgen's default encoding for a Rust BTreeMap). The
-    // config passed here is the *edited* recipe text, not the pristine
-    // bundle config — this is what makes the form/YAML editor live.
-    raw = wasm.fit_volume(
-      editor.text,
-      data,
-      Uint32Array.from([nx, ny, nz, nt]),
-      JSON.stringify(meta.volume_ids),
-      maskU8 ?? undefined,
-      JSON.stringify(auxFlat),
-    );
+    maps = await fitVolumeWithProgress(nx, ny, nz, nt, data, maskU8, auxFlat);
   } catch (e) {
     status(`fit failed: ${e?.message ?? e}`, true);
+    hideProgress();
+    $("fit").disabled = false;
     return;
   }
-  const maps = Object.fromEntries(raw);
   lastMaps = maps;
 
   for (const v of [...nvOut.volumes]) nvOut.removeVolume(v);
@@ -458,7 +553,13 @@ async function fitSlice() {
     const flat = maps[o.name];
     if (!flat) continue;
     const vol = buildMapVolume(volume, flat, nx, ny, nz, o.name, o.unit);
-    outputVolumes.push({ name: o.name, unit: o.unit, volume: vol });
+    outputVolumes.push({
+      name: o.name,
+      unit: o.unit,
+      volume: vol,
+      defaultCalMin: vol.cal_min,
+      defaultCalMax: vol.cal_max,
+    });
   }
 
   const select = $("output");
@@ -473,12 +574,20 @@ async function fitSlice() {
   showOutput(outputVolumes[0]?.name);
 
   status(`fitted in ${Math.round(performance.now() - t0)} ms`);
+  hideProgress();
+  $("fit").disabled = false;
   if (current.lastVox) plotVoxel(current.lastVox.x, current.lastVox.y, current.lastVox.z);
+}
+
+function seedCalRangeInputs(entry) {
+  $("cal-min").value = entry.volume.cal_min;
+  $("cal-max").value = entry.volume.cal_max;
 }
 
 function showOutput(name) {
   const entry = outputVolumes.find((o) => o.name === name);
   for (const v of [...nvOut.volumes]) nvOut.removeVolume(v);
+  shownOutput = entry ?? null;
   if (!entry) return;
   nvOut.addVolume(entry.volume);
   const cmapSelect = $("colormap");
@@ -487,13 +596,38 @@ function showOutput(name) {
   if (availableColormaps.includes(cmap)) cmapSelect.value = cmap;
   nvOut.setColormap(entry.volume.id, cmapSelect.value || cmap);
   nvOut.opts.isColorbar = true;
+  seedCalRangeInputs(entry);
   nvOut.drawScene();
+  if (current?.lastVox) updateVoxelValue(current.lastVox.x, current.lastVox.y, current.lastVox.z);
 }
 
 function onColormapChange() {
   const entry = outputVolumes.find((o) => o.name === $("output").value) ?? outputVolumes[0];
   if (!entry) return;
   nvOut.setColormap(entry.volume.id, $("colormap").value);
+  nvOut.drawScene();
+}
+
+// Reader-adjustable colour scale: min/max feed `volume.cal_min`/`cal_max`
+// directly (the same fields NiiVue's own auto windowing sets), so the
+// colorbar — which reads off the volume — tracks the change for free.
+function applyCalRange() {
+  if (!shownOutput) return;
+  const min = Number($("cal-min").value);
+  const max = Number($("cal-max").value);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+  shownOutput.volume.cal_min = min;
+  shownOutput.volume.cal_max = max;
+  nvOut.updateGLVolume();
+  nvOut.drawScene();
+}
+
+function resetCalRange() {
+  if (!shownOutput) return;
+  shownOutput.volume.cal_min = shownOutput.defaultCalMin;
+  shownOutput.volume.cal_max = shownOutput.defaultCalMax;
+  seedCalRangeInputs(shownOutput);
+  nvOut.updateGLVolume();
   nvOut.drawScene();
 }
 
@@ -517,33 +651,50 @@ function clearCurve() {
   ctx.clearRect(0, 0, c.width, c.height);
 }
 
+// Value of the currently-displayed map at `(x, y, z)`, shown beside the
+// fitted-curve parameters — updates on every crosshair move, including while
+// dragging (`onLocation` calls this on every `onLocationChange`).
+function updateVoxelValue(x, y, z) {
+  const el = $("voxel-value");
+  if (!shownOutput) {
+    el.textContent = "";
+    return;
+  }
+  const v = shownOutput.volume.getValue(x, y, z, 0);
+  const unit = shownOutput.unit ? ` ${shownOutput.unit}` : "";
+  el.textContent = Number.isFinite(v)
+    ? `${shownOutput.name} = ${v.toPrecision(3)}${unit} at (${x}, ${y})`
+    : `${shownOutput.name} = no fit at (${x}, ${y})`;
+}
+
 function plotVoxel(x, y, z) {
   if (!current) return;
   current.lastVox = { x, y, z };
   const { meta, volume, auxVolumes } = current;
-  const [, , , nt] = meta.dims;
+  const [nx, ny, nz, nt] = meta.dims;
   $("voxel-title").textContent = `Voxel (${x}, ${y})`;
+  updateVoxelValue(x, y, z);
   if (!lastMaps) {
     $("curve-note").textContent = "fit the slice first, then click a voxel";
     clearCurve();
     return;
   }
-  const outputNames = new Set(meta.outputs.map((o) => o.name));
-  if (!meta.params.every((p) => outputNames.has(p))) {
+  // `lastMaps` carries every entry `fit_volume` returns — the model's full
+  // `output_names()`, including diagnostics that never make it into
+  // `meta.outputs` (that list is filtered to quantitative maps only, for the
+  // fitted-map viewer). A curve needs the fitted *parameters*, so the real
+  // question is whether the fit result has them, not whether they happen to
+  // be drawable maps.
+  const idx = (x * ny + y) * nz + z;
+  if (!meta.params.every((p) => p in lastMaps)) {
+    const missing = meta.params.filter((p) => !(p in lastMaps));
     $("curve-note").textContent =
-      "this model's nuisance parameters are not written as output maps, " +
-      "so no fitted curve is available for it.";
+      `this model's fit does not report ${missing.join(", ")}, so no fitted ` +
+      "curve is available for it.";
     clearCurve();
     return;
   }
-  // Read through each output's own NVImage (built with the same header/
-  // orientation as `volume`), so the click's location — RAS voxel
-  // coordinates from NiiVue, the same ones used for `measured` below — maps
-  // back to the right native voxel exactly as it does for the input volume.
-  const params = meta.params.map((p) => {
-    const entry = outputVolumes.find((o) => o.name === p);
-    return entry ? entry.volume.getValue(x, y, z, 0) : NaN;
-  });
+  const params = meta.params.map((p) => lastMaps[p][idx]);
   if (params.some((v) => !Number.isFinite(v))) {
     $("curve-note").textContent = "no fit at that voxel (outside mask or fit failed)";
     clearCurve();
@@ -664,6 +815,33 @@ async function main() {
   $("tab-form").onclick = () => showTab("form");
   $("tab-yaml").onclick = () => showTab("yaml");
   $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
+  $("cal-min").onchange = applyCalRange;
+  $("cal-max").onchange = applyCalRange;
+  $("cal-reset").onclick = resetCalRange;
+
+  // Wheel-to-scrub, alongside the existing slider: a reader hovering the
+  // inputs viewer steps through frames without reaching for the slider,
+  // useful once a model ships several volumes.
+  // Captured (not bubble-phase) and stopped here, ahead of NiiVue's own
+  // wheel-to-zoom handler on the canvas — this viewer's wheel gesture means
+  // "step frames", not "zoom the slice".
+  $("viewer-in").addEventListener(
+    "wheel",
+    (e) => {
+      if (!current) return;
+      const [, , , nt] = current.meta.dims;
+      if (nt <= 1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const slider = $("frame");
+      const dir = e.deltaY > 0 ? 1 : -1;
+      const t = Math.min(nt - 1, Math.max(0, Number(slider.value) + dir));
+      if (t === Number(slider.value)) return;
+      slider.value = String(t);
+      onFrameChange();
+    },
+    { passive: false, capture: true },
+  );
 
   if (select.options.length) {
     await loadModel(select.value);
