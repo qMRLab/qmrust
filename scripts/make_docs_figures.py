@@ -216,17 +216,31 @@ def fig_curve(coll, model, out_dir, qmrust, repo_root):
         ax.set_xticklabels(labels, color=style.MUTED, fontsize=7)
     else:
         keys = sorted({k for i, _ in coll.volumes for k in i})
-        xkey = keys[0] if keys else None
-        x = (
-            np.array([i[xkey] for i, _ in coll.volumes]) if xkey
-            else np.arange(len(measured))
-        )
-        order = np.argsort(x)
+        varying = [k for k in keys if len({i.get(k) for i, _ in coll.volumes}) > 1]
+        if len(varying) > 1:
+            # More than one identity key varies: no single key is a
+            # meaningful axis, so plot in the model's canonical acquisition
+            # order instead of implying a trend along an arbitrary key.
+            x = np.arange(len(measured))
+            order = x
+            ax.set_xticks(x)
+            ax.set_xticklabels(
+                [label_for(i) for i, _ in coll.volumes],
+                color=style.MUTED, fontsize=6, rotation=60, ha="right",
+            )
+            ax.set_xlabel("acquisition", color=style.MUTED, fontsize=8)
+        else:
+            xkey = varying[0] if varying else (keys[0] if keys else None)
+            x = (
+                np.array([i[xkey] for i, _ in coll.volumes]) if xkey
+                else np.arange(len(measured))
+            )
+            order = np.argsort(x)
+            ax.set_xlabel(xkey or "volume", color=style.MUTED, fontsize=8)
         ax.plot(np.array(x)[order], np.array(predicted)[order], "-",
                 color="#f0883e", lw=1.6, label="forward model")
         ax.plot(np.array(x)[order], np.array(measured)[order], "o",
                 color="#58a6ff", ms=4, label="measured")
-        ax.set_xlabel(xkey or "volume", color=style.MUTED, fontsize=8)
     ax.set_ylabel("normalized signal" if named else "signal", color=style.MUTED, fontsize=8)
     ax.tick_params(colors=style.MUTED, labelsize=7)
     for s in ax.spines.values():
