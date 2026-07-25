@@ -8,6 +8,12 @@
 //! the PDw/T1w pair inverts to R1 and the apparent signal amplitude A, and the
 //! MTw signal then yields the MT saturation δ. All flip angles are in radians,
 //! all TRs in seconds; MTsat and MTR are reported in percent, R1 in 1/s.
+//!
+//! B1 correction has two mutually-exclusive pathways: the vanilla path uses the
+//! empirical Weiskopf factor with a nominal MTw flip; the model-based path (a
+//! simulated TardifLab surface) instead B1-corrects the MTw excitation flip
+//! (`alpha_mt·B1`) mechanistically and applies the surface for the saturation
+//! residual. R1/A are B1-corrected (`B1²`, `1/B1`) on both paths.
 
 /// The three weightings' acquisition parameters: flip angle (radians) and
 /// repetition time (seconds) for each of MTw, PDw, T1w.

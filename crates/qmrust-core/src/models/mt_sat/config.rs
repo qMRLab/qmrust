@@ -45,10 +45,12 @@ pub struct MtSatConfig {
     pub export_mtr: bool,
     /// Parsed TardifLab B1-correction artifact. `None` → fall back to the
     /// Helms factor (if a B1 map is present) or no correction; `Some` (and a
-    /// B1 map present) → the Tardif correction factor instead of Helms. The
-    /// recipe references the artifact by path (`{ fitvalues, b1_ref }`); the
-    /// CLI resolves the file and inlines the parsed `FitValues` here before
-    /// `build` — the core itself never reads files.
+    /// B1 map present) → the Tardif correction factor instead of Helms, and
+    /// the MTw excitation flip is B1-corrected mechanistically (`alpha_mt·B1`)
+    /// rather than via the empirical Helms factor, matching the TardifLab
+    /// reference. The recipe references the artifact by path (`{ fitvalues,
+    /// b1_ref }`); the CLI resolves the file and inlines the parsed
+    /// `FitValues` here before `build` — the core itself never reads files.
     #[serde(default)]
     pub b1_correction: Option<FitValues>,
 }
