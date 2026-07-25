@@ -1,0 +1,65 @@
+{
+ "model": "inversion_recovery",
+ "title": "Inversion recovery T1",
+ "dims": [
+  64,
+  64,
+  1,
+  9
+ ],
+ "factor": 2,
+ "volume_ids": [
+  {
+   "InversionTime": 0.35
+  },
+  {
+   "InversionTime": 0.5
+  },
+  {
+   "InversionTime": 0.65
+  },
+  {
+   "InversionTime": 0.8
+  },
+  {
+   "InversionTime": 0.95
+  },
+  {
+   "InversionTime": 1.1
+  },
+  {
+   "InversionTime": 1.25
+  },
+  {
+   "InversionTime": 1.4
+  },
+  {
+   "InversionTime": 1.7
+  }
+ ],
+ "labels": [
+  "InversionTime=0.35",
+  "InversionTime=0.5",
+  "InversionTime=0.65",
+  "InversionTime=0.8",
+  "InversionTime=0.95",
+  "InversionTime=1.1",
+  "InversionTime=1.25",
+  "InversionTime=1.4",
+  "InversionTime=1.7"
+ ],
+ "params": [
+  "T1",
+  "a",
+  "b"
+ ],
+ "outputs": [
+  {
+   "name": "T1",
+   "unit": "s"
+  }
+ ],
+ "config": "model: inversion_recovery\n\n# non-BIDS: protocol from this file; mask via --mask\n# All times are in seconds (BIDS/SI).\ninversion_times:\n- 0.350\n- 0.500\n- 0.650\n- 0.800\n- 0.950\n- 1.100\n- 1.250\n- 1.400\n- 1.700\nrepetition_time: 2.5\n\n# Algorithm options (always used; not BIDS metadata).\nmethod: magnitude\nt1_range:\n  start: 0.001\n  stop: 5.0\n  step: 0.001\nzoom:\n  iterations: 2\n  points: 21\n",
+ "data": "inversion_recovery.f32",
+ "mask": true
+}

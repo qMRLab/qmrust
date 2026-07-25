@@ -258,6 +258,70 @@ def fig_curve(coll, model, out_dir, qmrust, repo_root):
     return True
 
 
+def bundle_slice(coll, model, out_dir, max_bytes):
+    """Write a downsampled slice + config as a playground payload.
+
+    Downsamples by the smallest integer factor whose payload fits `max_bytes`,
+    so a 30-echo 320x260 dataset costs the same as a 9-TI 128x128 one.
+    """
+    import math
+
+    vols = [nifti.slice2d(nifti.read_nii(p)) for _, p in coll.volumes]
+    ny, nx = vols[0].shape
+    nt = len(vols)
+    mask = (
+        nifti.slice2d(nifti.read_nii(coll.mask)) > 0
+        if coll.mask is not None and nifti.slice2d(nifti.read_nii(coll.mask)).shape
+        == vols[0].shape
+        else None
+    )
+    planes = nt + (1 if mask is not None else 0)
+    factor = 1
+    while math.ceil(ny / factor) * math.ceil(nx / factor) * planes * 4 > max_bytes:
+        factor += 1
+
+    sub = [v[::factor, ::factor] for v in vols]
+    h, w = sub[0].shape
+    flat = np.zeros((h, w, 1, nt), dtype="<f4")
+    for t, v in enumerate(sub):
+        flat[:, :, 0, t] = np.nan_to_num(v)
+    payload = [flat.reshape(-1)]
+    if mask is not None:
+        payload.append(mask[::factor, ::factor].astype("<f4").reshape(-1))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{model['name']}.f32").write_bytes(
+        np.concatenate(payload).astype("<f4").tobytes()
+    )
+    named = model["measurement"]["kind"] == "named"
+    meta = {
+        "model": model["name"],
+        "title": model["title"],
+        "dims": [h, w, 1, nt],
+        "factor": factor,
+        "volume_ids": (
+            model["measurement"]["roles"] if named
+            else [identity for identity, _ in coll.volumes]
+        ),
+        "labels": (
+            model["measurement"]["roles"] if named
+            else [label_for(i) for i, _ in coll.volumes]
+        ),
+        "params": [p["name"] for p in model["params"]],
+        "outputs": [
+            {"name": o["name"], "unit": o["unit"]}
+            for o in model["outputs"] if not o["diagnostic"]
+        ],
+        "config": (
+            pathlib.Path(model["recipes"]["non_bids"]).read_text()
+        ),
+        "data": f"{model['name']}.f32",
+        "mask": mask is not None,
+    }
+    (out_dir / f"{model['name']}.json").write_text(json.dumps(meta, indent=1))
+    return factor, h, w
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--bids-dir", required=True, type=pathlib.Path)
@@ -266,6 +330,10 @@ def main(argv=None):
     ap.add_argument("--out", default=None, type=pathlib.Path,
                     help="default: <repo-root>/docs/figures")
     ap.add_argument("--qmrust", default="./target/release/qmrust")
+    ap.add_argument("--bundle-slice", action="store_true",
+                    help="also write playground data slices")
+    ap.add_argument("--max-bytes", type=int, default=250_000,
+                    help="per-model playground payload budget")
     args = ap.parse_args(argv)
 
     out_root = args.out or (args.repo_root / "docs" / "figures")
@@ -288,6 +356,17 @@ def main(argv=None):
             print("  outputs.webp")
         if fig_curve(coll, model, out_dir, args.qmrust, args.repo_root):
             print("  curve.webp")
+        if args.bundle_slice:
+            factor, h, w = bundle_slice(
+                coll, model, args.repo_root / "docs" / "playground" / "data",
+                args.max_bytes,
+            )
+            print(f"  bundle: {h}x{w} (downsampled {factor}x)")
+
+    if args.bundle_slice:
+        data_dir = args.repo_root / "docs" / "playground" / "data"
+        names = sorted(p.stem for p in data_dir.glob("*.json") if p.stem != "index")
+        (data_dir / "index.json").write_text(json.dumps({"models": names}, indent=1))
     return 0
 
 

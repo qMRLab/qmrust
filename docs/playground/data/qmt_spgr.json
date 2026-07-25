@@ -1,0 +1,102 @@
+{
+ "model": "qmt_spgr",
+ "title": "qMT-SPGR",
+ "dims": [
+  44,
+  64,
+  1,
+  10
+ ],
+ "factor": 2,
+ "volume_ids": [
+  {
+   "Angle": 142.0,
+   "Offset": 443.0
+  },
+  {
+   "Angle": 426.0,
+   "Offset": 443.0
+  },
+  {
+   "Angle": 142.0,
+   "Offset": 1088.0
+  },
+  {
+   "Angle": 426.0,
+   "Offset": 1088.0
+  },
+  {
+   "Angle": 142.0,
+   "Offset": 2732.0
+  },
+  {
+   "Angle": 426.0,
+   "Offset": 2732.0
+  },
+  {
+   "Angle": 142.0,
+   "Offset": 6862.0
+  },
+  {
+   "Angle": 426.0,
+   "Offset": 6862.0
+  },
+  {
+   "Angle": 142.0,
+   "Offset": 17235.0
+  },
+  {
+   "Angle": 426.0,
+   "Offset": 17235.0
+  }
+ ],
+ "labels": [
+  "Angle=142, Offset=443",
+  "Angle=426, Offset=443",
+  "Angle=142, Offset=1088",
+  "Angle=426, Offset=1088",
+  "Angle=142, Offset=2732",
+  "Angle=426, Offset=2732",
+  "Angle=142, Offset=6862",
+  "Angle=426, Offset=6862",
+  "Angle=142, Offset=17235",
+  "Angle=426, Offset=17235"
+ ],
+ "params": [
+  "F",
+  "kr",
+  "R1f",
+  "R1r",
+  "T2f",
+  "T2r"
+ ],
+ "outputs": [
+  {
+   "name": "F",
+   "unit": ""
+  },
+  {
+   "name": "kr",
+   "unit": "1/s"
+  },
+  {
+   "name": "R1f",
+   "unit": "1/s"
+  },
+  {
+   "name": "R1r",
+   "unit": "1/s"
+  },
+  {
+   "name": "T2f",
+   "unit": "s"
+  },
+  {
+   "name": "T2r",
+   "unit": "s"
+  }
+ ],
+ "config": "# Fully-resolved config (all defaults materialized, validation applied).\n# Regenerate with: qmrust dump-config --config qmt_config_ramani.yaml\n\nmodel: qmt_spgr\nqmt_spgr:\n  protocol:\n    mtdata:\n    - - 142.0\n      - 443.0\n    - - 426.0\n      - 443.0\n    - - 142.0\n      - 1088.0\n    - - 426.0\n      - 1088.0\n    - - 142.0\n      - 2732.0\n    - - 426.0\n      - 2732.0\n    - - 142.0\n      - 6862.0\n    - - 426.0\n      - 6862.0\n    - - 142.0\n      - 17235.0\n    - - 426.0\n      - 17235.0\n    timing:\n      tmt: 0.0102\n      TR: 0.025\n  pulse:\n    shape: gausshann\n    bandwidth: 200.0\n  lineshape: SuperLorentzian\n  model: Ramani\n  read_pulse_alpha: 7.0\n  fitting:\n    st:\n    - 0.16\n    - 30.0\n    - 1.0\n    - 1.0\n    - 0.03\n    - 0.000013\n    lb:\n    - 0.0001\n    - 0.0001\n    - 0.05\n    - 0.05\n    - 0.003\n    - 3e-6\n    ub:\n    - 0.5\n    - 100.0\n    - 5.0\n    - 5.0\n    - 0.5\n    - 0.00005\n    fx:\n    - false\n    - false\n    - true\n    - true\n    - false\n    - false\n    use_r1map_to_constrain_r1f: true\n    fix_r1r_eq_r1f: false\n    fix_r1f_t2f: false\n    r1f_t2f: 0.055\n\nmask:\n  desc: brain\n",
+ "data": "qmt_spgr.f32",
+ "mask": true
+}

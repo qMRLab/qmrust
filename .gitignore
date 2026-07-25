@@ -42,3 +42,6 @@ docs/_build/
 
 # Python bytecode cache
 __pycache__/
+
+# wasm-pack output for the docs playground (rebuilt by CI)
+/docs/playground/pkg

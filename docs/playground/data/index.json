@@ -1,0 +1,9 @@
+{
+ "models": [
+  "inversion_recovery",
+  "mono_t2",
+  "mt_ratio",
+  "mt_sat",
+  "qmt_spgr"
+ ]
+}
