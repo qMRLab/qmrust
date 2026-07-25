@@ -29,10 +29,11 @@
     --good:#1f9d64; --bad:#c0503a; --field:#fff;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; height: 100%; }
   body {
     background: var(--bg); color: var(--ink); font: 13px/1.5 var(--sans);
     padding: 14px;
+    display: flex; flex-direction: column;
   }
   h1, h2, h3 { font-family: var(--sans); }
   code, pre, textarea, input, select, .mono { font-family: var(--mono); }
@@ -66,35 +67,64 @@
 
   .topbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 
-  .progress-wrap {
-    height: 6px; border-radius: 999px; background: var(--panel-2);
-    border: 1px solid var(--line); overflow: hidden; margin: -4px 0 12px;
+  /* Fitting progress: a permanent fixture above "Fit slice" (idle = empty
+     track), not a topbar element that appears/disappears and shifts the rest
+     of the page. Track/fill/stripe colours are fixed (not theme-token-based)
+     to match the reference look asked for. */
+  .fit-progress {
+    height: 10px; border-radius: 999px; background: #6b7280; overflow: hidden;
+    margin: 2px 0 2px;
   }
-  .progress-bar {
-    height: 100%; width: 0%; background: var(--accent);
-    transition: width .12s linear;
+  .fit-progress-bar {
+    height: 100%; width: 0%; border-radius: 999px;
+    background-color: #4f9dff;
+    background-image: repeating-linear-gradient(
+      45deg, rgba(255, 255, 255, 0.35) 0 10px, transparent 10px 20px
+    );
+    background-size: 28px 28px;
+    transition: width 0.15s linear;
+  }
+  .fit-progress-bar.active { animation: fit-progress-stripes 0.9s linear infinite; }
+  @keyframes fit-progress-stripes {
+    from { background-position: 0 0; }
+    to { background-position: 28px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .fit-progress-bar.active { animation: none; }
   }
 
   .layout {
     display: grid;
     grid-template-columns: 380px 1fr 1fr;
-    grid-template-rows: auto auto;
+    grid-template-rows: minmax(360px, 1fr) auto;
     gap: 14px;
-    align-items: start;
+    align-items: stretch;
+    flex: 1 1 auto;
+    min-height: 0;
   }
-  /* Capped so a model with a deeply-nested recipe (e.g. many fitting
-     sub-groups) scrolls internally instead of stretching the whole grid row
-     and leaving a large empty gap beside the (fixed-height) viewers. */
+  /* Capped, and explicitly opted out of the grid's row-stretch (`align-self:
+     start`), so a model with a deeply-nested recipe scrolls internally
+     instead of the card stretching to the (now viewport-filling) viewer
+     row's height and sitting mostly empty. */
   .recipe-card {
     grid-column: 1; grid-row: 1 / span 2;
+    align-self: start;
     max-height: 760px; overflow-y: auto;
   }
-  .viewer-in-wrap { grid-column: 2; grid-row: 1; }
-  .viewer-out-wrap { grid-column: 3; grid-row: 1; }
+  /* The viewer wraps *do* stretch (the grid default) to fill whatever
+     vertical space the row has — the point of this layout pass — with their
+     own content (`.viewer`) flexed to fill that stretched height in turn. */
+  .viewer-in-wrap, .viewer-out-wrap {
+    grid-row: 1;
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .viewer-in-wrap { grid-column: 2; }
+  .viewer-out-wrap { grid-column: 3; }
   .curve-wrap { grid-column: 2 / span 2; grid-row: 2; }
   @media (max-width: 900px) {
-    .layout { grid-template-columns: 1fr; }
+    .layout { grid-template-columns: 1fr; grid-template-rows: none; }
     .recipe-card, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap { grid-column: 1; grid-row: auto; }
+    .viewer-in-wrap, .viewer-out-wrap { height: 46vh; min-height: 280px; }
   }
 
   /* recipe editor */
@@ -171,6 +201,7 @@
   .viewer {
     position: relative; border-radius: 12px; overflow: hidden;
     background: #010409; margin: 0; width: 100%;
+    flex: 1 1 auto; min-height: 0;
   }
   .viewer canvas { width: 100%; height: 100%; display: block; }
   .out-controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
@@ -181,7 +212,7 @@
     color: var(--ink-2); font-size: 12px;
   }
   .range-controls label { display: flex; gap: 5px; align-items: center; }
-  .range-controls input[type=number] { width: 6.5em; font-size: 12px; padding: 4px 7px; }
+  .range-controls input[type=number] { width: 8em; font-size: 12px; padding: 4px 7px; }
   .range-controls button { font-size: 12px; padding: 4px 10px; }
 
   .voxel-value { color: var(--ink-2); font: 12px var(--mono); margin: 2px 0 8px; }
@@ -195,9 +226,6 @@
 </style>
 <div class="topbar">
   <span id="status">loading…</span>
-</div>
-<div id="progress-wrap" class="progress-wrap" hidden>
-  <div id="progress-bar" class="progress-bar"></div>
 </div>
 <div id="fallback" hidden>
   <p><strong>The WebAssembly build is not present.</strong> The viewers below still work —
@@ -218,6 +246,9 @@
       <textarea id="cfg-yaml" spellcheck="false"></textarea>
     </div>
     <p class="local-note">Edits are local to your browser — nothing is uploaded or saved.</p>
+    <div id="fit-progress" class="fit-progress">
+      <div id="progress-bar" class="fit-progress-bar"></div>
+    </div>
     <div class="recipe-actions">
       <button id="fit" class="primary">Fit slice</button>
     </div>

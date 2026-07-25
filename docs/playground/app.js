@@ -36,6 +36,11 @@ let availableColormaps = [];
 // values), from this model's bundle `enums` — the catalog/registry decides
 // which keys get a dropdown, never a name or key hard-coded here.
 let enumFields = new Map();
+// Accumulated wheel `deltaY` for the inputs viewer's frame-step gesture (see
+// the `wheel` listener in `main`); reset on every model load so a gesture
+// mid-flight on the old model can't carry a partial step into the new one.
+let wheelAccum = 0;
+const WHEEL_STEP_THRESHOLD = 100;
 
 // Recipe editor state: `text` is always the source of truth handed to
 // fit_volume; `obj` is its parsed form (null while the text is invalid).
@@ -324,6 +329,40 @@ function readMask(volume, nx, ny, nz) {
   return Uint8Array.from(raw, (v) => (v > 0 ? 1 : 0));
 }
 
+// Fixed 2nd/98th-percentile window over the finite (in-mask, fitted) values —
+// the same rule `scripts/docsfig/style.py`'s `window()` uses for the
+// committed figures, so the browser and the published figures agree, and a
+// few boundary-stuck fit failures (e.g. a grid search pinned at its T1 upper
+// bound) cannot single-handedly drag the whole map's range out to them the
+// way a plain min/max would.
+function percentileWindow(values) {
+  const finite = [];
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (Number.isFinite(v)) finite.push(v);
+  }
+  if (finite.length === 0) return [0, 1];
+  finite.sort((a, b) => a - b);
+  const at = (p) => {
+    const idx = (p / 100) * (finite.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    return lo === hi ? finite[lo] : finite[lo] + (finite[hi] - finite[lo]) * (idx - lo);
+  };
+  const lo = at(2);
+  const hi = at(98);
+  return hi > lo ? [lo, hi] : [lo, lo + 1];
+}
+
+// Rounds a colour-scale bound to ~3 significant figures for display in the
+// min/max inputs — full float precision is not a meaningful "default", and
+// doesn't fit the input box either.
+function roundBound(v) {
+  if (!Number.isFinite(v) || v === 0) return 0;
+  const digits = Math.max(0, 2 - Math.floor(Math.log10(Math.abs(v))));
+  return Number(v.toFixed(Math.min(6, digits)));
+}
+
 // Build a displayable NVImage for one output map from `flat` (C-order
 // `[nx,ny,nz]`, NaN outside the fit), reusing `template`'s header/orientation
 // (NVImage.zerosLike) rather than hand-rolling a NIfTI header.
@@ -333,36 +372,52 @@ function buildMapVolume(template, flat, nx, ny, nz, name, unit) {
   vol.hdr.dims[0] = 3;
   vol.hdr.dims[4] = 1;
   vol.nFrame4D = 1;
+  const [lo, hi] = percentileWindow(flat);
+  // Unfitted voxels (NaN — outside the mask, or a failed fit) must not read
+  // as the *brightest* colour in the map, which is what an unclamped NaN
+  // texel does here. Park them well below the display window so they clamp
+  // to the colormap's dark end instead — the GPU equivalent of
+  // `docsfig.style`'s `cm.set_bad(BG)`.
+  const sentinel = lo - Math.max(1, hi - lo);
   const img = new Float32Array(nx * ny * nz);
   for (let x = 0; x < nx; x++) {
     for (let y = 0; y < ny; y++) {
       for (let z = 0; z < nz; z++) {
-        img[x + y * nx + z * nx * ny] = flat[(x * ny + y) * nz + z];
+        const v = flat[(x * ny + y) * nz + z];
+        img[x + y * nx + z * nx * ny] = Number.isFinite(v) ? v : sentinel;
       }
     }
   }
   vol.img = img;
   vol.name = `${name}${unit ? ` [${unit}]` : ""}`;
-  vol.trustCalMinMax = false;
-  vol.percentileFrac = 0.02;
+  // Trust the percentile window computed above rather than have NiiVue
+  // recompute its own min/max from the raw buffer — which would include the
+  // dark-end sentinel just written in for NaN and pull the window back out
+  // to it.
+  vol.trustCalMinMax = true;
   vol.colorbarVisible = true;
   vol.calculateRAS();
-  vol.calMinMax();
+  // `NVImage.zerosLike` clones `template` (the acquired image) before
+  // zeroing it, and `clone()` runs the library's own `calMinMax()` over the
+  // *template's* data as a side effect — so `hdr.cal_min`/`hdr.cal_max` start
+  // out describing the wrong image entirely. Set both the plain property and
+  // its header twin to our percentile window, so whichever one a later
+  // render/add-volume step reads back gets the fitted map's own range.
+  vol.cal_min = roundBound(lo);
+  vol.cal_max = roundBound(hi);
+  vol.hdr.cal_min = vol.cal_min;
+  vol.hdr.cal_max = vol.cal_max;
   return vol;
 }
 
-// The two viewers show a single slice each, at the data's own aspect ratio
-// (rather than a fixed square) so neither letterboxes into empty margins —
-// and, since both wraps sit in equal-width grid columns, an identical
-// aspect ratio keeps them exactly the same size and top-aligned.
-function sizeViewers(nx, ny) {
-  const aspect = `${nx} / ${ny}`;
-  for (const id of ["viewer-in", "viewer-out"]) {
-    const el = $(id);
-    el.style.aspectRatio = aspect;
-    el.style.height = "360px";
-    el.style.width = "auto";
-  }
+// The two viewer wraps are equal-width grid columns, stretched (CSS
+// `align-items: stretch`) to the grid row's full height, with `.viewer`
+// flexed to fill that in turn — so both viewers are always exactly the same
+// size, whatever space the page has to give them. NiiVue fits a slice inside
+// whatever box it is given, preserving the data's own aspect ratio (fit-to-
+// contain, like an `object-fit: contain` image), so the box itself does not
+// need to match the data's aspect ratio the way it used to.
+function sizeViewers() {
   nvIn.resizeListener();
   nvOut.resizeListener();
 }
@@ -399,6 +454,7 @@ async function loadModel(name) {
   $("curve-note").textContent = "";
   clearCurve();
   enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
+  wheelAccum = 0;
   setEditorText(meta.config);
 
   const [nx, ny, nz, nt] = meta.dims;
@@ -445,7 +501,7 @@ async function loadModel(name) {
 
   nvIn.setSliceType(nvIn.sliceTypeAxial);
   nvOut.setSliceType(nvOut.sliceTypeAxial);
-  sizeViewers(nx, ny);
+  sizeViewers();
   nvIn.drawScene();
 
   setFrameUi(nt, meta.labels);
@@ -462,15 +518,27 @@ function onFrameChange() {
   $("frame-label").textContent = current.meta.labels[t] ?? "";
 }
 
+// Jumps to frame `t` (NiiVue's own `setFrame4D`, the same call `onFrameChange`
+// makes from the slider) and syncs the slider + label to match, so the wheel
+// and the slider always agree on where they are.
+function goToFrame(t) {
+  $("frame").value = String(t);
+  onFrameChange();
+}
+
+// The progress track is a permanent fixture above "Fit slice" (an empty
+// track at idle, not an element that appears/disappears and reflows the
+// page); only its fill width and the "active" stripe animation change.
 function showProgress() {
-  $("progress-wrap").hidden = false;
+  $("progress-bar").classList.add("active");
   setProgress(0);
 }
 function setProgress(pct) {
   $("progress-bar").style.width = `${Math.max(0, Math.min(100, pct))}%`;
 }
 function hideProgress() {
-  $("progress-wrap").hidden = true;
+  $("progress-bar").classList.remove("active");
+  setProgress(0);
 }
 // Lets the browser paint (and stay responsive to input) between fit blocks —
 // a plain microtask/`setTimeout(0)` does not reliably yield before the next
@@ -771,6 +839,13 @@ function onLocation(loc) {
 async function main() {
   await nvIn.attachTo("gl-in");
   await nvOut.attachTo("gl-out");
+  // Otherwise the canvas backing store renders at 1x and is upscaled by CSS
+  // to its layout size — soft/blurry on any HiDPI (retina) display,
+  // regardless of how much native resolution the bundle ships. NiiVue's own
+  // `resizeListener` (already called on every model load and viewer resize)
+  // keeps the backing store matched to `devicePixelRatio` once this is set.
+  nvIn.setHighResolutionCapable(true);
+  nvOut.setHighResolutionCapable(true);
   populateColormaps();
 
   // Synced crosshairs both ways, so dragging in either viewer moves the
@@ -821,10 +896,19 @@ async function main() {
 
   // Wheel-to-scrub, alongside the existing slider: a reader hovering the
   // inputs viewer steps through frames without reaching for the slider,
-  // useful once a model ships several volumes.
-  // Captured (not bubble-phase) and stopped here, ahead of NiiVue's own
-  // wheel-to-zoom handler on the canvas — this viewer's wheel gesture means
-  // "step frames", not "zoom the slice".
+  // useful once a model ships several volumes. Captured (not bubble-phase)
+  // and stopped here, ahead of NiiVue's own wheel-to-zoom handler on the
+  // canvas — this viewer's wheel gesture means "step frames", not "zoom the
+  // slice" (the vendored build's own wheel handling is for slice zoom/scroll
+  // and click-to-segment, not 4D frame stepping, so there is no built-in
+  // gesture to opt into for this instead).
+  //
+  // A single mouse-wheel notch and a single trackpad two-finger gesture both
+  // arrive as a *stream* of wheel events (a trackpad especially fires many
+  // small ones), so stepping on every event blows through several frames per
+  // gesture. Accumulate `deltaY` and only step once it crosses a threshold —
+  // tuned to the ~100-120 one Chrome/Firefox mouse-wheel notch reports, and
+  // large enough that one full trackpad swipe is one frame, not several.
   $("viewer-in").addEventListener(
     "wheel",
     (e) => {
@@ -833,12 +917,14 @@ async function main() {
       if (nt <= 1) return;
       e.preventDefault();
       e.stopPropagation();
-      const slider = $("frame");
-      const dir = e.deltaY > 0 ? 1 : -1;
-      const t = Math.min(nt - 1, Math.max(0, Number(slider.value) + dir));
-      if (t === Number(slider.value)) return;
-      slider.value = String(t);
-      onFrameChange();
+      wheelAccum += e.deltaY;
+      if (Math.abs(wheelAccum) < WHEEL_STEP_THRESHOLD) return;
+      const dir = wheelAccum > 0 ? 1 : -1;
+      wheelAccum = 0;
+      const id = current.volume.id;
+      const t = Math.min(nt - 1, Math.max(0, nvIn.getFrame4D(id) + dir));
+      if (t === nvIn.getFrame4D(id)) return;
+      goToFrame(t);
     },
     { passive: false, capture: true },
   );
