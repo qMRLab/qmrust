@@ -76,7 +76,7 @@ fn load_config_raw(
     qmrust_core::config::parse_config(&contents)
 }
 
-/// If a `mt_sat` recipe carries `b1_correction: { fitvalues: <path>, b1_ref }`,
+/// If a `mt_sat` recipe carries `b1_correction: { fitvalues: <path> }`,
 /// load and parse the artifact and inline it so the model config deserializes
 /// a real `FitValues` instead of the path form. Keeps file I/O in the shell;
 /// the core only ever deserializes data it is handed. A recipe without
@@ -92,16 +92,6 @@ fn inject_mt_sat_b1_correction(raw: &mut serde_yaml::Value) -> Result<()> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading fitvalues {path}"))?;
     let fv: qmrust_core::mtsat_b1::fitvalues::FitValues = serde_yaml::from_str(&text)?;
-    if let Some(recipe_b1_ref) = b1c.get("b1_ref").and_then(|v| v.as_f64()) {
-        if (recipe_b1_ref - fv.b1_ref).abs() > 1e-9 {
-            eprintln!(
-                "  warning (mt_sat): recipe b1_correction.b1_ref ({recipe_b1_ref}) does not match \
-                 the fitvalues artifact's b1_ref ({}); the artifact's value is authoritative and \
-                 is what is used.",
-                fv.b1_ref
-            );
-        }
-    }
     if let serde_yaml::Value::Mapping(m) = raw {
         m.insert("b1_correction".into(), serde_yaml::to_value(fv)?);
     }
@@ -2012,7 +2002,7 @@ mod tests {
         let fv_path = dir.0.join("fv.yaml");
         std::fs::write(&fv_path, sample_fitvalues_yaml()).unwrap();
         let recipe = format!(
-            "model: mt_sat\nmtw: {{flip_angle: 6, repetition_time: 0.028}}\npdw: {{flip_angle: 6, repetition_time: 0.028}}\nt1w: {{flip_angle: 20, repetition_time: 0.018}}\nb1_correction: {{ fitvalues: {:?}, b1_ref: 6.8 }}\n",
+            "model: mt_sat\nmtw: {{flip_angle: 6, repetition_time: 0.028}}\npdw: {{flip_angle: 6, repetition_time: 0.028}}\nt1w: {{flip_angle: 20, repetition_time: 0.018}}\nb1_correction: {{ fitvalues: {:?} }}\n",
             fv_path
         );
         let raw: serde_yaml::Value = serde_yaml::from_str(&recipe).unwrap();
@@ -2031,10 +2021,10 @@ mod tests {
     }
 
     #[test]
-    fn mt_sat_recipe_b1_ref_mismatch_warns_but_uses_artifact_value() {
-        // A recipe `b1_ref` that disagrees with the artifact's own must not
-        // error — it's a spec-mandated warning, and the artifact's `b1_ref`
-        // (6.8 here) remains authoritative regardless of what the recipe says.
+    fn mt_sat_recipe_stray_b1_ref_is_ignored() {
+        // A `b1_ref` in the recipe's `b1_correction` block is no longer
+        // parsed — it is ignored (not an error, not a warning). The
+        // artifact's own `b1_ref` (6.8 here) is what's inlined and used.
         let dir = TempDir::new("mtsat-b1-ref-mismatch");
         let fv_path = dir.0.join("fv.yaml");
         std::fs::write(&fv_path, sample_fitvalues_yaml()).unwrap();
@@ -2044,9 +2034,10 @@ mod tests {
         );
         let raw: serde_yaml::Value = serde_yaml::from_str(&recipe).unwrap();
         let mut raw_mut = raw.clone();
-        inject_mt_sat_b1_correction(&mut raw_mut).expect("mismatched b1_ref must warn, not error");
+        inject_mt_sat_b1_correction(&mut raw_mut)
+            .expect("a stray recipe b1_ref must be ignored, not error");
         // The inlined b1_correction carries the artifact's b1_ref (6.8), not
-        // the recipe's mismatched 9.9.
+        // the recipe's stray 9.9.
         let inlined_b1_ref = raw_mut
             .get("b1_correction")
             .and_then(|v| v.get("b1_ref"))
