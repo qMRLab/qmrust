@@ -70,16 +70,23 @@ function readVolumeSeries(volume, nx, ny, nz, nt) {
   return flat;
 }
 
-function readMask(volume, nx, ny, nz) {
-  const flat = new Uint8Array(nx * ny * nz);
+// C-order `[nx,ny,nz]`, single frame — the same convention `readVolumeSeries`
+// uses per timepoint, and the one `fit_volume`'s `mask`/`aux` arguments want.
+function readScalarVolume(volume, nx, ny, nz) {
+  const flat = new Float64Array(nx * ny * nz);
   for (let x = 0; x < nx; x++) {
     for (let y = 0; y < ny; y++) {
       for (let z = 0; z < nz; z++) {
-        flat[(x * ny + y) * nz + z] = volume.getValue(x, y, z, 0) > 0 ? 1 : 0;
+        flat[(x * ny + y) * nz + z] = volume.getValue(x, y, z, 0);
       }
     }
   }
   return flat;
+}
+
+function readMask(volume, nx, ny, nz) {
+  const raw = readScalarVolume(volume, nx, ny, nz);
+  return Uint8Array.from(raw, (v) => (v > 0 ? 1 : 0));
 }
 
 // Build a displayable NVImage for one output map from `flat` (C-order
@@ -107,6 +114,21 @@ function buildMapVolume(template, flat, nx, ny, nz, name, unit) {
   vol.calculateRAS();
   vol.calMinMax();
   return vol;
+}
+
+// The two viewers show a single slice each; sizing their box to the data's
+// own aspect ratio (rather than a fixed square) avoids letterboxing the
+// slice inside empty space on either side.
+function sizeViewers(nx, ny) {
+  const aspect = `${nx} / ${ny}`;
+  for (const id of ["viewer-in", "viewer-out"]) {
+    const el = $(id);
+    el.style.aspectRatio = aspect;
+    el.style.height = "340px";
+    el.style.width = "auto";
+  }
+  nvIn.resizeListener();
+  nvOut.resizeListener();
 }
 
 function setFrameUi(nt, labels) {
@@ -161,12 +183,31 @@ async function loadModel(name) {
     }
   }
 
+  // `files.aux` is a general mechanism: whatever auxiliary inputs the recipe
+  // resolved (none, one, or several), load every one and hand it to
+  // fit_volume (a flat map, for the whole slice) and to forward() (one
+  // scalar, for whichever voxel is clicked) — never keyed on a model or aux
+  // name.
+  const auxFlat = {};
+  const auxVolumes = {};
+  for (const [auxName, filename] of Object.entries(meta.files.aux ?? {})) {
+    try {
+      const auxVolume = await NVImage.loadFromUrl({ url: `./data/${filename}` });
+      auxFlat[auxName] = Array.from(readScalarVolume(auxVolume, nx, ny, nz));
+      auxVolumes[auxName] = auxVolume;
+    } catch (e) {
+      status(`could not load "${filename}" (${e.message})`);
+      return;
+    }
+  }
+
   nvIn.setSliceType(nvIn.sliceTypeAxial);
   nvOut.setSliceType(nvOut.sliceTypeAxial);
+  sizeViewers(nx, ny);
   nvIn.drawScene();
 
   setFrameUi(nt, meta.labels);
-  current = { meta, volume, maskU8, frame: 0 };
+  current = { meta, volume, maskU8, auxFlat, auxVolumes, frame: 0 };
   $("fit").disabled = !wasm;
   status(`${meta.title}: ${nt} volumes, ${nx}×${ny}`);
 }
@@ -182,7 +223,7 @@ function onFrameChange() {
 async function fitSlice() {
   if (!current) { status("pick a model first"); return; }
   if (!wasm) { status("wasm unavailable — build the package to fit"); return; }
-  const { meta, volume, maskU8 } = current;
+  const { meta, volume, maskU8, auxFlat } = current;
   const [nx, ny, nz, nt] = meta.dims;
   status("fitting…");
   const t0 = performance.now();
@@ -196,7 +237,7 @@ async function fitSlice() {
     Uint32Array.from([nx, ny, nz, nt]),
     JSON.stringify(meta.volume_ids),
     maskU8 ?? undefined,
-    "{}",
+    JSON.stringify(auxFlat),
   );
   const maps = Object.fromEntries(raw);
   lastMaps = maps;
@@ -243,7 +284,7 @@ function clearCurve() {
 function plotVoxel(x, y, z) {
   if (!current) return;
   current.lastVox = { x, y, z };
-  const { meta, volume } = current;
+  const { meta, volume, auxVolumes } = current;
   const [, , , nt] = meta.dims;
   $("voxel-title").textContent = `Voxel (${x}, ${y})`;
   if (!lastMaps) {
@@ -274,7 +315,15 @@ function plotVoxel(x, y, z) {
   }
   const measured = [];
   for (let t = 0; t < nt; t++) measured.push(volume.getValue(x, y, 0, t));
-  const predicted = JSON.parse(wasm.forward(meta.config, Float64Array.from(params), "{}"));
+  // forward() takes one scalar per aux name (a single voxel), unlike
+  // fit_volume's flat-array-per-name contract.
+  const voxelAux = {};
+  for (const [auxName, auxVolume] of Object.entries(auxVolumes)) {
+    voxelAux[auxName] = auxVolume.getValue(x, y, z, 0);
+  }
+  const predicted = JSON.parse(
+    wasm.forward(meta.config, Float64Array.from(params), JSON.stringify(voxelAux)),
+  );
   const values = Array.isArray(predicted)
     ? predicted.map((s) => s.value)
     : meta.volume_ids.map((r) => predicted[r]);

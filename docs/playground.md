@@ -17,7 +17,7 @@ only the per-voxel curve view is unavailable) reports why when you click.
 
 :::{iframe} ./playground/index.html
 :width: 100%
-:height: 820px
+:height: 700px
 Live fitting in WebAssembly. Each model ships one downsampled slice from the
 qmrust example dataset.
 :::
