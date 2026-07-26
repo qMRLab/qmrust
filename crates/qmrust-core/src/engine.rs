@@ -1,7 +1,9 @@
 //! The single voxel-fitting engine. Drives any `Model`, dispatching on its
 //! declared `FitStrategy`.
 
-use crate::core::model::{Aux, FitStrategy, Measurement, MeasurementKind, Model, Sample, VolumeId};
+use crate::core::model::{
+    Aux, FitStrategy, Measurement, MeasurementKind, Model, Protocol, Sample, VolumeId,
+};
 use crate::fitting::FitResults;
 use anyhow::{bail, Result};
 use ndarray::{Array3, Array4};
@@ -103,6 +105,50 @@ impl AuxMaps {
             }
         }
         Ok(())
+    }
+}
+
+/// Each volume's identity, for a measurement of `n_volumes` volumes.
+///
+/// - `Named { roles }`: volume `i` takes role `roles[i]` (requires exactly
+///   `roles.len()` volumes).
+/// - `Series { rows }`: prefer externally-resolved per-volume rows
+///   (`proto.volumes` — the BIDS sidecar-derived identities); otherwise fall back
+///   to the model's own canonical identity rows. Both carry populated params —
+///   an empty/positional row is never emitted, because models assemble signal by
+///   identity rather than position.
+pub fn build_volume_ids(
+    kind: MeasurementKind,
+    proto: &Protocol,
+    n_volumes: usize,
+) -> Result<Vec<VolumeId>, String> {
+    match kind {
+        MeasurementKind::Named { roles } => {
+            if roles.len() != n_volumes {
+                return Err(format!(
+                    "Data has {} volumes but model expects {} named volumes ({:?})",
+                    n_volumes,
+                    roles.len(),
+                    roles
+                ));
+            }
+            Ok(roles.iter().map(|&r| VolumeId::Role(r)).collect())
+        }
+        MeasurementKind::Series { rows } => {
+            let source = if proto.volumes.len() == n_volumes {
+                &proto.volumes
+            } else {
+                &rows
+            };
+            if source.len() != n_volumes {
+                return Err(format!(
+                    "Data has {} volumes but the model's series protocol has {} rows",
+                    n_volumes,
+                    source.len()
+                ));
+            }
+            Ok(source.iter().cloned().map(VolumeId::Params).collect())
+        }
     }
 }
 

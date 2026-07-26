@@ -36,7 +36,10 @@ pub fn forward(cfg_yaml: &str, params: &[f64], aux_json: &str) -> Result<String,
 /// `dims` is `[nx, ny, nz, nt]`. `volume_ids_json` supplies each volume's
 /// identity (a JSON array of role names for `Named`, or of param-row objects
 /// for `Series`), length `nt`. `aux_json` is a JSON object mapping an input
-/// name to a C-order `[nx,ny,nz]` array. Returns `{ name: number[] }`.
+/// name to a C-order `[nx,ny,nz]` array. `protocol_json` is the acquisition
+/// resolved from the data — pass `resolve_bids`'s `protocol_json` for a BIDS
+/// dataset, or `""` when the recipe itself carries the protocol. Returns
+/// `{ name: number[] }`.
 #[wasm_bindgen]
 pub fn fit_volume(
     cfg_yaml: &str,
@@ -45,6 +48,7 @@ pub fn fit_volume(
     volume_ids_json: &str,
     mask: Option<Vec<u8>>,
     aux_json: &str,
+    protocol_json: &str,
 ) -> Result<JsValue, JsError> {
     if dims.len() != 4 {
         return Err(JsError::new("dims must have length 4 [nx,ny,nz,nt]"));
@@ -57,8 +61,16 @@ pub fn fit_volume(
         serde_json::from_str(aux_json).map_err(|e| JsError::new(&format!("aux JSON: {}", e)))?
     };
     let aux: Vec<(String, Vec<f64>)> = aux_map.into_iter().collect();
-    let maps = api::fit_volume(cfg_yaml, data, d, volume_ids_json, mask.as_deref(), &aux)
-        .map_err(|e| JsError::new(&e))?;
+    let maps = api::fit_volume(
+        cfg_yaml,
+        data,
+        d,
+        volume_ids_json,
+        mask.as_deref(),
+        &aux,
+        protocol_json,
+    )
+    .map_err(|e| JsError::new(&e))?;
     let obj: std::collections::BTreeMap<String, Vec<f64>> = maps.into_iter().collect();
     serde_wasm_bindgen::to_value(&obj).map_err(|e| JsError::new(&e.to_string()))
 }

@@ -17,50 +17,13 @@ use qmrust_core::engine::AuxMaps;
 use qmrust_core::models;
 use rust_bids::{Collection, GroupedData};
 
-/// Build per-volume identities for `engine::run` from a model's declared
-/// measurement kind and the resolved protocol — dispatch on the measurement
-/// shape, never on the model name. Every volume is labeled with a real
-/// identity, so the model's `fit` always assembles by value, never by position.
-///
-/// - `Named { roles }`: volume `i` takes role `roles[i]` (requires exactly
-///   `roles.len()` volumes).
-/// - `Series { rows }`: prefer externally-resolved per-volume rows
-///   (`proto.volumes`, the BIDS sidecar-derived identities); otherwise fall
-///   back to the model's own canonical identity rows. Both carry populated
-///   params — an empty/positional row is never emitted.
+/// `qmrust_core::engine::build_volume_ids` in this crate's error type.
 fn build_volume_ids(
     kind: MeasurementKind,
     proto: &Protocol,
     n_volumes: usize,
 ) -> Result<Vec<VolumeId>> {
-    match kind {
-        MeasurementKind::Named { roles } => {
-            if roles.len() != n_volumes {
-                bail!(
-                    "Data has {} volumes but model expects {} named volumes ({:?})",
-                    n_volumes,
-                    roles.len(),
-                    roles
-                );
-            }
-            Ok(roles.iter().map(|&r| VolumeId::Role(r)).collect())
-        }
-        MeasurementKind::Series { rows } => {
-            let source = if proto.volumes.len() == n_volumes {
-                &proto.volumes
-            } else {
-                &rows
-            };
-            if source.len() != n_volumes {
-                bail!(
-                    "Data has {} volumes but the model's series protocol has {} rows",
-                    n_volumes,
-                    source.len()
-                );
-            }
-            Ok(source.iter().cloned().map(VolumeId::Params).collect())
-        }
-    }
+    qmrust_core::engine::build_volume_ids(kind, proto, n_volumes).map_err(|e| anyhow::anyhow!(e))
 }
 
 /// Read a config file from disk and parse + validate it, also returning the
@@ -266,40 +229,13 @@ fn load_collection(
     options: &std::collections::BTreeMap<String, f64>,
     roles: Option<&[&'static str]>,
 ) -> Result<(Array4<f64>, Protocol, Option<NiftiHeader>)> {
-    let vols: Vec<&rust_bids::VolumeRef> = match &c.data {
-        GroupedData::Sequential(vols) => vols.iter().collect(),
-        GroupedData::Named(map) => {
-            let roles = roles.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "collection for '{}' is a named set, but model uses a series measurement \
-                     with no role axis to map its volumes onto",
-                    c.suffix
-                )
-            })?;
-            roles
-                .iter()
-                .map(|&r| {
-                    map.get(r).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "named collection for '{}' is missing role '{}' (has {:?})",
-                            c.suffix,
-                            r,
-                            map.keys().collect::<Vec<_>>()
-                        )
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?
-        }
-    };
-    if vols.is_empty() {
-        bail!("collection for '{}' has no volumes", c.suffix);
-    }
+    let vols = rust_bids::ordered_volume_paths(c, roles)?;
 
     let mut header = None;
     let mut dims: Option<(usize, usize, usize)> = None;
     let mut slices: Vec<Array3<f64>> = Vec::with_capacity(vols.len());
     for v in vols {
-        let path = fs.root.join(&v.nii);
+        let path = fs.root.join(v);
         let (data, h) = io::nifti::read_map_nifti_with_header(&path)?;
         let d = data.dim();
         match dims {
@@ -1844,5 +1780,100 @@ mod tests {
         .unwrap();
         inject_mt_sat_b1_correction(&mut raw).unwrap();
         assert!(raw.get("b1_correction").is_none());
+    }
+
+    /// `MemFs` must be a faithful `DatasetFs`: resolving a real dataset from an
+    /// in-memory path→bytes map has to produce exactly what resolving the same
+    /// dataset off disk produces — same collections, same volume order, same
+    /// protocol, same mask and aux selection. Both paths call the same
+    /// `rust-bids` resolution, so what this pins is the backing itself (directory
+    /// listing semantics and relative-path handling), which is the assumption the
+    /// browser's whole "your data, same code path" claim rests on.
+    #[test]
+    fn memfs_resolution_matches_on_disk_resolution() {
+        let dir = TempDir::new("memfs-vs-stdfs");
+        let bids_dir = dir.0.join("ds-irt1");
+
+        // A real bidsified IRT1 dataset: sidecar-carried TIs + a brain mask in a
+        // `preprocessed` derivatives pipeline (so aux/mask selection is exercised).
+        let tis = [0.35, 0.65, 0.95];
+        let data =
+            Array4::from_shape_fn((2, 2, 1, 3), |(i, j, _k, t)| (i * 10 + j) as f64 + t as f64);
+        let mask = Array3::from_shape_vec((2, 2, 1), vec![true, false, true, true]).unwrap();
+        let yaml = format!(
+            "model: inversion_recovery\nmethod: magnitude\ninversion_times: {:?}\n",
+            tis
+        );
+        let v: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+        let entry = qmrust_core::registry::by_name("inversion_recovery").unwrap();
+        let model = (entry.describe)(&v).unwrap();
+        crate::bidsify::write_bids_tree(
+            model.as_ref(),
+            &data,
+            Some(&mask),
+            &[],
+            "01",
+            &bids_dir,
+            None,
+        )
+        .unwrap();
+
+        // The recipe a BIDS fit uses: options only, no acquisition axis.
+        let recipe = "model: inversion_recovery\nmethod: magnitude\nmask:\n  desc: brain\n";
+
+        // (a) On disk, the way `run_fit_bids` does it.
+        let fs = StdFs {
+            root: bids_dir.clone(),
+        };
+        let bids_cfg = rust_bids::default_config();
+        let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
+        let (_cfg, raw) = qmrust_core::config::parse_config(recipe).unwrap();
+        let probe = (entry.describe)(&raw).unwrap();
+        let schema = probe.protocol_schema();
+        let opts = std::collections::BTreeMap::new();
+        let mask_spec = rust_bids::MaskSpec::from_recipe(&raw, &vocab).unwrap();
+        let table = rust_bids::parse_to_table(&fs, &vocab).unwrap();
+        let disk = rust_bids::collections_for(&fs, &bids_cfg, "IRT1").unwrap();
+
+        // (b) In memory, the way the browser does it.
+        let files = qmrust_wasm::bids::read_dataset_dir(&bids_dir).unwrap();
+        let mem = qmrust_wasm::bids::resolve_bids(files, recipe, None).unwrap();
+
+        assert_eq!(mem.len(), disk.len(), "collection count");
+        for (m, d) in mem.iter().zip(&disk) {
+            assert_eq!(m.subject, d.subject);
+            assert_eq!(m.suffix, d.suffix);
+
+            let disk_paths = rust_bids::ordered_volume_paths(d, None).unwrap();
+            assert_eq!(m.data_files, disk_paths, "volume order");
+
+            let disk_proto = rust_bids::compose_protocol(&fs, d, &schema, &opts, None).unwrap();
+            let mem_proto = qmrust_wasm::api::parse_protocol(&m.protocol_json).unwrap();
+            assert_eq!(mem_proto.volumes, disk_proto.volumes, "per-volume protocol");
+            assert_eq!(mem_proto.global, disk_proto.global, "global protocol");
+            // And it really is the dataset's acquisition, not the recipe's
+            // (the recipe declares none).
+            let resolved: Vec<f64> = mem_proto
+                .volumes
+                .iter()
+                .map(|v| v["InversionTime"])
+                .collect();
+            assert_eq!(resolved, tis);
+
+            let disk_inputs = rust_bids::resolve_input_paths(
+                &table,
+                probe.as_ref(),
+                &d.entities,
+                mask_spec.as_ref(),
+            )
+            .unwrap();
+            assert_eq!(m.mask_file, disk_inputs.mask, "mask selection");
+            let disk_aux: Vec<(String, String)> = disk_inputs
+                .aux
+                .iter()
+                .filter_map(|(n, p)| p.clone().map(|p| (n.clone(), p)))
+                .collect();
+            assert_eq!(m.aux_files, disk_aux, "aux selection");
+        }
     }
 }

@@ -625,6 +625,9 @@ async function fitVolumeWithProgress(nx, ny, nz, nt, data, maskU8, auxFlat) {
       JSON.stringify(current.meta.volume_ids),
       blockMask,
       JSON.stringify(blockAux),
+      // The acquisition, when it was resolved from the data rather than written
+      // in the recipe. Empty for a payload whose recipe carries the protocol.
+      current.meta.protocol_json ?? "",
     );
     const blockMaps = Object.fromEntries(raw);
     if (!maps) {

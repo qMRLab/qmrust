@@ -126,12 +126,63 @@ pub fn list_models() -> Vec<String> {
         .collect()
 }
 
-/// Parse a config YAML string and build the model it names via the registry.
-pub fn build_model(cfg_yaml: &str) -> Result<Box<dyn Model>, String> {
+/// Parse a config YAML string and build the model it names via the registry,
+/// with `proto` supplying the acquisition.
+///
+/// A recipe is protocol + options. When the data is BIDS, the protocol comes
+/// from the sidecars and the recipe carries options only — so `proto` is what
+/// makes the model describe the data in front of it rather than whatever
+/// acquisition a recipe happened to be written against. An empty `proto` means
+/// "read the protocol from the recipe", the non-BIDS case.
+pub fn build_model_with_protocol(
+    cfg_yaml: &str,
+    proto: &Protocol,
+) -> Result<Box<dyn Model>, String> {
     let (cfg, raw) = qmrust_core::config::parse_config(cfg_yaml).map_err(|e| e.to_string())?;
     let entry = qmrust_core::registry::by_name(&cfg.model)
         .ok_or_else(|| format!("Unknown model: '{}'", cfg.model))?;
-    (entry.build)(&raw, &Protocol::default()).map_err(|e| e.to_string())
+    (entry.build)(&raw, proto).map_err(|e| e.to_string())
+}
+
+/// [`build_model_with_protocol`] with no external protocol: the model reads its
+/// acquisition from `cfg_yaml`. Correct only for a recipe that carries one.
+pub fn build_model(cfg_yaml: &str) -> Result<Box<dyn Model>, String> {
+    build_model_with_protocol(cfg_yaml, &Protocol::default())
+}
+
+/// Parse the JSON encoding of a [`Protocol`]:
+/// `{"volumes": [{"InversionTime": 0.35}, ...], "global": {...}}`. An empty
+/// string is an empty protocol. Both keys are optional.
+pub fn parse_protocol(json: &str) -> Result<Protocol, String> {
+    let json = json.trim();
+    if json.is_empty() {
+        return Ok(Protocol::default());
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("invalid protocol JSON: {e}"))?;
+    let volumes = match v.get("volumes") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(arr) => arr
+            .as_array()
+            .ok_or_else(|| "protocol `volumes` must be an array".to_string())?
+            .iter()
+            .map(parse_f64_object)
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    let global = match v.get("global") {
+        None | Some(serde_json::Value::Null) => BTreeMap::new(),
+        Some(obj) => parse_f64_object(obj)?,
+    };
+    Ok(Protocol { volumes, global })
+}
+
+/// Emit a [`Protocol`] in the encoding [`parse_protocol`] reads.
+pub fn emit_protocol(proto: &Protocol) -> Result<String, String> {
+    serde_json::to_string(&serde_json::json!({
+        "volumes": proto.volumes,
+        "global": proto.global,
+    }))
+    .map_err(|e| e.to_string())
 }
 
 /// Build an `Aux` scalar bundle from a JSON object of `name -> f64`. An empty
@@ -177,6 +228,10 @@ use ndarray::{Array3, Array4};
 /// `[nx,ny,nz]` u8 (nonzero = fit); `aux` pairs a model input name with a
 /// C-order `[nx,ny,nz]` flat map. Returns each output map name with its
 /// C-order `[nx,ny,nz]` values (NaN where unfitted).
+///
+/// `protocol_json` is the resolved acquisition (see [`parse_protocol`]) — supply
+/// it whenever the protocol came from the data (BIDS sidecars) rather than from
+/// `cfg_yaml`. Empty means the recipe carries the protocol.
 pub fn fit_volume(
     cfg_yaml: &str,
     data: &[f64],
@@ -184,6 +239,7 @@ pub fn fit_volume(
     volume_ids_json: &str,
     mask: Option<&[u8]>,
     aux: &[(String, Vec<f64>)],
+    protocol_json: &str,
 ) -> Result<Vec<(String, Vec<f64>)>, String> {
     let [nx, ny, nz, nt] = dims;
     let spatial = nx * ny * nz;
@@ -226,7 +282,8 @@ pub fn fit_volume(
     }
     let aux_maps = qmrust_core::engine::AuxMaps::new(aux_maps);
 
-    let model = build_model(cfg_yaml)?;
+    let proto = parse_protocol(protocol_json)?;
+    let model = build_model_with_protocol(cfg_yaml, &proto)?;
     let volume_ids = parse_volume_ids(volume_ids_json, &model.measurement())?;
     if volume_ids.len() != nt {
         return Err(format!(
@@ -349,7 +406,7 @@ mod tests {
         // 1x1x1x9 volume filled with a clean IR signal → T1 recovered.
         let (sig, ids) = ir_signal_and_ids();
         let dims = [1usize, 1, 1, 9];
-        let maps = fit_volume(IR_YAML, &sig, dims, &ids, None, &[]).unwrap();
+        let maps = fit_volume(IR_YAML, &sig, dims, &ids, None, &[], "").unwrap();
         let t1 = maps.iter().find(|(n, _)| n == "T1").expect("T1 map");
         assert_eq!(t1.1.len(), 1);
         assert!((t1.1[0] - 0.9).abs() < 1e-3, "T1: {}", t1.1[0]);
@@ -363,7 +420,7 @@ mod tests {
         data.extend(std::iter::repeat_n(0.0, 9));
         let dims = [2usize, 1, 1, 9];
         let mask = [1u8, 0u8];
-        let maps = fit_volume(IR_YAML, &data, dims, &ids, Some(&mask), &[]).unwrap();
+        let maps = fit_volume(IR_YAML, &data, dims, &ids, Some(&mask), &[], "").unwrap();
         let t1 = &maps.iter().find(|(n, _)| n == "T1").unwrap().1;
         assert_eq!(t1.len(), 2);
         assert!((t1[0] - 0.9).abs() < 1e-3);

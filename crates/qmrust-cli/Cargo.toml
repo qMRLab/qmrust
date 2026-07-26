@@ -25,3 +25,8 @@ nifti.workspace = true
 matfile.workspace = true
 indicatif.workspace = true
 owo-colors.workspace = true
+
+[dev-dependencies]
+# The in-memory BIDS resolver, so a test can assert it resolves a real dataset
+# to exactly what this crate's on-disk path resolves it to.
+qmrust-wasm = { path = "../qmrust-wasm" }

@@ -122,6 +122,49 @@ pub fn resolve_protocol<F: DatasetFs>(
     Ok(proto)
 }
 
+/// A collection's volume paths on the axis a model consumes them — the order any
+/// caller must stack voxel data in for column `i` to be the volume
+/// [`compose_protocol`] put at `proto.volumes[i]`.
+///
+/// A `Sequential` collection keeps its own order (the model re-identifies each
+/// volume from the protocol by value). A `Named` collection is ordered — and
+/// subset, if the model uses fewer roles than the set holds — to the model's
+/// declared `roles`, so column `i` is `roles[i]` with no positional guesswork. A
+/// declared role with no matching volume is a hard error, never a silent
+/// mis-assignment. `roles` is `None` for a `Series` measurement, which has no
+/// axis a named set could map onto.
+pub fn ordered_volume_paths<'a>(c: &'a Collection, roles: Option<&[&str]>) -> Result<Vec<&'a str>> {
+    let paths = match &c.data {
+        GroupedData::Sequential(vols) => vols.iter().map(|v| v.nii.as_str()).collect(),
+        GroupedData::Named(map) => {
+            let roles = roles.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "collection for '{}' is a named set, but model uses a series measurement \
+                     with no role axis to map its volumes onto",
+                    c.suffix
+                )
+            })?;
+            roles
+                .iter()
+                .map(|&r| {
+                    map.get(r).map(|v| v.nii.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "named collection for '{}' is missing role '{}' (has {:?})",
+                            c.suffix,
+                            r,
+                            map.keys().collect::<Vec<_>>()
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        }
+    };
+    if paths.is_empty() {
+        bail!("collection for '{}' has no volumes", c.suffix);
+    }
+    Ok(paths)
+}
+
 /// A collection's `Protocol`, composed on the axis a model consumes it.
 ///
 /// This is [`resolve_protocol`] plus the two adjustments a model's measurement
