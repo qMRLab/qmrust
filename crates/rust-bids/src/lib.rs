@@ -17,7 +17,7 @@ pub mod vocab;
 pub use collection::{Collection, GroupedData, VolumeRef, Warning};
 pub use config::{default_config, parse_config, BidsConfig, CustomEntity, SetDef};
 pub use fs::{DatasetFs, Entry};
-pub use protocol::resolve_protocol;
+pub use protocol::{compose_protocol, ordered_nii_paths, resolve_protocol};
 pub use resolve::{collections_for, resolve_set};
 pub use scan::scan_dataset;
 pub use sidecar::{sidecar_for, Sidecar};

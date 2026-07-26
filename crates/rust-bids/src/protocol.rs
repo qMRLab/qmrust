@@ -25,7 +25,12 @@ impl Meta for Sidecar {
 
 /// Each volume's `.nii` path, in collection order, so a schema evaluation can
 /// build the matching full `Sidecar` (inheritance-resolved) for each volume.
-fn ordered_nii_paths(c: &Collection) -> Vec<&str> {
+///
+/// For a named set this is `BTreeMap` (alphabetical role) order, which is *not*
+/// a model's declared role order — see [`compose_protocol`], which reorders onto
+/// that axis. Callers stacking voxel data must use the same order the protocol
+/// ends up in, or column `i` and `proto.volumes[i]` describe different volumes.
+pub fn ordered_nii_paths(c: &Collection) -> Vec<&str> {
     match &c.data {
         GroupedData::Sequential(vols) => vols.iter().map(|v| v.nii.as_str()).collect(),
         GroupedData::Named(groups) => groups.values().map(|v| v.nii.as_str()).collect(),
@@ -115,6 +120,67 @@ pub fn resolve_protocol<F: DatasetFs>(
     }
 
     Ok(proto)
+}
+
+/// A collection's `Protocol`, composed on the axis a model consumes it.
+///
+/// This is [`resolve_protocol`] plus the two adjustments a model's measurement
+/// kind demands, and it is the form every caller wants — the CLI fitting a
+/// dataset on disk, or a frontend resolving one held in memory.
+///
+/// `roles` is the model's declared role order for a `Named` measurement, `None`
+/// for a `Series` one (whose volumes are re-identified from the protocol by
+/// value instead of by position).
+///
+/// Two contracts live here:
+///
+/// - An empty `schema` (a model declaring no `protocol_schema()`) yields an
+///   empty `Protocol` — zero volumes, *not* N empty per-volume maps.
+///   `build_volume_ids` treats a volume count matching the data as
+///   authoritative identities, so N empty rows would suppress the model's
+///   canonical `rows` fallback and break identity matching. Load-bearing for
+///   correctness, not an optimization.
+/// - A named set resolves in alphabetical role order (see
+///   [`ordered_nii_paths`]), which need not be the model's declared order.
+///   Reorder — and select, if the model uses a subset of the set's roles — so
+///   `proto.volumes[i]` is `roles[i]`, letting a `Named` model's
+///   `ingest_protocol` fold each role's acquisition by position. A declared role
+///   with no resolved protocol is a hard error, never a silent mis-assignment.
+pub fn compose_protocol<F: DatasetFs>(
+    fs: &F,
+    c: &Collection,
+    schema: &[ProtoParam],
+    options: &BTreeMap<String, f64>,
+    roles: Option<&[&str]>,
+) -> Result<Protocol> {
+    if schema.is_empty() {
+        return Ok(Protocol::default());
+    }
+    let resolved = resolve_protocol(fs, c, schema, options)?;
+    let (GroupedData::Named(map), Some(roles)) = (&c.data, roles) else {
+        return Ok(resolved);
+    };
+    let mut by_role: BTreeMap<&str, _> = map
+        .keys()
+        .map(String::as_str)
+        .zip(resolved.volumes)
+        .collect();
+    let volumes = roles
+        .iter()
+        .map(|&r| {
+            by_role.remove(r).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "named collection for '{}' resolved no protocol for role '{}'",
+                    c.suffix,
+                    r
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Protocol {
+        volumes,
+        global: resolved.global,
+    })
 }
 
 #[cfg(test)]

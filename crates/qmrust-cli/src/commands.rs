@@ -256,9 +256,9 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 /// mis-assignment. `roles` is `None` when the model uses a `Series`
 /// measurement — a `Named` collection then has no axis to map onto and fails.
 ///
-/// An empty `schema` (a model that declares no `protocol_schema()`) resolves to
-/// an empty `Protocol`; the model then reads its acquisition from its own
-/// `--config`.
+/// The protocol itself comes from `rust_bids::compose_protocol`, which owns the
+/// schema-to-`Protocol` contract (including the empty-schema case) and puts the
+/// volumes on the same axis this stacks the data onto.
 fn load_collection(
     fs: &StdFs,
     c: &Collection,
@@ -328,46 +328,10 @@ fn load_collection(
         out.index_axis_mut(ndarray::Axis(3), t).assign(slice);
     }
 
-    // An empty schema must yield an empty `Protocol` (zero volumes), NOT one
-    // with N empty per-volume maps: `build_volume_ids` treats a volume count
-    // matching the data as authoritative identities, so N empty rows would
-    // suppress the model's canonical `rows` fallback and break identity
-    // matching. This branch is load-bearing for correctness, not an optimization.
-    let proto = if schema.is_empty() {
-        Protocol::default()
-    } else {
-        let resolved = rust_bids::resolve_protocol(fs, c, schema, options)?;
-        match (&c.data, roles) {
-            // `resolve_protocol` walks a named set in `BTreeMap` (alphabetical
-            // role) order, which need not match the model's declared role
-            // order the data was just stacked in. Reorder — and select, if the
-            // model uses a subset of the set's roles — so `proto.volumes[i]` is
-            // `roles[i]`, letting a Named model's `ingest_protocol` fold each
-            // role's acquisition by position.
-            (GroupedData::Named(map), Some(roles)) => {
-                let alpha: Vec<&str> = map.keys().map(String::as_str).collect();
-                let mut by_role: std::collections::BTreeMap<&str, _> =
-                    alpha.into_iter().zip(resolved.volumes).collect();
-                let volumes = roles
-                    .iter()
-                    .map(|&r| {
-                        by_role.remove(r).ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "named collection for '{}' resolved no protocol for role '{}'",
-                                c.suffix,
-                                r
-                            )
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Protocol {
-                    volumes,
-                    global: resolved.global,
-                }
-            }
-            _ => resolved,
-        }
-    };
+    // Composed on the model's own axis, so `out`'s column `i` and
+    // `proto.volumes[i]` describe the same volume — this stacked the data in
+    // `roles` order above for exactly that reason.
+    let proto = rust_bids::compose_protocol(fs, c, schema, options, roles)?;
     Ok((out, proto, header))
 }
 
