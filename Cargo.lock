@@ -948,7 +948,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "qmrust-core",
- "rust-bids",
  "serde",
  "serde_json",
  "serde_yaml",

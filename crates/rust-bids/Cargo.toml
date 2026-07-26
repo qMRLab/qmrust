@@ -16,10 +16,3 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 anyhow.workspace = true
-
-[features]
-# Exposes the in-memory MemFs outside of unit tests (used by integration tests).
-testfs = []
-
-[dev-dependencies]
-rust-bids = { path = ".", features = ["testfs"] }
