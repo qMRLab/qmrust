@@ -79,3 +79,31 @@ pub fn fit_volume(
 pub fn sim(mode: &str, cfg_yaml: &str) -> Result<String, JsError> {
     api::sim(mode, cfg_yaml).map_err(|e| JsError::new(&e))
 }
+
+/// Resolve a whole BIDS dataset held in memory against the model `cfg_yaml`
+/// names, through the same `rust-bids` logic the CLI's `--bids-dir` path uses.
+///
+/// `files` is the dataset as a JS `Map`/object of dataset-relative path →
+/// `Uint8Array` — whatever an unzipped archive or a dropped directory produced,
+/// with paths already relative to the directory holding
+/// `dataset_description.json`. `grouping_yaml` (or `""`) overrides the default
+/// grouping manifest.
+///
+/// Returns one entry per resolved collection, each naming which files matter and
+/// what they mean — never pixel data. Read those paths' bytes from your own map,
+/// then pass the entry's `volume_ids_json` and `protocol_json` to `fit_volume`.
+/// An empty array means the dataset holds nothing this model can fit, which is an
+/// outcome to report rather than an error.
+#[wasm_bindgen]
+pub fn resolve_bids(
+    files: JsValue,
+    cfg_yaml: &str,
+    grouping_yaml: &str,
+) -> Result<JsValue, JsError> {
+    let files: std::collections::BTreeMap<String, Vec<u8>> = serde_wasm_bindgen::from_value(files)
+        .map_err(|e| JsError::new(&format!("files must be path -> bytes: {e}")))?;
+    let grouping = Some(grouping_yaml).filter(|s| !s.trim().is_empty());
+    let resolved = crate::bids::resolve_bids(files.into_iter().collect(), cfg_yaml, grouping)
+        .map_err(|e| JsError::new(&e))?;
+    serde_wasm_bindgen::to_value(&resolved).map_err(|e| JsError::new(&e.to_string()))
+}

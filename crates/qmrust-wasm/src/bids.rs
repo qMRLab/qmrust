@@ -20,6 +20,7 @@ use rust_bids::MemFs;
 
 /// One resolved collection: which files, what they mean, and the acquisition
 /// read from their sidecars.
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ResolvedCollection {
     pub subject: String,
     pub session: Option<String>,

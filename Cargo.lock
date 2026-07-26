@@ -833,6 +833,7 @@ dependencies = [
  "ndarray",
  "qmrust-core",
  "rust-bids",
+ "serde",
  "serde-wasm-bindgen",
  "serde_json",
  "serde_yaml",

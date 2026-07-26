@@ -18,6 +18,7 @@ threads = ["dep:wasm-bindgen-rayon"]
 [dependencies]
 qmrust-core = { path = "../qmrust-core" }
 rust-bids = { path = "../rust-bids" }
+serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 ndarray.workspace = true
