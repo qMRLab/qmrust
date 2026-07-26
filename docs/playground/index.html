@@ -65,7 +65,20 @@
   }
   #fallback pre { overflow-x: auto; }
 
-  .topbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  /* Thin app-identity bar — replaces the old wide topbar status line, whose
+     job (per-model summary, fit timing) moved beside the frame-scrub note;
+     `#status` here is left for transient app state only (loading, wasm
+     unavailable, fit errors), right-aligned so the title always reads first. */
+  .navbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin: -14px -14px 12px; padding: 8px 14px;
+    border-bottom: 1px solid var(--line); background: var(--panel-2);
+  }
+  .navbar-title {
+    font: 700 12px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .08em;
+    color: var(--ink);
+  }
+  .navbar-status { font-size: 12px; }
 
   /* Fitting progress: a permanent fixture above "Fit slice" (idle = empty
      track), not a topbar element that appears/disappears and shifts the rest
@@ -187,6 +200,7 @@
   .switch input:focus-visible + .slider { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
 
   .local-note { color: var(--muted); font-size: 11px; margin: 10px 0; }
+  #model-info:not(:empty)::before, #fit-timing:not(:empty)::before { content: "\00a0\00b7\00a0"; }
   .recipe-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
 
   /* viewers */
@@ -240,8 +254,9 @@
     * { transition: none !important; animation: none !important; }
   }
 </style>
-<div class="topbar">
-  <span id="status">loading…</span>
+<div class="navbar">
+  <span class="navbar-title">qMRust Playground</span>
+  <span id="status" class="navbar-status">loading…</span>
 </div>
 <div id="fallback" hidden>
   <p><strong>The WebAssembly build is not present.</strong> The viewers below still work —
@@ -279,7 +294,11 @@
       <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
       <span class="frame-label" id="frame-label">—</span>
     </div>
-    <p class="local-note">Scroll over the viewer to step frames. <span id="fit-timing"></span></p>
+    <p class="local-note">
+      Scroll over the viewer to step frames.
+      <span id="model-info"></span>
+      <span id="fit-timing"></span>
+    </p>
   </div>
 
   <div class="viewer-out-wrap card">

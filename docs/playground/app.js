@@ -490,6 +490,7 @@ async function loadModel(name) {
   updateMapColorbar();
   $("voxel-title").textContent = "Voxel — click either viewer";
   $("voxel-value").textContent = "";
+  $("model-info").textContent = "";
   $("fit-timing").textContent = "";
   $("cal-min").value = "";
   $("cal-max").value = "";
@@ -549,7 +550,12 @@ async function loadModel(name) {
   setFrameUi(nt, meta.labels);
   current = { meta, volume, maskU8, auxFlat, auxVolumes, frame: 0 };
   $("fit").disabled = !wasm;
-  status(`${meta.title}: ${nt} volumes, ${nx}×${ny}`);
+  // The model/volume-count/dims summary lives beside the frame note, not the
+  // navbar — the navbar's `#status` is for transient app state (loading,
+  // errors, "ready"), not a per-model fact that stays true until the next
+  // model switch.
+  $("model-info").textContent = `${meta.title}: ${nt} volumes, ${nx}×${ny}`;
+  status(wasm ? "ready — press Fit slice" : "wasm unavailable — viewers still work, fitting does not");
 }
 
 function onFrameChange() {
@@ -684,11 +690,11 @@ async function fitSlice() {
   select.hidden = outputVolumes.length <= 1;
   showOutput(outputVolumes[0]?.name);
 
-  // The top status line is prime real estate for every reader, but "fitted
-  // in Xs" only matters right beside the thing it timed — the frame
-  // scrubbing note under the inputs viewer — so it lives there instead.
-  status(`${meta.title}: ${nt} volumes, ${nx}×${ny}`);
-  $("fit-timing").textContent = `fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+  // The top status line is prime real estate for every reader, but neither
+  // the model summary nor "Fitted in Xs" matter there — both live beside the
+  // frame-scrubbing note under the inputs viewer instead.
+  status("ready — press Fit slice");
+  $("fit-timing").textContent = `Fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
   hideProgress();
   $("fit").disabled = false;
   if (current.lastVox) plotVoxel(current.lastVox.x, current.lastVox.y, current.lastVox.z);
@@ -1038,6 +1044,17 @@ async function main() {
   nvOut.broadcastTo([nvIn], { "2d": true, "3d": true });
   nvIn.onLocationChange = onLocation;
   nvOut.onLocationChange = onLocation;
+  // NiiVue steps a volume's 4D frame on its own (ArrowLeft/ArrowRight, bound
+  // internally to `frame_previous`/`frame_next`) whenever the inputs viewer
+  // has focus — every path ends up at `setFrame4D`, which fires this
+  // callback, so the slider/label stay in sync with the arrow keys exactly
+  // as they already do with the wheel and the slider itself.
+  nvIn.onFrameChange = (volume, frame) => {
+    if (!current || volume.id !== current.volume.id) return;
+    current.frame = frame;
+    $("frame").value = String(frame);
+    $("frame-label").textContent = current.meta.labels[frame] ?? "";
+  };
 
   wasm = await loadWasm();
 
@@ -1113,7 +1130,6 @@ async function main() {
 
   if (select.options.length) {
     await loadModel(select.value);
-    if (wasm) status("ready — press Fit slice");
   }
 }
 
