@@ -1728,7 +1728,7 @@ mod tests {
         let bids_dir = tmp.0.join("ds-qmrust");
         // `output_dir` is the *derivatives root*: `run_fit_bids`/`write_derivatives`
         // append `qmrust/<subject>/anat/...` themselves (mirrors
-        // `scripts/make_bids_examples.sh`'s `--output-dir ds-qmrust/derivatives`).
+        // `scripts/make_bids_examples.sh`'s `--output-dir ds-<slug>/derivatives`).
         let deriv_dir = bids_dir.join("derivatives");
 
         // (a) Fit via the .mat path, in-process.
@@ -1757,6 +1757,7 @@ mod tests {
             nii_dir: None,
             nii_mask: None,
             mask: Some(ir_mask),
+            aux: Vec::new(),
             config: config.clone(),
             subject: "01".to_string(),
             out: bids_dir.clone(),
@@ -1867,6 +1868,7 @@ mod tests {
             nii_dir: None,
             nii_mask: None,
             mask: None,
+            aux: Vec::new(),
             config: config.clone(),
             subject: "02".to_string(),
             out: bids_dir.clone(),

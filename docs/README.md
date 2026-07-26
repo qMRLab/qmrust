@@ -31,10 +31,15 @@ cargo build --release -p qmrust-cli
 # pages (fast, no data needed)
 python3 scripts/gen_model_docs.py --catalog catalog.json
 
-# figures + playground slices (needs the example dataset)
-python3 scripts/make_docs_figures.py --bids-dir <ds-qmrust-test> \
+# figures + playground slices (needs the example datasets)
+python3 scripts/make_docs_figures.py --bids-dir ~/Desktop/qmrust-osf \
   --catalog catalog.json --bundle-slice
 ```
+
+`--bids-dir` is the *parent* of one BIDS dataset root per model
+(`ds-<lowercased BIDS suffix>/`, e.g. `ds-irt1/`), as built by
+`scripts/make_bids_examples.sh`. A model whose root is absent is skipped with a
+warning, so the docs build never depends on the data being present.
 
 CI runs `gen_model_docs.py --check` and fails when a committed page differs
 from what the registry would generate. If you added a model, that check is

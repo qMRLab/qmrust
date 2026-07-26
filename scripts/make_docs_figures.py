@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Render the committed example figures for every documented model.
 
-    python3 scripts/make_docs_figures.py --bids-dir ~/Desktop/ds-qmrust-test \
+    python3 scripts/make_docs_figures.py --bids-dir ~/Desktop/qmrust-osf \
         --catalog catalog.json
 
-Writes docs/figures/<model>/{inputs,aux,outputs,curve}.webp. A model with no
-matching data in the dataset is skipped with a warning — the documentation
-build never depends on the dataset being present.
+Writes docs/figures/<model>/{inputs,aux,outputs,curve}.webp. A model whose
+dataset isn't present is skipped with a warning — the documentation build never
+depends on the datasets being present.
 
 The curve panel's forward signal comes from `qmrust sim signal`, so the physics
 lives in Rust and is never reimplemented here.
@@ -480,7 +480,9 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--bids-dir", required=True, type=pathlib.Path)
+    ap.add_argument("--bids-dir", required=True, type=pathlib.Path,
+                    help="parent directory holding one ds-<suffix>/ BIDS "
+                    "dataset root per model (see scripts/make_bids_examples.sh)")
     ap.add_argument("--catalog", required=True, type=pathlib.Path)
     ap.add_argument("--repo-root", default=".", type=pathlib.Path)
     ap.add_argument("--out", default=None, type=pathlib.Path,
@@ -502,7 +504,8 @@ def main(argv=None):
         coll = dataset.find(args.bids_dir, model)
         if coll is None:
             print(
-                f"  skip: no {model['bids_suffix']} data in {args.bids_dir}",
+                f"  skip: no {model['bids_suffix']} data in "
+                f"{dataset.root_for(args.bids_dir, model)}",
                 file=sys.stderr,
             )
             continue

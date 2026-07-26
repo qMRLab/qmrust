@@ -3,6 +3,11 @@
 Every lookup is driven by the model's own declarations — its `bids_suffix`, the
 per-volume keys in its `protocol_schema`, its `required_inputs` suffixes, and
 its `bids_outputs` suffixes — so this module never names a model.
+
+Each model's example data is its own single-subject BIDS dataset, rooted at
+`ds-<lowercased bids_suffix>/` under a common parent (see
+`scripts/make_bids_examples.sh`). The directory name is derived from the model's
+own suffix, so there is no model→directory table to maintain.
 """
 import dataclasses
 import json
@@ -23,10 +28,18 @@ def _sidecar(nii_path):
     return json.loads(j.read_text()) if j.exists() else {}
 
 
-def find(bids_dir, model):
-    """The collection for `model`, or None when the dataset has no such data."""
-    bids_dir = pathlib.Path(bids_dir)
+def root_for(parent, model):
+    """`model`'s own dataset root under `parent`."""
+    return pathlib.Path(parent) / f"ds-{model['bids_suffix'].lower()}"
+
+
+def find(parent, model):
+    """The collection for `model`, or None when its dataset isn't there.
+
+    `parent` holds one dataset root per model (see `root_for`).
+    """
     suffix = model["bids_suffix"]
+    bids_dir = root_for(parent, model)
     hits = sorted(bids_dir.glob(f"sub-*/anat/*_{suffix}.nii*"))
     if not hits:
         return None

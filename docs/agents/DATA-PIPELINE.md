@@ -360,13 +360,22 @@ source gets a minimal one.
   pipeline: B1/B0 field maps to `derivatives/preprocessed/sub-<subject>/fmap/`
   (`_TB1map`/`_B0map`), the R1 map and brain mask to that pipeline's `anat/`
   (`_R1map`/`_desc-brain_mask`).
+- **Auxiliary inputs into `bidsify`.** A `.mat` source discovers them by
+  filename convention: each `required_inputs()` name is looked up as
+  `<name>.mat` under `--mat-dir`. A NIfTI source has no such convention, so they
+  come from `--aux <name>=<path>` (repeatable, reader chosen by extension, also
+  usable to override a `.mat` source's discovered map). Either way `<name>` is
+  validated against the model's own `required_inputs()`, and placement is by the
+  input's declared BIDS suffix — so a new model's aux maps need no change here.
 - **How it's validated**: a unit test round-trips an in-memory `Array4`
   through each model's volume writer and asserts every voxel reads back `==`
   the source (not approximate) — this is what proves no rescale/precision
   loss; a separate structure test pins qmt_spgr's flip/mt filename derivation
   and sidecar fields. End to end, `scripts/make_bids_examples.sh` fetches
-  qMRLab's OSF IR and qMT datasets, runs `bidsify` for both models into the
-  same example dataset (sub-01 IRT1, sub-02 QMTSPGR), and fits each via
+  qMRLab's OSF datasets and runs `bidsify` for each model into its *own*
+  self-contained single-subject dataset root (`ds-<lowercased BIDS suffix>`,
+  each carrying its raw acquisitions plus its own `derivatives/preprocessed`
+  inputs, so any one root is a complete fetch unit), then fits each via
   `qmrust fit --bids-dir`. Two `#[ignore]`d integration tests
   (`bids_fit_matches_mat_fit`, `qmtspgr_bids_fit_matches_mat_fit` in
   `commands.rs`) assert each BIDS-path fit is voxel-**equal** to fitting the

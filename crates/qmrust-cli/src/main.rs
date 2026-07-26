@@ -147,6 +147,14 @@ enum Commands {
         #[arg(long)]
         mask: Option<PathBuf>,
 
+        /// An auxiliary input map as `<name>=<path>` (repeatable), where
+        /// `<name>` is one the model declares (e.g. `B1map=tb1.nii.gz`).
+        /// Reader chosen by extension (`.mat` or NIfTI). Required for a NIfTI
+        /// source, which has no directory convention to discover aux from;
+        /// with `--mat-dir`, overrides the auto-discovered `<name>.mat`.
+        #[arg(long = "aux", value_name = "NAME=PATH")]
+        aux: Vec<String>,
+
         /// Path to the model's YAML config (for inversion_times/qmt_spgr
         /// protocol fallback)
         #[arg(long)]
@@ -283,6 +291,7 @@ fn main() -> Result<()> {
             nii_dir,
             nii_mask,
             mask,
+            aux,
             config,
             subject,
             out,
@@ -294,6 +303,7 @@ fn main() -> Result<()> {
             nii_dir,
             nii_mask,
             mask,
+            aux,
             config,
             subject,
             out,
