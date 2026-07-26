@@ -7,6 +7,7 @@ pub mod collection;
 pub mod config;
 pub mod entities;
 pub mod fs;
+pub mod inputs;
 pub mod protocol;
 pub mod resolve;
 pub mod scan;
@@ -16,7 +17,8 @@ pub mod vocab;
 
 pub use collection::{Collection, GroupedData, VolumeRef, Warning};
 pub use config::{default_config, parse_config, BidsConfig, CustomEntity, SetDef};
-pub use fs::{DatasetFs, Entry};
+pub use fs::{DatasetFs, Entry, MemFs};
+pub use inputs::{find_row, resolve_input_paths, InputPaths, MaskSpec};
 pub use protocol::{compose_protocol, ordered_nii_paths, resolve_protocol};
 pub use resolve::{collections_for, resolve_set};
 pub use scan::scan_dataset;
