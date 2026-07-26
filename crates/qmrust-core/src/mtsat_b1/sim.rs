@@ -188,6 +188,17 @@ pub fn flash_signal_with_step(
         } else {
             p.tr
         };
+        // A negative fill would make `propagate` integrate backwards in time
+        // (unphysical, silent). Reject the timing rather than run it — the
+        // saturation train plus MT-spoiler must leave room within TR.
+        assert!(
+            post_exc_relax >= 0.0,
+            "mtsat_b1: saturation train + MT-spoiler exceed TR \
+             (tr={}s leaves {}s for readout relaxation) — check num_sat_pulse, \
+             pulse_dur, pulse_gap_dur, mt_grad_time",
+            p.tr,
+            post_exc_relax
+        );
         m = propagate(&m, &a_relax, post_exc_relax);
         m[0] = 0.0;
         m[1] = 0.0;
@@ -281,6 +292,16 @@ mod tests {
         let p = sample_params();
         let s = flash_signal(&p, 0.1, 1.0, p.flip_angle, 9.0, true);
         assert!(s > 0.0 && s < p.m0a, "signal {s}");
+    }
+
+    #[test]
+    #[should_panic(expected = "exceed TR")]
+    fn saturation_train_longer_than_tr_is_rejected() {
+        // A TR too short to fit the saturation train drives the post-excitation
+        // fill negative; the engine must reject it, not integrate backwards.
+        let mut p = sample_params();
+        p.tr = 1e-3;
+        flash_signal(&p, 0.1, 1.0, p.flip_angle, 9.0, true);
     }
 
     #[test]

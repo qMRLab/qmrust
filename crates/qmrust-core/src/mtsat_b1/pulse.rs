@@ -1,11 +1,17 @@
 //! Time-varying RF pulse shape for the FLASH saturation train, ported from
 //! <ref>/functions/MAMT_preparePulses.m. Amplitudes are returned as `w1(t)`
-//! (rad/s), sampled every `step` seconds over [0, pulse_dur] inclusive.
+//! (rad/s) on the grid `0:step:pulse_dur` (the reference's truncating
+//! semantics): the final sample is the largest whole `step` at or below
+//! `pulse_dur`, not clamped up to `pulse_dur`. `sim.rs` drives the train for
+//! `ceil(pulse_dur/step)` steps, matching the reference's `PulseDur`.
 
 use std::f64::consts::PI;
 
 fn sample_times(dur: f64, step: f64) -> Vec<f64> {
-    let n = (dur / step).round() as usize; // tSat = 0:step:dur
+    // 0:step:dur (MATLAB colon semantics): the largest whole number of steps at
+    // or below dur — the grid never overshoots the pulse. The +epsilon keeps an
+    // exact multiple from being dropped by floating-point error.
+    let n = (dur / step + 1e-9).floor() as usize;
     (0..=n).map(|i| i as f64 * step).collect()
 }
 
@@ -14,7 +20,7 @@ fn sample_times(dur: f64, step: f64) -> Vec<f64> {
 ///
 /// shape(t) = exp(-(t - Trf/2)^2 / (2*sigma2)) * 0.5*(1 - cos(2*pi*t/Trf)),
 /// with sigma2 = 2*ln(2) / (pi*bw)^2 and Trf = pulse_dur. Samples are taken
-/// at t = 0:step:pulse_dur (inclusive).
+/// at t = 0:step:pulse_dur (truncating — see the module docs).
 pub fn gausshann_omega(b1_rms: f64, pulse_dur: f64, bw: f64, step: f64) -> Vec<f64> {
     let t = sample_times(pulse_dur, step);
     let sigma2 = 2.0 * std::f64::consts::LN_2 / (PI * bw).powi(2);
@@ -27,6 +33,14 @@ pub fn gausshann_omega(b1_rms: f64, pulse_dur: f64, bw: f64, step: f64) -> Vec<f
         })
         .collect();
     let mean_sq: f64 = shape.iter().map(|&s| s * s).sum::<f64>() / shape.len() as f64;
+    // A degenerate pulse — one so short that every sample lands on a
+    // Hann-window zero — carries no energy; normalizing it would divide by zero
+    // and return inf/NaN amplitudes. Reject the configuration explicitly.
+    assert!(
+        mean_sq > 0.0,
+        "mtsat_b1: gausshann pulse has no energy to RMS-normalize \
+         (pulse_dur={pulse_dur}s, step={step}s leave every sample on a Hann zero)"
+    );
     let scale = 2.0 * PI * crate::mtsat_b1::GAMMA * b1_rms / mean_sq.sqrt();
     shape.iter().map(|&s| s * scale).collect()
 }
@@ -66,5 +80,13 @@ mod tests {
             (max_idx as isize - mid as isize).abs() <= 1,
             "expected peak near mid-pulse (index {mid}), got {max_idx}"
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "no energy")]
+    fn degenerate_pulse_has_no_energy_and_is_rejected() {
+        // A one-step-long pulse puts both samples on Hann-window zeros, so there
+        // is nothing to RMS-normalize — reject rather than return inf/NaN.
+        gausshann_omega(9.0, 50e-6, 200.0, 50e-6);
     }
 }

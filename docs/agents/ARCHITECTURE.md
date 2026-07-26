@@ -226,6 +226,18 @@ here is the only wiring a new model needs.
 
 ## Data flow
 
+**Every entry point converges on one path.** A file list, a BIDS collection, a qMRLab
+`.mat` dataset, or a browser call each resolve to the same two things — a `Box<dyn Model>`
+and identity-tagged volumes — and from there a single engine path runs. A new input source
+is a new *front door*, never a new fitting path. *Instance:* the BIDS flow below differs
+from the plain-file flow only in how it reaches a `Protocol` and an ordered volume set;
+both feed the identical `build_volume_ids` → `engine::run`.
+
+**Volumes are matched by identity, not position.** Each volume is tagged with what it *is*
+— a role, or its acquisition parameters — before the engine assembles the `Measurement`,
+so reordering the acquisition list yields identical fits, and a volume whose identity has
+no match fails loudly rather than silently mis-assembling the signal.
+
 ### Fit (CLI)
 
 ```
@@ -421,35 +433,50 @@ section (exact signatures, invariants, and the verification commands), and
   wasm, the browser build reuses the exact fitting code and produces identical numbers.
 - **Each model owns its config.** Per-model `serde` structs parsed from the model's own
   YAML sub-tree; no monolithic config struct.
-- **Inputs are declared, not hardcoded.** Models declare auxiliary inputs (with BIDS
-  locators); the shell resolves them. The compute layer only ever sees named scalars.
-- **Behaviour-preserving by contract.** Refactors are validated against byte-identical
-  fit outputs (the CI OSF job runs the real pipelines end-to-end).
-- **Seams over speculation (YAGNI).** `FitStrategy::MatrixWise` remains a declared seam
-  (`bail!` until a model needs it). The BIDS sidecar→`Protocol` path began as a seam and
-  is now realized by the `rust-bids` crate.
+- **Inputs are declared, not hardcoded.** A model names the auxiliary inputs it needs;
+  the shell finds and loads them. The compute layer only ever sees named scalars.
+  *Instance:* qMT declares `R1map`/`B1map`/`B0map` with BIDS locators and reads them by
+  name — no R1/B1/B0 list exists anywhere in the shell.
+- **A derived artifact travels with the frame it was built in.** When the shell turns
+  data into an artifact and later feeds that artifact back to transform data, both
+  directions must run through the *same* computation, and the artifact must carry the
+  parameters that fix its frame of reference. Nothing in the types catches an artifact
+  calibrated in one frame and applied in another — so the reuse is made structural, not
+  hoped for. *Instance:* `mt_sat`'s B1-correction surface is built and applied by the one
+  `mt_sat` computation, and its `FitValues` carries the `b1_ref` and sequence parameters
+  it was calibrated at.
+- **Behaviour-preserving by contract.** A refactor is only correct if it leaves the fit
+  outputs byte-identical. *Instance:* the CI OSF job re-runs the real pipelines end-to-end
+  and diffs the maps.
+- **Seams over speculation (YAGNI).** Leave a typed seam where a capability is foreseeable
+  but unbuilt — not speculative machinery. *Instance:* `FitStrategy::MatrixWise` is a
+  `bail!` seam until a model needs it; the BIDS sidecar→`Protocol` path began as a seam and
+  is now the `rust-bids` crate.
 
 ---
 
 ## BIDS-first design
 
-qmrust fits **BIDS or BIDS-like layouts only** — `qmrust fit --bids-dir`, or
-`--mat-dir`/`--mat-data` for qMRLab `.mat` data, converted to BIDS via `qmrust bidsify`.
-qMRI-BIDS is treated as an **imperative-shell concern**, so it never touches the pure
-core: a model only ever declares its BIDS identity and metadata mapping
-(`bids()`, `InputSpec.bids`, `protocol_schema()`); the shell (`rust-bids` + the CLI)
-resolves those declarations into a `Protocol` before calling the model's `build`, and
-`forward`/`fit` still only see ordered params + `Aux`. This makes `--config` what it
-should have been all along: algorithm options and the non-BIDS fallback, not a place to
-duplicate acquisition parameters that already live in JSON sidecars.
+**Acquisition metadata is data, not configuration.** A model reads its acquisition from
+the dataset — flip angles, inversion times, offsets already live in JSON sidecars — so
+`--config` carries algorithm options and the non-BIDS fallback only, never a second copy
+of numbers the data already holds.
 
-`rust_bids::Vocabulary` is the known-terms table this resolves against: canonical BIDS
-entities/suffixes/datatypes transcribed from the spec, plus every registered model's
-`bids_suffix` at compile time (`Vocabulary::bids()` — so `QMTSPGR` is known with no
-config), plus a dataset's own declared `custom_entities`/`custom_suffixes`
-(`Vocabulary::from_config`) for non-official layout the registry doesn't already cover.
-See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for the full mapping mechanism, the `rust-bids`
-crate, and what's deferred.
+**BIDS is an imperative-shell concern; the core never sees it.** A model only *declares*
+its BIDS identity and metadata mapping (`bids()`, `InputSpec.bids`, `protocol_schema()`);
+the shell (`rust-bids` + the CLI) resolves those declarations into a `Protocol` before
+`build`, and `forward`/`fit` still see only ordered params + `Aux`. That is what keeps one
+copy of the fitting code pure and portable. *Instance:* `qmrust fit --bids-dir` groups the
+dataset and folds each collection's sidecars into a `Protocol`; `--mat-dir`/`--mat-data`
+reach the same path after `qmrust bidsify` converts qMRLab `.mat` data to BIDS.
+
+**Known terms are resolved, never guessed.** The layout is matched against
+`rust_bids::Vocabulary` — canonical BIDS entities and suffixes from the spec, plus every
+registered model's `bids_suffix` at compile time, plus a dataset's own declared
+`custom_entities`/`custom_suffixes`. *Instance:* `QMTSPGR` is recognized with no config
+because it is a registered suffix, while a lab's non-official suffix is recognized only if
+the dataset itself declares it. See [`DATA-PIPELINE.md`](DATA-PIPELINE.md) for the full
+mapping mechanism, the `rust-bids` crate, and what's deferred.
 
 ---
 

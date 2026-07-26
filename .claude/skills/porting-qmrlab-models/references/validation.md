@@ -78,6 +78,27 @@ ones in `crates/qmrust-cli/src/commands.rs`.
 oracle at `crates/rust-bids/tests/oracle.rs`; it is unrelated to numerical fit agreement
 and only relevant if the port also changes BIDS-grouping behavior.)
 
+## Validate the composed result, not just the pieces
+
+Porting each component faithfully to the `.m` source does not prove the port correct where
+those components combine. A qMRLab pipeline may compose its pieces differently than you
+assume, so the comparison target is the **end-to-end output a user consumes**, checked
+against the reference's **full pipeline** — not each translated function against its source
+in isolation.
+
+*Instance:* qmrust's MTsat B1 correction was three pieces — the rate matrix, the simulated
+surface, and the correction application — each matching the TardifLab source line-for-line.
+Yet the surface was paired with the closed-form Helms MTsat instead of qMRLab's B1-aware
+lookup-table MTsat, silently dropping the excitation-flip channel: every component check
+passed and the composed correction was still wrong. Only comparing the corrected map
+end-to-end exposed it.
+
+This bites hardest when a model ships a companion operation — a calibration or correction
+built from data and reapplied. Both the build and apply sides must compute any shared
+quantity through the *same* code (the architecture principle *"a derived artifact travels
+with the frame it was built in"*), and the validation target is the corrected output, not
+the raw fit.
+
 ## Documented gap (no reference result)
 
 If qMRLab does not publish a reference result for the model's example data, Tier 3 does

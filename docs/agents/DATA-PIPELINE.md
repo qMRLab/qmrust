@@ -224,16 +224,17 @@ straight from `--config` — `build` is handed an empty `Protocol`.
 and picks its correction purely from what the recipe and the dataset supply —
 no BIDS- or non-BIDS-specific branching:
 
-1. `b1_correction: { fitvalues, b1_ref }` present in the recipe *and* a
+1. `b1_correction: { fitvalues }` present in the recipe *and* a
    `B1map` resolved → the TardifLab correction (`mtsat_b1::correct`), using
    the recipe-supplied `FitValues`.
 2. No `b1_correction`, but a `B1map` resolved → the empirical Helms factor
    (`b1_correction_factor`, default 0.4).
 3. No `B1map` resolved at all → no correction; MTsat is reported uncorrected.
 
-The recipe's `b1_correction` is written as a **path** (`{ fitvalues: <file>,
-b1_ref: <µT> }`) because the artifact is produced by a separate step
-(`qmrust mtsat-b1`) and core never touches the filesystem. Before `build`,
+The recipe's `b1_correction` is written as a **path** (`{ fitvalues: <file> }`)
+because the artifact is produced by a separate step (`qmrust mtsat-b1`) and
+core never touches the filesystem; the artifact carries its own `b1_ref`.
+Before `build`,
 `qmrust-cli` (`inject_mt_sat_b1_correction`) reads that file, parses it into a
 `FitValues`, and replaces the path form in the raw config tree with the
 inlined struct — so `MtSatConfig::b1_correction` deserializes a real
