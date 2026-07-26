@@ -42,7 +42,10 @@ class TestNamedVolumeMatching(unittest.TestCase):
     volumes to the model's roles by entity token, not glob order."""
 
     def _dataset(self, tmp):
-        anat = pathlib.Path(tmp) / "sub-01" / "anat"
+        # Each model's data is its own dataset root under a common parent, so
+        # the fixture nests one — located the same way `dataset.find` does,
+        # rather than by a hardcoded directory name.
+        anat = dataset.root_for(tmp, named_model()) / "sub-01" / "anat"
         anat.mkdir(parents=True)
         # A saturated (MT-on) image is darker than the reference (MT-off).
         nifti.write_nii(anat / "sub-01_mt-off_MTR.nii.gz",
@@ -56,7 +59,7 @@ class TestNamedVolumeMatching(unittest.TestCase):
     def test_glob_order_is_not_role_order(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._dataset(tmp)
-            hits = sorted(pathlib.Path(tmp).glob("sub-*/anat/*_MTR.nii*"))
+            hits = sorted(dataset.root_for(tmp, named_model()).glob("sub-*/anat/*_MTR.nii*"))
             self.assertEqual([h.name for h in hits],
                               ["sub-01_mt-off_MTR.nii.gz", "sub-01_mt-on_MTR.nii.gz"])
 
@@ -101,7 +104,10 @@ class TestProbeConvention(unittest.TestCase):
     convention fail immediately, unlike the constant-valued fixture above."""
 
     def _dataset(self, tmp):
-        anat = pathlib.Path(tmp) / "sub-01" / "anat"
+        # Each model's data is its own dataset root under a common parent, so
+        # the fixture nests one — located the same way `dataset.find` does,
+        # rather than by a hardcoded directory name.
+        anat = dataset.root_for(tmp, named_model()) / "sub-01" / "anat"
         anat.mkdir(parents=True)
         # 4 (x) by 5 (y): value = 10*x + y, so every off-diagonal voxel
         # changes under an x/y swap.

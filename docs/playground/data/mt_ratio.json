@@ -27,6 +27,8 @@
  ],
  "enums": [],
  "config": "model: mt_ratio\n\n# MTR = 100 * (MToff - MTon) / MToff. There is no acquisition protocol and no\n# fit options, so this config carries nothing but the model name.\n#\n# Two uses:\n#   - bidsify a qMRLab named set (one <role>.mat per role \u2014 MTon.mat, MToff.mat\n#     \u2014 plus Mask.mat) from --mat-dir; this config is the --config input:\n#\n#       qmrust bidsify --model mt_ratio --mat-dir <dir> \\\n#         --config recipes/non-bids/mt_ratio_config.yaml --subject 01 --out ds\n#\n#   - fit a stacked 4D NIfTI whose two volumes are [mt-on, mt-off], with the\n#     mask via --mask:\n#\n#       qmrust fit --data mton_mtoff.nii.gz --mask Mask.mat \\\n#         --config recipes/non-bids/mt_ratio_config.yaml --output-dir out_mtr\n",
+ "config_bids": "model: mt_ratio\n\n# MTR = 100 * (MToff - MTon) / MToff. No acquisition protocol and no fit\n# options: the MTon/MToff volumes are resolved from the BIDS MTR named set\n# (mt-on / mt-off) by the grouping manifest. Example:\n#\n#   qmrust fit --bids-dir <dataset> \\\n#     --config recipes/bids/mt_ratio_config.yaml --output-dir out\n\n# BIDS mask selection \u2014 disambiguates which mask in the dataset to apply.\nmask:\n  desc: brain\n",
+ "archive": "ds-mtr.zip",
  "files": {
   "data": "mt_ratio.nii.gz",
   "mask": "mt_ratio_mask.nii.gz",

@@ -466,7 +466,19 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
         "params": [p["name"] for p in model["params"]],
         "outputs": outputs,
         "enums": enums,
+        # Two recipes, because a recipe is protocol + options and where the
+        # protocol comes from differs by input. The pre-baked slice has no
+        # sidecars, so its recipe carries the acquisition (`non_bids`). A fetched
+        # BIDS dataset resolves its own acquisition from its sidecars, so its
+        # recipe carries options only (`bids`) and `resolve_bids` supplies the
+        # protocol. Both paths come from the registry's declared recipe paths —
+        # never a filename guessed here.
         "config": (repo_root / model["recipes"]["non_bids"]).read_text(),
+        "config_bids": (repo_root / model["recipes"]["bids"]).read_text(),
+        # The dataset archive this model's data lives in, by the same
+        # `ds-<lowercased BIDS suffix>` rule `make_bids_examples.sh` builds and
+        # zips (resolved against `sources.json`'s host).
+        "archive": f"ds-{model['bids_suffix'].lower()}.zip",
         "files": {
             "data": data_path.name,
             "mask": mask_path.name if mask_path else None,
@@ -526,8 +538,13 @@ def main(argv=None):
             print(f"  bundle: {h}x{w} (downsampled {factor}x, {n_probes} probes)")
 
     if args.bundle_slice:
+        # The index lists the models a payload was actually written for — read
+        # back from what this run produced, not from every `.json` in the
+        # directory, which also holds non-payload files (`sources.json`).
         data_dir = args.repo_root / "docs" / "playground" / "data"
-        names = sorted(p.stem for p in data_dir.glob("*.json") if p.stem != "index")
+        names = sorted(
+            m["name"] for m in models if (data_dir / f"{m['name']}.json").exists()
+        )
         (data_dir / "index.json").write_text(json.dumps({"models": names}, indent=1))
     return 0
 

@@ -88,6 +88,24 @@ npx esbuild entry.js --bundle --format=esm --minify --outfile=js-yaml.js
 cp js-yaml.js <repo>/docs/playground/vendor/js-yaml.js
 ```
 
+### Vendored fflate
+
+`playground/vendor/fflate.js` is the upstream `fflate` ESM browser build, taken
+verbatim — it extracts the fetched dataset archives. `fflate` has no
+dependencies and its published `esm/browser.js` has no bare imports, so unlike
+NiiVue and js-yaml it needs no local bundling step; copying the file *is* the
+build, which also makes the vendored copy byte-verifiable against upstream:
+
+```bash
+curl -sSL -o <repo>/docs/playground/vendor/fflate.js \
+  https://unpkg.com/fflate@0.8.2/esm/browser.js
+# expected: 8cc1f687e0159e977addb6b85e274dbd11e622cf151f4fcb7b85d49622ea43e7
+shasum -a 256 <repo>/docs/playground/vendor/fflate.js
+```
+
+MIT licensed. Only `unzipSync`/`strFromU8` are used; `.nii.gz` entries are
+handed to NiiVue still gzip-compressed, which reads them directly.
+
 `playground.md`'s iframe references the app with a relative `src`
 (`./playground/index.html`). MyST does not rewrite iframe paths the way it
 rewrites images, and book-theme's client router serves `/playground` without

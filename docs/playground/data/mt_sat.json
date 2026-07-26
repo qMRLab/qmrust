@@ -39,6 +39,8 @@
  ],
  "enums": [],
  "config": "model: mt_sat\n\n# Non-BIDS / bidsify protocol source: per-weighting nominal flip angle (deg)\n# and repetition time (s). bidsify writes these into the MTS sidecars\n# (FlipAngle / RepetitionTimeExcitation); a non-BIDS fit reads them directly.\nmtw: { flip_angle: 6, repetition_time: 0.028 }\npdw: { flip_angle: 6, repetition_time: 0.028 }\nt1w: { flip_angle: 20, repetition_time: 0.018 }\n\n# Options (always used; not BIDS metadata).\n# B1 correction is applied only when a B1 map (TB1map) is supplied.\nb1_correction_factor: 0.4\nexport_mtr: true\n\n# Non-BIDS input is a named set: one <role>.nii.gz per role under --nii-dir\n# (MTw.nii.gz, PDw.nii.gz, T1w.nii.gz); mask via --mask/--nii-mask. Example:\n#\n#   qmrust bidsify --model mt_sat --nii-dir <dir> \\\n#     --config recipes/non-bids/mt_sat_config.yaml --subject 01 --out ds\n",
+ "config_bids": "model: mt_sat\n\n# BIDS input: each MTS role's FlipAngle and RepetitionTimeExcitation come from\n# its JSON sidecar (via the model's protocol_schema), so the per-role\n# acquisition is NOT declared here.\n\n# Options (always used; not BIDS metadata).\n# B1 correction is applied only when a B1 map (TB1map) is present in the dataset.\nb1_correction_factor: 0.4\nexport_mtr: true\n\n# BIDS mask selection \u2014 disambiguates which mask to apply. If the dataset has\n# no matching mask, no masking is applied (as in this example).\nmask:\n  desc: brain\n",
+ "archive": "ds-mts.zip",
  "files": {
   "data": "mt_sat.nii.gz",
   "mask": null,
