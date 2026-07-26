@@ -22,6 +22,6 @@ pub use inputs::{find_row, resolve_input_paths, InputPaths, MaskSpec};
 pub use protocol::{compose_protocol, ordered_nii_paths, ordered_volume_paths, resolve_protocol};
 pub use resolve::{collections_for, resolve_set};
 pub use scan::scan_dataset;
-pub use sidecar::{sidecar_for, Sidecar};
+pub use sidecar::{sidecar_for, sidecar_sources_for, Sidecar};
 pub use table::{parse_to_table, row_column, table_filter, BidsRow};
 pub use vocab::Vocabulary;
