@@ -11,6 +11,7 @@ import { load as yamlLoad, dump as yamlDump } from "./vendor/js-yaml.js";
 import { unzipSync, gunzipSync } from "./vendor/fflate.js";
 import hljs from "./vendor/highlight-core.js";
 import hljsYaml from "./vendor/highlight-yaml.js";
+import hljsJson from "./vendor/highlight-json.js";
 import * as echarts from "./vendor/echarts.js";
 
 const $ = (id) => document.getElementById(id);
@@ -576,6 +577,7 @@ function setEditorText(text) {
 // only thing that parses meaning — the `valid`/`invalid` pill comes from it.
 
 hljs.registerLanguage("yaml", hljsYaml);
+hljs.registerLanguage("json", hljsJson);
 
 // Repaint the layer behind the textarea and keep the two scrolled together.
 function paintYaml() {
@@ -1102,9 +1104,11 @@ function roleLabel(role) {
       return detail === "volume" ? n : `${n} · ${detail}`;
     }
     case "sidecar":
-      return role.applies_to.length === 1
-        ? "sidecar → 1 volume"
-        : `sidecar → ${role.applies_to.length} volumes`;
+      // A count only says something when inheritance spread it wider than the
+      // volume it sits beside.
+      return role.applies_to.length > 1
+        ? `sidecar → ${role.applies_to.length} volumes`
+        : "sidecar";
     case "mask":
       return "mask";
     case "aux":
@@ -1118,23 +1122,86 @@ function roleLabel(role) {
   }
 }
 
-// Group by directory, preserving path order. Directory order, not resolution
-// order: this is a file browser, so the dataset's real layout is what it shows —
-// a volume's position on the model's axis is in its label. For a named model the
-// two genuinely disagree, and reordering rows would misrepresent the directory.
-function groupByDir(files) {
-  const dirs = new Map();
+// Build a directory tree from the flat path list, preserving path order within
+// each directory. A nested structure is what a reader recognises as a dataset —
+// the flat "one heading per directory" form repeated the whole prefix each time.
+function buildTree(files) {
+  const root = { dirs: new Map(), files: [] };
   for (const [path, role] of files) {
-    const cut = path.lastIndexOf("/");
-    const dir = cut === -1 ? "" : path.slice(0, cut);
-    const name = cut === -1 ? path : path.slice(cut + 1);
-    if (!dirs.has(dir)) dirs.set(dir, []);
-    dirs.get(dir).push({ path, name, role });
+    const parts = path.split("/");
+    const name = parts.pop();
+    let node = root;
+    for (const dir of parts) {
+      if (!node.dirs.has(dir)) node.dirs.set(dir, { dirs: new Map(), files: [] });
+      node = node.dirs.get(dir);
+    }
+    node.files.push({ path, name, role });
   }
-  return dirs;
+  return root;
 }
 
 const VIEWABLE = ["volume", "mask", "aux"];
+
+// One file's row. `kind` colouring distinguishes image data from its metadata,
+// the two roles the BIDS layout is built around.
+function fileRow({ path, name, role }) {
+  const row = document.createElement("div");
+  row.className = `files-row ${role.kind}`;
+  row.dataset.path = path;
+  const isJson = name.endsWith(".json");
+  const isNii = name.endsWith(".nii") || name.endsWith(".nii.gz");
+  if (role.kind === "volume") {
+    row.dataset.frame = String(role.index);
+    row.classList.add("clickable");
+    row.title = "Click to show this volume";
+  }
+  const label = document.createElement("span");
+  label.className = `files-name${isNii ? " is-nii" : ""}${isJson ? " is-json" : ""}`;
+  label.textContent = name;
+  const kind = document.createElement("span");
+  kind.className = "files-role";
+  kind.textContent = roleLabel(role);
+  row.append(label, kind);
+
+  // Any JSON in the dataset can be read — a sidecar is where a volume's
+  // acquisition actually comes from, so being able to look is the point.
+  if (isJson && dataset?.files?.has(path)) {
+    row.classList.add("is-clickable-json");
+    label.title = "Show this file's contents";
+    label.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openJsonModal(path);
+    });
+  }
+  if (VIEWABLE.includes(role.kind) && dataset?.files?.has(path) && !isJson) {
+    const open = document.createElement("button");
+    open.className = "files-open";
+    open.textContent = "⤢";
+    open.title = "Open this file in a viewer";
+    open.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openFileModal(path);
+    });
+    row.append(open);
+    row.addEventListener("dblclick", () => openFileModal(path));
+  }
+  return row;
+}
+
+// Render one tree level: its files, then its subdirectories, each indented.
+function renderNode(node, parent) {
+  for (const entry of node.files) parent.append(fileRow(entry));
+  for (const [dir, child] of node.dirs) {
+    const box = document.createElement("div");
+    box.className = "files-node";
+    const head = document.createElement("div");
+    head.className = "files-dir";
+    head.textContent = dir;
+    box.append(head);
+    renderNode(child, box);
+    parent.append(box);
+  }
+}
 
 function renderFiles() {
   const tree = $("files-tree");
@@ -1152,42 +1219,10 @@ function renderFiles() {
   $("files-summary").textContent =
     `${dataset.archive} · ${entries.length} files · ${parts.join(" · ")}`;
 
-  for (const [dir, rows] of groupByDir(entries)) {
-    const head = document.createElement("div");
-    head.className = "files-dir";
-    head.textContent = dir === "" ? "./" : `${dir}/`;
-    tree.append(head);
-    for (const { path, name, role } of rows) {
-      const row = document.createElement("div");
-      row.className = `files-row ${role.kind}`;
-      row.dataset.path = path;
-      if (role.kind === "volume") {
-        row.dataset.frame = String(role.index);
-        row.classList.add("clickable");
-        row.title = "Click to show this volume";
-      }
-      const label = document.createElement("span");
-      label.className = "files-name";
-      label.textContent = name;
-      const kind = document.createElement("span");
-      kind.className = "files-role";
-      kind.textContent = roleLabel(role);
-      row.append(label, kind);
-      if (VIEWABLE.includes(role.kind) && dataset.files?.has(path)) {
-        const open = document.createElement("button");
-        open.className = "files-open";
-        open.textContent = "⤢";
-        open.title = "Open this file in a viewer";
-        open.addEventListener("click", (e) => {
-          e.stopPropagation();
-          openFileModal(path);
-        });
-        row.append(open);
-        row.addEventListener("dblclick", () => openFileModal(path));
-      }
-      tree.append(row);
-    }
-  }
+  const root = document.createElement("div");
+  root.className = "files-node";
+  renderNode(buildTree(entries), root);
+  tree.append(root);
   syncFilesHighlight();
 }
 
@@ -1632,6 +1667,31 @@ function setWindow(min, max) {
   }
   levelMain?.paint();
   levelModal?.paint();
+}
+
+// A sidecar's contents, syntax-highlighted. Reuses the recipe editor's
+// highlighter rather than introducing a second one.
+function openJsonModal(path) {
+  const bytes = dataset?.files?.get(path);
+  if (!bytes) {
+    status(`No data held for "${path}"`, "error");
+    return;
+  }
+  let text = new TextDecoder().decode(bytes);
+  try {
+    // Re-indent, since a sidecar may arrive minified and unreadable.
+    text = JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    // Not valid JSON: show it verbatim, which is the honest thing when a
+    // reader's own dataset holds a malformed sidecar.
+  }
+  $("json-modal-title").textContent = path;
+  $("json-body").innerHTML = hljs.highlight(text, { language: "json" }).value;
+  $("json-modal").hidden = false;
+}
+
+function closeJsonModal() {
+  $("json-modal").hidden = true;
 }
 
 async function ensureModalViewer() {
@@ -2449,12 +2509,18 @@ async function main() {
   });
   $("files-tree").addEventListener("click", onFilesClick);
   $("file-modal-close").onclick = closeFileModal;
+  $("json-modal-close").onclick = closeJsonModal;
+  $("json-modal").addEventListener("click", (e) => {
+    if (e.target === $("json-modal")) closeJsonModal();
+  });
   levelMain = createLevelControl("mlevel");
   $("file-modal").addEventListener("click", (e) => {
     if (e.target === $("file-modal")) closeFileModal();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("file-modal").hidden) closeFileModal();
+    if (e.key !== "Escape") return;
+    if (!$("file-modal").hidden) closeFileModal();
+    if (!$("json-modal").hidden) closeJsonModal();
   });
   $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
   $("cal-reset").onclick = resetCalRange;

@@ -108,19 +108,23 @@ handed to NiiVue still gzip-compressed, which reads them directly.
 
 ### Vendored highlight.js
 
-`playground/vendor/highlight-{core,yaml}.js` are highlight.js's own prebuilt ESM
-modules, taken verbatim — they colour the recipe editor. Like `fflate` these need
+`playground/vendor/highlight-{core,yaml,json}.js` are highlight.js's own prebuilt
+ESM modules, taken verbatim — they colour the recipe editor (YAML) and the
+sidecar previewer (JSON). Like `fflate` these need
 no bundling step, so the vendored copies are byte-verifiable against upstream:
 
 ```bash
 V=11.10.0
 curl -sSL -o <repo>/docs/playground/vendor/highlight-core.js \
   https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@$V/es/core.min.js
-curl -sSL -o <repo>/docs/playground/vendor/highlight-yaml.js \
-  https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@$V/es/languages/yaml.min.js
+for L in yaml json; do
+  curl -sSL -o <repo>/docs/playground/vendor/highlight-$L.js \
+    https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@$V/es/languages/$L.min.js
+done
 # expected:
 #   224f718d73f37e1b85fbab697b57d75dc2013e57bc0485a8fa8534070f3e543a  highlight-core.js
 #   61dffad838f9a8cca2e2479e1e14c193d604de02bf5d177528e7f8b82c2626c2  highlight-yaml.js
+#   ea5900cde2028a6405cf69b0ec3284014ad050a73e64d26371ef4e7b44402173  highlight-json.js
 shasum -a 256 <repo>/docs/playground/vendor/highlight-*.js
 ```
 

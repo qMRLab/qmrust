@@ -320,17 +320,30 @@
     flex: 1 1 auto; min-height: 0; overflow: auto; font-size: 12px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding: 6px 0;
   }
-  .files-dir { color: var(--muted); padding: 8px 2px 2px; overflow-wrap: anywhere; }
+  /* A real nested tree: each level is a block indented by one step, with a guide
+     line down its left edge so deep BIDS paths stay readable. */
+  .files-node { padding-left: 13px; margin-left: 3px; border-left: 1px solid var(--line); }
+  .files-tree > .files-node { padding-left: 0; margin-left: 0; border-left: 0; }
+  .files-dir {
+    color: var(--ink-2); padding: 3px 2px 1px; overflow-wrap: anywhere; font-weight: 600;
+  }
+  .files-dir::before { content: "▸ "; color: var(--muted); font-weight: 400; }
   .files-row {
     display: flex; gap: 8px; align-items: baseline;
     padding: 2px 4px; border-radius: 4px;
   }
   .files-name { overflow-wrap: anywhere; flex: 1 1 auto; }
+  .files-row.is-clickable-json .files-name { cursor: pointer; text-decoration: underline dotted; }
   .files-role { color: var(--muted); text-align: right; flex: 0 0 auto; }
   .files-row.clickable { cursor: pointer; }
   .files-row.clickable:hover { background: var(--panel-2); }
   .files-row.current { background: var(--panel-2); outline: 1px solid var(--line); }
   .files-row.unused .files-name, .files-row.dataset_metadata .files-name { color: var(--muted); }
+  /* Image data and its sidecars, told apart by colour: the same two roles the
+     BIDS layout is built around. Stated after the state colours above, and at
+     the same specificity, so a metadata or unused file still shows its kind. */
+  .files-row .files-name.is-nii { color: var(--rust); }
+  .files-row .files-name.is-json { color: var(--accent-ink); }
   .files-open {
     background: none; border: 0; color: var(--muted); cursor: pointer;
     padding: 0 2px; font-size: 13px; line-height: 1; flex: 0 0 auto;
@@ -469,6 +482,11 @@
     background: none; border: 0; color: var(--ink); cursor: pointer; font-size: 16px;
   }
   .modal-body { display: flex; gap: 12px; flex: 1 1 auto; min-height: 0; }
+  .json-view {
+    flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0;
+    background: var(--field); border: 1px solid var(--line); border-radius: 9px;
+    padding: 12px; font: 12px/1.55 var(--mono); white-space: pre;
+  }
   .modal-body .viewer { flex: 1 1 auto; height: auto; }
 
   /* Window/level control: the map's own value histogram beside a colour bar
@@ -725,6 +743,16 @@
     <div id="curve-note"></div>
   </div>
 
+</div>
+
+<div class="modal" id="json-modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="json-modal-title" class="files-name"></span>
+      <button id="json-modal-close" aria-label="Close">✕</button>
+    </div>
+    <pre class="json-view"><code id="json-body"></code></pre>
+  </div>
 </div>
 
 <div class="modal" id="file-modal" hidden>
