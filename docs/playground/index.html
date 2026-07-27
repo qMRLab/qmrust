@@ -113,7 +113,9 @@
   .layout {
     display: grid;
     grid-template-columns: 380px 1fr 1fr;
-    grid-template-rows: minmax(360px, 1fr) auto;
+    /* Row 1 is the fixed card height below, not a stretch share: leaving it to
+       `1fr` let the three cards end up three different heights. */
+    grid-template-rows: auto auto;
     gap: 14px;
     align-items: stretch;
     flex: 1 1 auto;
@@ -123,11 +125,20 @@
      start`), so a model with a deeply-nested recipe scrolls internally
      instead of the card stretching to the (now viewport-filling) viewer
      row's height and sitting mostly empty. */
-  .recipe-card {
-    grid-column: 1; grid-row: 1 / span 2;
-    align-self: start;
-    max-height: 760px; overflow-y: auto;
+  /* One fixed height for every card in the top row, so the recipe, the inputs
+     and the fitted map line up exactly. Each card flexes internally: the recipe
+     scrolls its editor, the viewers fill what their feet leave. */
+  :root { --row1-h: min(58vh, 580px); }
+  .recipe-card, .viewer-in-wrap, .viewer-out-wrap {
+    height: var(--row1-h);
   }
+  .recipe-card {
+    grid-column: 1; grid-row: 1;
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  /* Only the editor scrolls, so the model picker stays put at the top and Fit
+     stays put at the bottom however deeply nested a recipe is. */
+  .recipe-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   /* The viewer wraps *do* stretch (the grid default) to fill whatever
      vertical space the row has — the point of this layout pass — with their
      own content (`.viewer`) flexed to fill that stretched height in turn. */
@@ -150,14 +161,14 @@
      and a foot that grows with its text would put the two viewers back at
      different heights. Sized to fit two wrapped lines of each note. */
   .viewer-foot { height: var(--foot-h); flex: 0 0 auto; overflow: hidden; }
-  .curve-wrap { grid-column: 2; grid-row: 2; }
-  .drop-wrap { grid-column: 3; grid-row: 2; }
+  .curve-wrap { grid-column: 2 / span 2; grid-row: 2; }
+  .drop-wrap { grid-column: 1; grid-row: 2; }
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; grid-template-rows: none; }
     .recipe-card, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap, .drop-wrap {
       grid-column: 1; grid-row: auto;
     }
-    .viewer-in-wrap, .viewer-out-wrap { height: 62vh; min-height: 320px; }
+    :root { --row1-h: 62vh; }
   }
 
   /* recipe editor */
@@ -332,20 +343,27 @@
      identity cue, not decoration competing with the text. */
   .drop-wrap {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 10px; text-align: center; position: relative; overflow: hidden;
+    gap: 7px; text-align: center; position: relative; overflow: hidden;
+    padding: 12px; align-self: start;
     border-style: dashed; border-width: 2px; border-color: var(--line);
     transition: border-color 0.15s ease, background-color 0.15s ease;
   }
   .drop-wrap::before {
     content: ""; position: absolute; inset: 0;
-    background: url("./vendor/bids-logo.png") center/58% no-repeat;
-    opacity: 0.07; pointer-events: none;
+    background: url("./vendor/bids-logo.png") center/72% no-repeat;
+    opacity: 0.16; pointer-events: none;
   }
+  /* The logo is near-black artwork on transparency, so on a dark panel it needs
+     inverting to read at all — at 7% unfiltered it was invisible. */
+  @media (prefers-color-scheme: dark) {
+    .drop-wrap::before { filter: invert(1); opacity: 0.13; }
+  }
+  :root[data-theme="dark"] .drop-wrap::before { filter: invert(1); opacity: 0.13; }
   .drop-wrap.drop-over {
     border-color: var(--accent);
     background-color: color-mix(in srgb, var(--accent) 8%, var(--panel));
   }
-  .drop-wrap.drop-over::before { opacity: 0.14; }
+  .drop-wrap.drop-over::before { opacity: 0.26; }
   .drop-title {
     font: 700 13px var(--sans); color: var(--ink); position: relative;
   }
@@ -468,6 +486,7 @@
       <button id="tab-yaml" role="tab" aria-selected="false">YAML</button>
     </div>
     <div class="model-line">model: <select id="model"></select></div>
+    <div class="recipe-scroll">
     <div id="form-view"><div id="form-fields" class="form-fields"></div></div>
     <div id="yaml-view" class="yaml-wrap" hidden>
       <span id="yaml-pill" class="yaml-pill valid">valid</span>
@@ -475,6 +494,7 @@
         <pre id="yaml-hl" aria-hidden="true"></pre>
         <textarea id="cfg-yaml" spellcheck="false"></textarea>
       </div>
+    </div>
     </div>
     <p class="local-note">Edits are local to your browser — nothing is uploaded or saved.</p>
     <div id="fit-progress" class="fit-progress">
@@ -557,13 +577,10 @@
 
   <div class="drop-wrap card" id="drop-wrap">
     <div class="drop-title">Fit your own data</div>
-    <div class="drop-sub">
-      Drop a BIDS folder — or a zipped one — anywhere on this panel. It is read
-      and fitted entirely in your browser.
-    </div>
+    <div class="drop-sub">Drop a BIDS folder or a .zip here.</div>
     <div class="drop-actions">
-      <button id="browse-folder" type="button">Choose folder…</button>
-      <button id="browse-zip" type="button">Choose .zip…</button>
+      <button id="browse-folder" type="button">Folder…</button>
+      <button id="browse-zip" type="button">.zip…</button>
     </div>
     <div class="drop-privacy">Nothing is uploaded</div>
     <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
