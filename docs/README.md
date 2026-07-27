@@ -50,12 +50,49 @@ what reminds you to regenerate.
 The playground is a standalone app in `playground/`, embedded via an iframe
 because MyST sanitizes page HTML. It renders with
 [NiiVue](https://github.com/niivue/niivue), which reads the bundled `.nii.gz`
-files directly — no hand-rolled NIfTI parsing in `app.js`. Its wasm package is
+files directly — no hand-rolled NIfTI parsing anywhere in it. Its wasm package is
 built by CI and is not committed:
 
 ```bash
 cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg
 ```
+
+### Module layout
+
+Plain ES modules, loaded by the browser directly — there is no bundler, and
+adding a file needs no build step, only an `import`. `index.html` is markup and
+`app.css` is style; `app.js` is the entry point, and each other module owns one
+region of the page.
+
+| Module | Owns |
+|---|---|
+| `app.js` | startup, and the `wire*` functions that attach each region's listeners |
+| `state.js` | the mutable state more than one module touches, and its invariants |
+| `dom.js` | `$`, the navbar status line, display formatting, CSS colour tokens |
+| `bundles.js` | the wasm module and the per-model payload JSON |
+| `dataset.js` | fetching, unzipping and resolving a BIDS dataset; the download ring |
+| `drop.js` | a reader's own dataset, dropped or browsed to |
+| `nifti.js` | the array boundary: NVImage ⇄ `fit_volume`'s C-order buffers |
+| `stats.js` | percentiles, the display window, the ROI summary — one convention |
+| `recipe.js` | the generic YAML-tree form walk, the editor, syntax highlighting |
+| `model.js` | loading a model's data: the BIDS path and the pre-baked fallback |
+| `fit.js` | fitting the slice in row-blocks, and the maps that come back |
+| `inputs.js` | the Inputs card: its two tabs, the frame slider, the file tree |
+| `viewers.js` | the fitted-map panel, and what both viewers share |
+| `level.js` | the window/level widget, and `setWindow` — the one place a window changes |
+| `roi.js` | ROI statistics and the pen |
+| `curve.js` | the ECharts voxel-fit chart, and the hover/crosshair marks |
+| `modal.js` | both modals, and the single NiiVue instance they share |
+
+Three rules keep the graph honest, and are worth preserving:
+
+- **Acyclic.** `state.js`, `dom.js` and `stats.js` are leaves; `app.js` is
+  imported by nothing. A cycle means two modules are really one region.
+- **State is shared only where it must be.** `app` in `state.js` holds what more
+  than one module touches, and is `Object.seal`ed so a misspelled field throws
+  rather than silently becoming a new one. Anything one module owns stays a
+  `let` in that module.
+- **Export nothing unused.** A helper only its own module calls is not exported.
 
 ### Vendored NiiVue
 
@@ -162,14 +199,14 @@ volume's display window, which a charting library would only get in the way of.
 rewrites images, and book-theme's client router serves `/playground` without
 a trailing slash, so a relative `src` alone resolves to a different (broken)
 target depending on how a visitor arrives at the page. CI's build step copies
-the app to `_build/html/playground/playground/` and then rewrites that
-`src` to an absolute, `BASE_URL`-prefixed path
-(`${BASE_URL}/playground/playground/index.html`) in the built page only —
-never in the committed Markdown, whose relative form stays deployment-target
-agnostic for local preview. A local `myst start`/`myst build` preview keeps
-the unrewritten relative `src`, so the playground page's own iframe should be
-checked directly by URL, at `/playground/playground/index.html`, when
-previewing locally.
+the app to `_build/html/app/` — a sibling of the page's own route directory,
+which already owns `playground/index.html` — and then rewrites that `src` to
+an absolute, `BASE_URL`-prefixed path (`${BASE_URL}/app/index.html`) in the
+built page only — never in the committed Markdown, whose relative form stays
+deployment-target agnostic for local preview. A local `myst start`/`myst
+build` preview keeps the unrewritten relative `src`, so the playground page's
+own iframe should be checked directly by URL, at
+`/playground/playground/index.html`, when previewing locally.
 
 ### Playground data contract
 
