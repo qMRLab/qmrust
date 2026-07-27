@@ -344,7 +344,7 @@
   .drop-wrap {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 7px; text-align: center; position: relative; overflow: hidden;
-    padding: 12px; align-self: start;
+    padding: 12px; align-self: end;
     border-style: dashed; border-width: 2px; border-color: var(--line);
     transition: border-color 0.15s ease, background-color 0.15s ease;
   }
@@ -434,6 +434,8 @@
      see *why* a window is wrong — where the tissue actually sits versus where
      the scale currently ends. */
   .level { display: flex; gap: 6px; flex: 0 0 auto; padding: 2px 0; }
+  #mlevel { width: 74px; }
+  #mlevel .level-hist { width: 46px; }
   .level[hidden] { display: none; }
   .level-hist {
     width: 52px; height: 100%; border-radius: 6px; background: var(--panel-2);
@@ -593,9 +595,16 @@
         <canvas id="gl-out"></canvas>
         <div class="viewer-skel" id="skel-out" hidden></div>
       </div>
-      <div class="map-colorbar">
-        <div class="map-colorbar-gradient" id="map-colorbar-gradient"></div>
-        <div class="map-colorbar-labels" id="map-colorbar-labels"></div>
+      <div class="level" id="mlevel">
+        <canvas class="level-hist" id="mlevel-hist" width="46" height="300"></canvas>
+        <div class="level-bar" id="mlevel-bar">
+          <div class="level-grad" id="mlevel-grad"></div>
+          <div class="level-handle" id="mlevel-hi" role="slider" tabindex="0"
+               aria-label="Display maximum"><span></span></div>
+          <div class="level-handle" id="mlevel-lo" role="slider" tabindex="0"
+               aria-label="Display minimum"><span></span></div>
+          <div class="level-readout" id="mlevel-readout" hidden></div>
+        </div>
       </div>
     </div>
     <div class="viewer-foot">

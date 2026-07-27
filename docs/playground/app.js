@@ -994,7 +994,9 @@ async function openMapModal() {
   nvModal.drawScene();
   // A quantitative map is unreadable without a scale, so the modal always shows
   // one — with the histogram, so the window can be judged against the data.
-  openLevelFor(shown, lastMaps?.[shown.name] ?? []);
+  $("level").hidden = false;
+  levelModal ??= createLevelControl("level");
+  levelModal.open(shown, lastMaps?.[shown.name] ?? []);
   nvModal.resizeListener();
   nvModal.drawScene();
 }
@@ -1125,19 +1127,18 @@ function renderFilesError(message) {
 let nvModal = null;
 
 // ---------------------------------------------------------------------------
-// Window/level control for the modal: the map's value histogram beside a colour
-// bar whose two handles are the display window. The histogram is what makes a
-// bad window diagnosable — you can see where the tissue sits relative to where
-// the scale currently ends.
-
-// What the control is currently editing: `{ volume, name, unit, values }`, where
-// `values` is the finite voxel data the histogram is built from.
-let level = null;
+// Window/level control: the map's value histogram beside a colour bar whose two
+// handles are the display window. The histogram is what makes a bad window
+// diagnosable — you can see where the tissue sits relative to where the scale
+// currently ends.
+//
+// One widget, instantiated per place it appears (the fitted-map panel and the
+// modal), so both behave identically rather than drifting apart.
 
 const HIST_BINS = 64;
 
-// Bin the finite values once per map. NaN (unfitted) voxels are excluded, since
-// a histogram of "no data" tells a reader nothing about the window.
+// Bin the finite values. NaN (unfitted) voxels are excluded: a histogram of "no
+// data" says nothing about the window.
 function buildHistogram(values, lo, hi) {
   const bins = new Float64Array(HIST_BINS);
   const span = hi - lo;
@@ -1146,8 +1147,7 @@ function buildHistogram(values, lo, hi) {
     const v = values[i];
     if (!Number.isFinite(v)) continue;
     let b = Math.floor(((v - lo) / span) * HIST_BINS);
-    // The maximum lands exactly on `HIST_BINS`; it belongs in the top bin, not
-    // discarded.
+    // The maximum lands exactly on `HIST_BINS`; it belongs in the top bin.
     if (b === HIST_BINS) b = HIST_BINS - 1;
     if (b < 0 || b >= HIST_BINS) continue;
     bins[b] += 1;
@@ -1155,178 +1155,202 @@ function buildHistogram(values, lo, hi) {
   return bins;
 }
 
-// Draw the histogram rotated: value on the vertical axis so it reads alongside
-// the colour bar, count growing leftward from the bar.
-function drawHistogram() {
-  const canvas = $("level-hist");
-  const ctx = canvas.getContext("2d");
-  const { width: w, height: h } = canvas;
-  ctx.clearRect(0, 0, w, h);
-  if (!level) return;
+// `prefix` names this instance's elements: `<prefix>-hist`, `-bar`, `-grad`,
+// `-lo`, `-hi`, `-readout`.
+function createLevelControl(prefix) {
+  const el = (part) => $(`${prefix}-${part}`);
+  // { dataMin, dataMax, bins, unit } — the data behind the current histogram.
+  let data = null;
 
-  const { dataMin, dataMax, bins } = level;
-  // A log scale keeps a long tail visible: a background peak two orders of
-  // magnitude above the tissue would otherwise flatten everything else to zero.
-  const scaled = Array.from(bins, (c) => Math.log10(1 + c));
-  const peak = Math.max(...scaled, 1e-9);
-  const barH = h / HIST_BINS;
-  const style = getComputedStyle(document.documentElement);
-  const inWindow = style.getPropertyValue("--accent").trim() || "#38c0cf";
-  const outWindow = style.getPropertyValue("--line").trim() || "#232c37";
-  const span = dataMax - dataMin;
+  const frac = (v) => (v - data.dataMin) / (data.dataMax - data.dataMin || 1);
+  const value = (f) => data.dataMin + f * (data.dataMax - data.dataMin);
 
-  for (let b = 0; b < HIST_BINS; b++) {
-    const binLo = dataMin + (b / HIST_BINS) * span;
-    const binHi = dataMin + ((b + 1) / HIST_BINS) * span;
-    // Bins inside the display window are highlighted, so the window's effect on
-    // the data is visible rather than implied.
-    const inside = binHi >= level.calMin && binLo <= level.calMax;
-    ctx.fillStyle = inside ? inWindow : outWindow;
-    const len = (scaled[b] / peak) * (w - 2);
-    // Low values at the bottom, matching the colour bar's orientation.
-    const y = h - (b + 1) * barH;
-    ctx.fillRect(w - len, y, len, Math.max(1, barH - 0.5));
+  function drawHistogram() {
+    const canvas = el("hist");
+    const ctx = canvas.getContext("2d");
+    const { width: w, height: h } = canvas;
+    ctx.clearRect(0, 0, w, h);
+    if (!data || !shownOutput) return;
+
+    // A log scale keeps a long tail visible: a background peak orders of
+    // magnitude above the tissue would otherwise flatten everything else.
+    const scaled = Array.from(data.bins, (c) => Math.log10(1 + c));
+    const peak = Math.max(...scaled, 1e-9);
+    const barH = h / HIST_BINS;
+    const style = getComputedStyle(document.documentElement);
+    const inWindow = style.getPropertyValue("--accent").trim() || "#38c0cf";
+    const outWindow = style.getPropertyValue("--line").trim() || "#232c37";
+    const span = data.dataMax - data.dataMin;
+    const lo = shownOutput.volume.cal_min;
+    const hi = shownOutput.volume.cal_max;
+
+    for (let b = 0; b < HIST_BINS; b++) {
+      const binLo = data.dataMin + (b / HIST_BINS) * span;
+      const binHi = data.dataMin + ((b + 1) / HIST_BINS) * span;
+      // Bins inside the window are highlighted, so the window's effect on the
+      // data is visible rather than implied.
+      ctx.fillStyle = binHi >= lo && binLo <= hi ? inWindow : outWindow;
+      const len = (scaled[b] / peak) * (w - 2);
+      // Low values at the bottom, matching the colour bar's orientation.
+      ctx.fillRect(w - len, h - (b + 1) * barH, len, Math.max(1, barH - 0.5));
+    }
   }
+
+  function paint() {
+    if (!shownOutput) {
+      el("grad").style.background = "none";
+      return;
+    }
+    const lut = nvOut.colormap($("colormap").value || "gray");
+    const stops = [];
+    for (let i = 0; i <= 32; i++) {
+      const px = Math.round((i / 32) * 255) * 4;
+      stops.push(`rgb(${lut[px]}, ${lut[px + 1]}, ${lut[px + 2]})`);
+    }
+    // Low value at the bottom, high at the top — the usual vertical convention,
+    // matching the committed docsfig figures.
+    el("grad").style.background = `linear-gradient(to top, ${stops.join(", ")})`;
+
+    if (!data) return;
+    for (const [part, v] of [
+      ["lo", shownOutput.volume.cal_min],
+      ["hi", shownOutput.volume.cal_max],
+    ]) {
+      const handle = el(part);
+      handle.style.bottom = `${Math.max(0, Math.min(1, frac(v))) * 100}%`;
+      handle.style.top = "auto";
+      handle.style.transform = "translateY(50%)";
+      handle.querySelector("span").textContent =
+        `${roundBound(v)}${data.unit ? ` ${data.unit}` : ""}`;
+      handle.setAttribute("aria-valuenow", String(roundBound(v)));
+    }
+    drawHistogram();
+  }
+
+  function beginDrag(which, event) {
+    if (!data || !shownOutput) return;
+    event.preventDefault();
+    const handle = el(which);
+    handle.classList.add("dragging");
+    const move = (e) => {
+      const r = el("bar").getBoundingClientRect();
+      const f = Math.max(0, Math.min(1, (r.bottom - e.clientY) / r.height));
+      const v = value(f);
+      // The handles may not cross: a window needs a floor below its ceiling.
+      const gap = (data.dataMax - data.dataMin) / 200;
+      if (which === "lo") setWindow(Math.min(v, shownOutput.volume.cal_max - gap), null);
+      else setWindow(null, Math.max(v, shownOutput.volume.cal_min + gap));
+    };
+    const up = () => {
+      handle.classList.remove("dragging");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  // Arrow keys nudge a handle, so the window is reachable without a pointer.
+  function onKey(which, event) {
+    if (!data || !shownOutput) return;
+    const step = (data.dataMax - data.dataMin) / 100;
+    const delta = { ArrowUp: step, ArrowRight: step, ArrowDown: -step, ArrowLeft: -step }[
+      event.key
+    ];
+    if (delta === undefined) return;
+    event.preventDefault();
+    const gap = (data.dataMax - data.dataMin) / 200;
+    if (which === "lo") {
+      setWindow(
+        Math.min(shownOutput.volume.cal_min + delta, shownOutput.volume.cal_max - gap),
+        null,
+      );
+    } else {
+      setWindow(
+        null,
+        Math.max(shownOutput.volume.cal_max + delta, shownOutput.volume.cal_min + gap),
+      );
+    }
+  }
+
+  function onHover(event) {
+    if (!data) return;
+    const r = el("bar").getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, (r.bottom - event.clientY) / r.height));
+    const readout = el("readout");
+    readout.hidden = false;
+    readout.style.bottom = `${f * 100}%`;
+    readout.textContent = `${roundBound(value(f))}${data.unit ? ` ${data.unit}` : ""}`;
+  }
+
+  el("lo").addEventListener("pointerdown", (e) => beginDrag("lo", e));
+  el("hi").addEventListener("pointerdown", (e) => beginDrag("hi", e));
+  el("lo").addEventListener("keydown", (e) => onKey("lo", e));
+  el("hi").addEventListener("keydown", (e) => onKey("hi", e));
+  el("bar").addEventListener("pointermove", onHover);
+  el("bar").addEventListener("pointerleave", () => {
+    el("readout").hidden = true;
+  });
+
+  return {
+    // The histogram spans the *data's* extent, wider than the display window, so
+    // a window can be widened as well as narrowed.
+    open(entry, values) {
+      const finite = [];
+      for (let i = 0; i < values.length; i++) {
+        if (Number.isFinite(values[i])) finite.push(values[i]);
+      }
+      if (finite.length === 0) {
+        data = null;
+        drawHistogram();
+        return;
+      }
+      let dataMin = Math.min(...finite);
+      let dataMax = Math.max(...finite);
+      // Include the current window, so both handles are always reachable.
+      dataMin = Math.min(dataMin, entry.volume.cal_min);
+      dataMax = Math.max(dataMax, entry.volume.cal_max);
+      if (!(dataMax > dataMin)) dataMax = dataMin + 1;
+      data = { dataMin, dataMax, unit: entry.unit, bins: buildHistogram(values, dataMin, dataMax) };
+      // Match the canvas backing store to its laid-out size, or bars stretch.
+      const canvas = el("hist");
+      const box = canvas.getBoundingClientRect();
+      if (box.width > 0) {
+        canvas.width = Math.round(box.width);
+        canvas.height = Math.max(80, Math.round(box.height));
+      }
+      paint();
+    },
+    paint,
+    hasData: () => data !== null,
+  };
 }
 
-// Fraction of the bar (0 at bottom, 1 at top) for a value, and its inverse.
-const valueToFrac = (v) => (v - level.dataMin) / (level.dataMax - level.dataMin || 1);
-const fracToValue = (f) => level.dataMin + f * (level.dataMax - level.dataMin);
+let levelMain = null;
+let levelModal = null;
 
-function paintLevel() {
-  if (!level) return;
-  const lut = nvModal.colormap($("colormap").value || "gray");
-  const stops = [];
-  for (let i = 0; i <= 32; i++) {
-    const px = Math.round((i / 32) * 255) * 4;
-    stops.push(`rgb(${lut[px]}, ${lut[px + 1]}, ${lut[px + 2]})`);
-  }
-  $("level-grad").style.background = `linear-gradient(to top, ${stops.join(", ")})`;
-
-  for (const [id, value] of [
-    ["level-lo", level.calMin],
-    ["level-hi", level.calMax],
-  ]) {
-    const handle = $(id);
-    const frac = Math.max(0, Math.min(1, valueToFrac(value)));
-    handle.style.bottom = `${frac * 100}%`;
-    handle.style.top = "auto";
-    handle.style.transform = "translateY(50%)";
-    handle.querySelector("span").textContent = `${roundBound(value)}${
-      level.unit ? ` ${level.unit}` : ""
-    }`;
-    handle.setAttribute("aria-valuenow", String(roundBound(value)));
-  }
-  drawHistogram();
-}
-
-// Push the window onto the volume and redraw. Both viewers share the volume
-// object, so the main panel follows the modal.
-function applyLevel() {
-  if (!level) return;
-  level.volume.cal_min = level.calMin;
-  level.volume.cal_max = level.calMax;
-  level.volume.hdr.cal_min = level.calMin;
-  level.volume.hdr.cal_max = level.calMax;
-  nvModal.updateGLVolume();
-  nvModal.drawScene();
+// The one place a display window is changed. Every control routes through here,
+// so the number inputs, both sets of handles, and the reset button cannot drift
+// apart in what they update. `null` leaves that bound alone.
+function setWindow(min, max) {
+  if (!shownOutput) return;
+  const vol = shownOutput.volume;
+  if (min !== null && Number.isFinite(min)) vol.cal_min = min;
+  if (max !== null && Number.isFinite(max)) vol.cal_max = max;
+  // Both the plain property and its header twin: different NiiVue paths read
+  // different ones (see `buildMapVolume`).
+  vol.hdr.cal_min = vol.cal_min;
+  vol.hdr.cal_max = vol.cal_max;
   nvOut.updateGLVolume();
   nvOut.drawScene();
-  $("cal-min").value = String(roundBound(level.calMin));
-  $("cal-max").value = String(roundBound(level.calMax));
-  updateMapColorbar();
-  paintLevel();
-}
-
-function beginLevelDrag(which, event) {
-  event.preventDefault();
-  const handle = $(which === "lo" ? "level-lo" : "level-hi");
-  const bar = $("level-bar");
-  handle.classList.add("dragging");
-  const move = (e) => {
-    const r = bar.getBoundingClientRect();
-    const frac = Math.max(0, Math.min(1, (r.bottom - e.clientY) / r.height));
-    const v = fracToValue(frac);
-    // The handles may not cross: a window needs a floor below its ceiling.
-    const gap = (level.dataMax - level.dataMin) / 200;
-    if (which === "lo") level.calMin = Math.min(v, level.calMax - gap);
-    else level.calMax = Math.max(v, level.calMin + gap);
-    applyLevel();
-  };
-  const up = () => {
-    handle.classList.remove("dragging");
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-  };
-  window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", up);
-}
-
-// Arrow keys nudge a handle, so the window is reachable without a pointer.
-function onLevelKey(which, event) {
-  if (!level) return;
-  const step = (level.dataMax - level.dataMin) / 100;
-  const delta = { ArrowUp: step, ArrowRight: step, ArrowDown: -step, ArrowLeft: -step }[
-    event.key
-  ];
-  if (delta === undefined) return;
-  event.preventDefault();
-  const gap = (level.dataMax - level.dataMin) / 200;
-  if (which === "lo") level.calMin = Math.min(level.calMin + delta, level.calMax - gap);
-  else level.calMax = Math.max(level.calMax + delta, level.calMin + gap);
-  applyLevel();
-}
-
-// Value under the pointer as it tracks up and down the bar.
-function onLevelHover(event) {
-  if (!level) return;
-  const bar = $("level-bar");
-  const r = bar.getBoundingClientRect();
-  const frac = Math.max(0, Math.min(1, (r.bottom - event.clientY) / r.height));
-  const readout = $("level-readout");
-  readout.hidden = false;
-  readout.style.bottom = `${frac * 100}%`;
-  readout.textContent = `${roundBound(fracToValue(frac))}${
-    level.unit ? ` ${level.unit}` : ""
-  }`;
-}
-
-// Hand the control a map: the histogram spans the data's own extent, which is
-// wider than the display window, so a window can be widened as well as narrowed.
-function openLevelFor(entry, values) {
-  const finite = [];
-  for (let i = 0; i < values.length; i++) {
-    if (Number.isFinite(values[i])) finite.push(values[i]);
+  if (nvModal && nvModal.volumes.length) {
+    nvModal.updateGLVolume();
+    nvModal.drawScene();
   }
-  if (finite.length === 0) {
-    level = null;
-    $("level").hidden = true;
-    return;
-  }
-  let dataMin = Math.min(...finite);
-  let dataMax = Math.max(...finite);
-  // Include the current window, so both handles are always reachable.
-  dataMin = Math.min(dataMin, entry.volume.cal_min);
-  dataMax = Math.max(dataMax, entry.volume.cal_max);
-  if (!(dataMax > dataMin)) dataMax = dataMin + 1;
-
-  level = {
-    volume: entry.volume,
-    name: entry.name,
-    unit: entry.unit,
-    dataMin,
-    dataMax,
-    calMin: entry.volume.cal_min,
-    calMax: entry.volume.cal_max,
-    bins: buildHistogram(values, dataMin, dataMax),
-  };
-  $("level").hidden = false;
-  // Match the canvas backing store to its laid-out size, or the bars stretch.
-  const canvas = $("level-hist");
-  const box = canvas.getBoundingClientRect();
-  canvas.width = Math.max(40, Math.round(box.width));
-  canvas.height = Math.max(80, Math.round(box.height));
-  paintLevel();
+  $("cal-min").value = String(roundBound(vol.cal_min));
+  $("cal-max").value = String(roundBound(vol.cal_max));
+  levelMain?.paint();
+  levelModal?.paint();
 }
 
 async function ensureModalViewer() {
@@ -1348,7 +1372,6 @@ async function openFileModal(path) {
   $("file-modal").hidden = false;
   $("file-modal-title").textContent = path;
   // An acquired image has no quantitative scale to level, unlike a fitted map.
-  level = null;
   $("level").hidden = true;
   await ensureModalViewer();
   for (const v of [...nvModal.volumes]) nvModal.removeVolume(v);
@@ -1705,7 +1728,7 @@ async function fitSlice() {
   // The top status line is prime real estate for every reader, but neither
   // the model summary nor "Fitted in Xs" matter there — both live beside the
   // frame-scrubbing note under the inputs viewer instead.
-  status("ready — press Fit slice");
+  status("Fitted", "ok");
   $("fit-timing").textContent = `Fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
   hideProgress();
   $("fit").disabled = false;
@@ -1723,32 +1746,11 @@ function seedCalRangeInputs(entry) {
 // this vendored build, with no vertical/right-side placement, so this reads
 // the real LUT NiiVue would have used (`nv.colormap(name)`, the same colours
 // `setColormap` painted the volume with) and lays it out ourselves.
+// The colour scale is drawn by the level controls themselves, which also own
+// the window's handles — one widget rather than a static bar beside a slider.
 function updateMapColorbar() {
-  const gradient = $("map-colorbar-gradient");
-  const labels = $("map-colorbar-labels");
-  if (!shownOutput) {
-    gradient.style.background = "none";
-    labels.replaceChildren();
-    return;
-  }
-  const lut = nvOut.colormap($("colormap").value || "gray");
-  const stops = [];
-  const nStops = 32;
-  for (let i = 0; i <= nStops; i++) {
-    const px = Math.round((i / nStops) * 255) * 4;
-    stops.push(`rgb(${lut[px]}, ${lut[px + 1]}, ${lut[px + 2]})`);
-  }
-  // Low value at the bottom, high at the top — the usual vertical-colorbar
-  // convention, matching the committed docsfig figures.
-  gradient.style.background = `linear-gradient(to top, ${stops.join(", ")})`;
-  const lo = shownOutput.volume.cal_min;
-  const hi = shownOutput.volume.cal_max;
-  labels.replaceChildren();
-  for (const v of [hi, (hi + lo) / 2, lo]) {
-    const span = document.createElement("span");
-    span.textContent = Number.isFinite(v) ? String(roundBound(v)) : "";
-    labels.append(span);
-  }
+  levelMain?.paint();
+  levelModal?.paint();
 }
 
 function showOutput(name) {
@@ -1764,6 +1766,9 @@ function showOutput(name) {
   nvOut.setColormap(entry.volume.id, cmapSelect.value || cmap);
   seedCalRangeInputs(entry);
   nvOut.drawScene();
+  // Rebuild the histogram for whichever map is now shown — each output has its
+  // own distribution, so the previous one's bins would misdescribe this window.
+  levelMain?.open(entry, lastMaps?.[entry.name] ?? []);
   updateMapColorbar();
   if (current?.lastVox) updateVoxelValue(current.lastVox.x, current.lastVox.y, current.lastVox.z);
 }
@@ -1780,25 +1785,12 @@ function onColormapChange() {
 // directly (the same fields NiiVue's own auto windowing sets), so the
 // colorbar — which reads off the volume — tracks the change for free.
 function applyCalRange() {
-  if (!shownOutput) return;
-  const min = Number($("cal-min").value);
-  const max = Number($("cal-max").value);
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return;
-  shownOutput.volume.cal_min = min;
-  shownOutput.volume.cal_max = max;
-  nvOut.updateGLVolume();
-  nvOut.drawScene();
-  updateMapColorbar();
+  setWindow(Number($("cal-min").value), Number($("cal-max").value));
 }
 
 function resetCalRange() {
   if (!shownOutput) return;
-  shownOutput.volume.cal_min = shownOutput.defaultCalMin;
-  shownOutput.volume.cal_max = shownOutput.defaultCalMax;
-  seedCalRangeInputs(shownOutput);
-  nvOut.updateGLVolume();
-  nvOut.drawScene();
-  updateMapColorbar();
+  setWindow(shownOutput.defaultCalMin, shownOutput.defaultCalMax);
 }
 
 function populateColormaps() {
@@ -2138,14 +2130,7 @@ async function main() {
   }
   $("files-tree").addEventListener("click", onFilesClick);
   $("file-modal-close").onclick = closeFileModal;
-  $("level-lo").addEventListener("pointerdown", (e) => beginLevelDrag("lo", e));
-  $("level-hi").addEventListener("pointerdown", (e) => beginLevelDrag("hi", e));
-  $("level-lo").addEventListener("keydown", (e) => onLevelKey("lo", e));
-  $("level-hi").addEventListener("keydown", (e) => onLevelKey("hi", e));
-  $("level-bar").addEventListener("pointermove", onLevelHover);
-  $("level-bar").addEventListener("pointerleave", () => {
-    $("level-readout").hidden = true;
-  });
+  levelMain = createLevelControl("mlevel");
   $("file-modal").addEventListener("click", (e) => {
     if (e.target === $("file-modal")) closeFileModal();
   });
