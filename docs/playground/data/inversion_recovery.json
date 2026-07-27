@@ -56,7 +56,11 @@
  "outputs": [
   {
    "name": "T1",
-   "unit": "s"
+   "unit": "s",
+   "display_range": [
+    0.0,
+    3.0
+   ]
   }
  ],
  "enums": [

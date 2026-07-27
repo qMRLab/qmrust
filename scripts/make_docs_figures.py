@@ -411,8 +411,10 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
         [r["role"] for r in model["measurement"]["roles"]] if named
         else [label_for(i) for i, _ in coll.volumes]
     )
+    # `display_range` is the model's declared window for this quantity, so a map
+    # is legible before anyone touches a slider; `None` leaves it to the data.
     outputs = [
-        {"name": o["name"], "unit": o["unit"]}
+        {"name": o["name"], "unit": o["unit"], "display_range": o.get("display_range")}
         for o in model["outputs"] if not o["diagnostic"]
     ]
     enums = model.get("enums", [])

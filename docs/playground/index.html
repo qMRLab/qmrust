@@ -6,6 +6,7 @@
     --bg:#eef1f4; --panel:#fff; --panel-2:#f5f7f9; --ink:#161b21; --ink-2:#455060;
     --muted:#7c8797; --line:#d6dde4; --accent:#0f9bab; --accent-ink:#0b7c8a;
     --good:#1f9d64; --bad:#c0503a; --field:#fff;
+    --rust:#b7410e;
     --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
     --sans: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     --shadow: 0 1px 2px rgba(20,30,45,.06), 0 10px 30px rgba(20,30,45,.07);
@@ -16,17 +17,20 @@
       --bg:#0b0e12; --panel:#141a21; --panel-2:#0f151b; --ink:#e7edf3; --ink-2:#a9b6c4;
       --muted:#6c7887; --line:#232c37; --accent:#38c0cf; --accent-ink:#5fd3e0;
       --good:#3ecb86; --bad:#e0765c; --field:#0e141a;
+      --rust:#e2703a;
     }
   }
   :root[data-theme="dark"] {
     --bg:#0b0e12; --panel:#141a21; --panel-2:#0f151b; --ink:#e7edf3; --ink-2:#a9b6c4;
     --muted:#6c7887; --line:#232c37; --accent:#38c0cf; --accent-ink:#5fd3e0;
     --good:#3ecb86; --bad:#e0765c; --field:#0e141a;
+    --rust:#e2703a;
   }
   :root[data-theme="light"] {
     --bg:#eef1f4; --panel:#fff; --panel-2:#f5f7f9; --ink:#161b21; --ink-2:#455060;
     --muted:#7c8797; --line:#d6dde4; --accent:#0f9bab; --accent-ink:#0b7c8a;
     --good:#1f9d64; --bad:#c0503a; --field:#fff;
+    --rust:#b7410e;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; height: 100%; }
@@ -133,11 +137,19 @@
   }
   .viewer-in-wrap { grid-column: 2; }
   .viewer-out-wrap { grid-column: 3; }
+  /* Both viewers get the same black box, whatever chrome sits below them.
+     Letting each one flex to fill its own card made the two panels' image areas
+     different heights, since the cards carry different controls — so the box is
+     sized here instead, once, and any leftover card height falls below it. */
+  .viewer-in-wrap, .viewer-out-wrap { justify-content: flex-start; }
+  /* One height for both black boxes, so the two panels' image areas match
+     however much chrome each card carries below them. */
+  :root { --viewer-h: min(52vh, 560px); }
   .curve-wrap { grid-column: 2 / span 2; grid-row: 2; }
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; grid-template-rows: none; }
     .recipe-card, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap { grid-column: 1; grid-row: auto; }
-    .viewer-in-wrap, .viewer-out-wrap { height: 46vh; min-height: 280px; }
+    :root { --viewer-h: min(46vh, 420px); }
   }
 
   /* recipe editor */
@@ -163,10 +175,34 @@
   }
   .yaml-pill.valid { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, var(--line)); }
   .yaml-pill.invalid { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
-  #cfg-yaml {
-    width: 100%; min-height: 360px; resize: vertical; font-size: 12px; line-height: 1.5;
-    background: var(--field);
+  /* Syntax highlighting for an editable textarea: a highlighted <pre> sits
+     behind a transparent-text textarea, the two sharing identical metrics and
+     scroll offset so the painted tokens line up under the real caret. The
+     textarea stays the single source of truth for text and editing. */
+  .yaml-edit { position: relative; }
+  .yaml-edit > #cfg-yaml, .yaml-edit > #yaml-hl {
+    font: 12px/1.5 var(--mono); padding: 6px 9px; border: 1px solid transparent;
+    border-radius: 9px; white-space: pre-wrap; overflow-wrap: break-word;
+    tab-size: 2; margin: 0;
   }
+  #yaml-hl {
+    position: absolute; inset: 0; overflow: auto; pointer-events: none;
+    background: var(--field); border-color: var(--line); color: var(--ink);
+  }
+  #cfg-yaml {
+    position: relative; width: 100%; min-height: 360px; resize: vertical;
+    background: transparent; color: transparent; caret-color: var(--ink);
+    border-color: var(--line);
+  }
+  #cfg-yaml::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+  /* highlight.js token classes, mapped onto this page's own palette rather than
+     shipping one of its themes — so the editor tracks light/dark with the rest. */
+  .hljs-comment { color: var(--good); font-style: italic; }
+  .hljs-attr { color: var(--accent-ink); }
+  .hljs-string { color: var(--rust); }
+  .hljs-number { color: var(--ink); font-weight: 600; }
+  .hljs-literal, .hljs-type { color: var(--bad); }
+  .hljs-bullet, .hljs-punctuation { color: var(--muted); }
 
   .form-fields { display: flex; flex-direction: column; gap: 10px; }
   .group {
@@ -215,7 +251,9 @@
   .viewer {
     position: relative; border-radius: 12px; overflow: hidden;
     background: #010409; margin: 0; width: 100%;
-    flex: 1 1 auto; min-height: 0;
+    /* Fixed rather than flex-grown: letting each viewer fill its own card made
+       the two image areas different heights (see `--viewer-h`). */
+    flex: 0 0 auto; height: var(--viewer-h); min-height: 0;
   }
   .viewer canvas { width: 100%; height: 100%; display: block; }
 
@@ -249,7 +287,7 @@
     background: none; border: 0; color: var(--muted); cursor: pointer;
     padding: 0 2px; font-size: 13px; line-height: 1; flex: 0 0 auto;
   }
-  .files-open:hover { color: var(--fg); }
+  .files-open:hover { color: var(--ink); }
 
   /* Skeleton placeholders, shown while a dataset is being fetched, extracted
      and resolved: the panel keeps the shape of what is coming instead of
@@ -283,6 +321,31 @@
     .viewer-skel::before { animation: none; opacity: 0.5; }
   }
 
+  /* Download ring, centred on the fitted-map skeleton: the one place with
+     nothing else to say while bytes are arriving. */
+  .dl-ring { position: absolute; width: 40%; max-width: 132px; aspect-ratio: 1; }
+  .dl-ring[hidden] { display: none; }
+  .dl-track, .dl-arc { fill: none; stroke-width: 6; }
+  .dl-track { stroke: var(--line); }
+  .dl-arc {
+    stroke: var(--rust); stroke-linecap: round;
+    /* 2πr for r=36, so dashoffset can be driven as a fraction of the whole. */
+    stroke-dasharray: 226.19; stroke-dashoffset: 226.19;
+    transform: rotate(-90deg); transform-origin: 50% 50%;
+    transition: stroke-dashoffset 0.15s linear;
+  }
+  .dl-pct {
+    position: absolute; font: 600 13px var(--mono); color: var(--rust);
+  }
+  .dl-pct[hidden] { display: none; }
+
+  .ghost-btn {
+    background: none; border: 1px solid var(--line); color: var(--ink-2);
+    border-radius: 6px; padding: 4px 9px; font-size: 12px; cursor: pointer;
+  }
+  .ghost-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-2); }
+  .ghost-btn:disabled { opacity: 0.45; cursor: default; }
+
   /* Single-file viewer, so inspecting a path costs neither a tab round-trip
      nor the tree's scroll position. */
   .modal {
@@ -300,15 +363,20 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
   }
   .modal-head button {
-    background: none; border: 0; color: var(--fg); cursor: pointer; font-size: 16px;
+    background: none; border: 0; color: var(--ink); cursor: pointer; font-size: 16px;
   }
 
   /* Fitted-map viewer + its colour-scale legend, side by side. NiiVue's own
      `isColorbar` only draws horizontally along the canvas's bottom edge in
      this vendored build, with no vertical/right-side placement, so this is a
      plain HTML/CSS bar built from the same LUT `nv.colormap()` returns. */
-  .viewer-row { display: flex; flex-direction: row; gap: 8px; flex: 1 1 auto; min-height: 0; }
-  .viewer-row .viewer { flex: 1 1 auto; }
+  .viewer-row {
+    display: flex; flex-direction: row; gap: 8px; min-height: 0;
+    flex: 0 0 auto; height: var(--viewer-h);
+  }
+  /* Inside the row the viewer shares width with the colour bar and takes the
+     row's full height, which is already `--viewer-h`. */
+  .viewer-row .viewer { flex: 1 1 auto; height: 100%; }
   .map-colorbar { display: flex; flex-direction: row; gap: 6px; flex-shrink: 0; width: 58px; }
   .map-colorbar-gradient {
     width: 16px; border-radius: 6px; border: 1px solid var(--line);
@@ -358,7 +426,10 @@
     <div id="form-view"><div id="form-fields" class="form-fields"></div></div>
     <div id="yaml-view" class="yaml-wrap" hidden>
       <span id="yaml-pill" class="yaml-pill valid">valid</span>
-      <textarea id="cfg-yaml" spellcheck="false"></textarea>
+      <div class="yaml-edit">
+        <pre id="yaml-hl" aria-hidden="true"></pre>
+        <textarea id="cfg-yaml" spellcheck="false"></textarea>
+      </div>
     </div>
     <p class="local-note">Edits are local to your browser — nothing is uploaded or saved.</p>
     <div id="fit-progress" class="fit-progress">
@@ -399,11 +470,21 @@
   <div class="viewer-out-wrap card">
     <div class="viewer-head">
       <h2 class="section-h" style="margin:0">Fitted map</h2>
+      <div class="seg" role="tablist" aria-label="Fitted map view">
+        <button id="tab-slice" class="active" role="tab" aria-selected="true">Slice</button>
+        <button id="tab-planes" role="tab" aria-selected="false">Planes</button>
+      </div>
     </div>
     <div class="viewer-row">
       <div class="viewer" id="viewer-out">
         <canvas id="gl-out"></canvas>
-        <div class="viewer-skel" id="skel-out" hidden></div>
+        <div class="viewer-skel" id="skel-out" hidden>
+          <svg class="dl-ring" id="dl-ring" viewBox="0 0 84 84" hidden aria-hidden="true">
+            <circle class="dl-track" cx="42" cy="42" r="36"></circle>
+            <circle class="dl-arc" id="dl-arc" cx="42" cy="42" r="36"></circle>
+          </svg>
+          <span class="dl-pct" id="dl-pct" hidden></span>
+        </div>
       </div>
       <div class="map-colorbar">
         <div class="map-colorbar-gradient" id="map-colorbar-gradient"></div>
@@ -413,6 +494,9 @@
     <div class="out-controls">
       <select id="output" hidden></select>
       <select id="colormap"></select>
+      <button id="open-map-modal" class="ghost-btn" type="button" disabled>
+        ⤢ planes
+      </button>
     </div>
     <div class="range-controls">
       <label>min <input type="number" id="cal-min" step="any"></label>

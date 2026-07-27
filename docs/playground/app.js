@@ -9,6 +9,8 @@
 import { Niivue, NVImage } from "./vendor/niivue.js";
 import { load as yamlLoad, dump as yamlDump } from "./vendor/js-yaml.js";
 import { unzipSync, gunzipSync } from "./vendor/fflate.js";
+import hljs from "./vendor/highlight-core.js";
+import hljsYaml from "./vendor/highlight-yaml.js";
 
 const $ = (id) => document.getElementById(id);
 const status = (m, isError = false) => {
@@ -106,6 +108,61 @@ async function loadBundle(name) {
 let sourcesCache = null;
 const datasetCache = {};
 
+// The download ring, on the fitted-map skeleton — the one panel with nothing
+// else to say while bytes arrive. `fraction` is null when the server sent no
+// `Content-Length`, in which case the ring stays hidden rather than animating a
+// number it cannot know.
+const RING_CIRCUMFERENCE = 2 * Math.PI * 36; // r=36, matching the SVG
+
+function setDownloadProgress(fraction) {
+  const ring = $("dl-ring");
+  const pct = $("dl-pct");
+  if (fraction === null) {
+    ring.hidden = true;
+    pct.hidden = true;
+    return;
+  }
+  ring.hidden = false;
+  pct.hidden = false;
+  const clamped = Math.max(0, Math.min(1, fraction));
+  $("dl-arc").style.strokeDashoffset = String(RING_CIRCUMFERENCE * (1 - clamped));
+  pct.textContent = `${Math.round(clamped * 100)}%`;
+}
+
+function hideDownloadProgress() {
+  setDownloadProgress(null);
+}
+
+// Read the body as a stream so progress is real rather than simulated. A
+// server that sends no length (or a browser without streams) still works — it
+// just gets no ring.
+async function fetchWithProgress(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url} failed (HTTP ${res.status})`);
+  const total = Number(res.headers.get("content-length")) || 0;
+  if (!res.body?.getReader || !total) {
+    return new Uint8Array(await res.arrayBuffer());
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let received = 0;
+  setDownloadProgress(0);
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    setDownloadProgress(received / total);
+  }
+  const out = new Uint8Array(received);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
+}
+
 // One loading stage, reported in both places a reader might be looking: the
 // navbar status and whichever skeleton is on screen.
 function stage(message) {
@@ -155,9 +212,7 @@ async function fetchDataset(name, meta) {
   const src = await loadSources();
   const url = `${src.base}/${meta.archive}${src.suffix}`;
   stage(`fetching ${meta.archive}…`);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`fetch ${url} failed (HTTP ${res.status})`);
-  const buf = new Uint8Array(await res.arrayBuffer());
+  const buf = await fetchWithProgress(url);
 
   stage(`extracting ${meta.archive} (${(buf.length / 1e6).toFixed(1)} MB)…`);
   let files;
@@ -385,6 +440,7 @@ function setYamlPill(valid) {
 function setEditorText(text) {
   editor.text = text;
   $("cfg-yaml").value = text;
+  paintYaml();
   try {
     editor.obj = yamlLoad(text);
     editor.valid = true;
@@ -394,6 +450,30 @@ function setEditorText(text) {
     editor.valid = false;
     setYamlPill(false);
   }
+}
+
+// ---------------------------------------------------------------------------
+// YAML highlighting, by highlight.js (vendored). A highlighted <pre> sits behind
+// a transparent-text textarea, the two sharing identical metrics and scroll
+// offset so the painted tokens line up under the real caret. The textarea stays
+// the single source of truth for text and editing, and `js-yaml` remains the
+// only thing that parses meaning — the `valid`/`invalid` pill comes from it.
+
+hljs.registerLanguage("yaml", hljsYaml);
+
+// Repaint the layer behind the textarea and keep the two scrolled together.
+function paintYaml() {
+  const ta = $("cfg-yaml");
+  // A trailing newline would collapse in the <pre>, shifting the last line.
+  $("yaml-hl").innerHTML = `${hljs.highlight(ta.value, { language: "yaml" }).value}\n`;
+  syncYamlScroll();
+}
+
+function syncYamlScroll() {
+  const ta = $("cfg-yaml");
+  const hl = $("yaml-hl");
+  hl.scrollTop = ta.scrollTop;
+  hl.scrollLeft = ta.scrollLeft;
 }
 
 function showTab(tab) {
@@ -487,13 +567,18 @@ function roundBound(v) {
 // Build a displayable NVImage for one output map from `flat` (C-order
 // `[nx,ny,nz]`, NaN outside the fit), reusing `template`'s header/orientation
 // (NVImage.zerosLike) rather than hand-rolling a NIfTI header.
-function buildMapVolume(template, flat, nx, ny, nz, name, unit) {
+function buildMapVolume(template, flat, nx, ny, nz, name, unit, displayRange) {
   const vol = NVImage.zerosLike(template, "float32");
   vol.hdr.dims = template.hdr.dims.slice();
   vol.hdr.dims[0] = 3;
   vol.hdr.dims[4] = 1;
   vol.nFrame4D = 1;
-  const [lo, hi] = percentileWindow(flat);
+  // The model's declared window for this quantity when it has one: a window
+  // derived from the data is only as good as the data, and an unmasked fit puts
+  // background noise in the same histogram as tissue. Falls back to a
+  // percentile window for outputs whose scale genuinely belongs to the data
+  // (an arbitrary-unit amplitude, say).
+  const [lo, hi] = displayRange ?? percentileWindow(flat);
   // Unfitted voxels (NaN — outside the mask, or a failed fit) must not read
   // as the *brightest* colour in the map, which is what an unclamped NaN
   // texel does here. Park them well below the display window so they clamp
@@ -654,10 +739,58 @@ function showLoading(note, expect = 12) {
 // Leaves whichever tab the reader is on selected, now that it has real content.
 function endLoading() {
   loading = false;
+  hideDownloadProgress();
   $("skel-in").hidden = true;
   $("skel-out").hidden = true;
   const onFiles = $("tab-files").classList.contains("active");
   showInputsTab(onFiles ? "files" : "viewer");
+}
+
+// Slice or multiplanar, for the fitted map. Only meaningful for a volumetric
+// map: a single-slice fit has no second or third plane, so the toggle disables
+// itself rather than offering a view that would show two empty strips.
+function showMapView(view) {
+  const planes = view === "planes";
+  $("tab-slice").classList.toggle("active", !planes);
+  $("tab-planes").classList.toggle("active", planes);
+  $("tab-slice").setAttribute("aria-selected", String(!planes));
+  $("tab-planes").setAttribute("aria-selected", String(planes));
+  nvOut.setSliceType(planes ? nvOut.sliceTypeMultiplanar : nvOut.sliceTypeAxial);
+  nvOut.drawScene();
+}
+
+// True when the fitted map has more than one slice to show.
+function mapIsVolumetric() {
+  return (current?.meta?.dims?.[2] ?? 1) > 1;
+}
+
+function syncMapViewControls() {
+  const volumetric = mapIsVolumetric();
+  const haveMap = outputVolumes.length > 0;
+  $("tab-planes").disabled = !volumetric;
+  $("tab-planes").title = volumetric
+    ? "Show all three planes"
+    : "This fit is a single slice — there are no other planes";
+  $("open-map-modal").disabled = !haveMap;
+  if (!volumetric) showMapView("slice");
+}
+
+// The fitted map in a modal, at a size the side-by-side layout cannot give it.
+// Reuses the same single NiiVue instance the file viewer uses, for the same
+// WebGL-context reason.
+async function openMapModal() {
+  const shown = outputVolumes.find((o) => o.name === shownOutput) ?? outputVolumes[0];
+  if (!shown) return;
+  $("file-modal").hidden = false;
+  $("file-modal-title").textContent = `${shown.name}${shown.unit ? ` [${shown.unit}]` : ""}`;
+  await ensureModalViewer();
+  for (const v of [...nvModal.volumes]) nvModal.removeVolume(v);
+  nvModal.addVolume(shown.volume);
+  nvModal.setSliceType(
+    mapIsVolumetric() ? nvModal.sliceTypeMultiplanar : nvModal.sliceTypeAxial,
+  );
+  nvModal.resizeListener();
+  nvModal.drawScene();
 }
 
 function roleLabel(role) {
@@ -785,6 +918,17 @@ function renderFilesError(message) {
 // contexts until the other viewers stopped rendering.
 let nvModal = null;
 
+async function ensureModalViewer() {
+  if (nvModal) return;
+  nvModal = new Niivue({
+    isResizeCanvas: true,
+    backColor: [0.02, 0.02, 0.03, 1],
+    loadingText: "",
+  });
+  await nvModal.attachTo("gl-modal");
+  nvModal.setHighResolutionCapable(true);
+}
+
 async function openFileModal(path) {
   if (!dataset?.files?.has(path)) {
     status(`no bytes held for "${path}"`, true);
@@ -792,15 +936,7 @@ async function openFileModal(path) {
   }
   $("file-modal").hidden = false;
   $("file-modal-title").textContent = path;
-  if (!nvModal) {
-    nvModal = new Niivue({
-      isResizeCanvas: true,
-      backColor: [0.02, 0.02, 0.03, 1],
-      loadingText: "",
-    });
-    await nvModal.attachTo("gl-modal");
-    nvModal.setHighResolutionCapable(true);
-  }
+  await ensureModalViewer();
   for (const v of [...nvModal.volumes]) nvModal.removeVolume(v);
   const volume = await volumeFromDataset(dataset.files, path, { colormap: "gray" });
   nvModal.addVolume(volume);
@@ -896,6 +1032,7 @@ async function loadModelFromBids(name, meta) {
   setFrameUi(nt, labels);
   current = { meta: bidsMeta, volume, maskU8, auxFlat, auxVolumes, frame: 0 };
   renderFiles();
+  syncMapViewControls();
   $("fit").disabled = false;
   for (const w of resolved.warnings) status(w, true);
   $("model-info").textContent =
@@ -1008,6 +1145,7 @@ async function loadModel(name) {
   // errors, "ready"), not a per-model fact that stays true until the next
   // model switch.
   $("model-info").textContent = `${meta.title}: ${nt} volumes, ${nx}×${ny}`;
+  syncMapViewControls();
   status(wasm ? "ready — press Fit slice" : "wasm unavailable — viewers still work, fitting does not");
 }
 
@@ -1126,7 +1264,7 @@ async function fitSlice() {
   for (const o of meta.outputs) {
     const flat = maps[o.name];
     if (!flat) continue;
-    const vol = buildMapVolume(volume, flat, nx, ny, nz, o.name, o.unit);
+    const vol = buildMapVolume(volume, flat, nx, ny, nz, o.name, o.unit, o.display_range);
     outputVolumes.push({
       name: o.name,
       unit: o.unit,
@@ -1154,6 +1292,7 @@ async function fitSlice() {
   $("fit-timing").textContent = `Fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
   hideProgress();
   $("fit").disabled = false;
+  syncMapViewControls();
   if (current.lastVox) plotVoxel(current.lastVox.x, current.lastVox.y, current.lastVox.z);
 }
 
@@ -1553,6 +1692,10 @@ async function main() {
   $("tab-yaml").onclick = () => showTab("yaml");
   $("tab-viewer").onclick = () => showInputsTab("viewer");
   $("tab-files").onclick = () => showInputsTab("files");
+  $("tab-slice").onclick = () => showMapView("slice");
+  $("tab-planes").onclick = () => showMapView("planes");
+  $("open-map-modal").onclick = openMapModal;
+  $("cfg-yaml").addEventListener("scroll", syncYamlScroll);
   $("files-tree").addEventListener("click", onFilesClick);
   $("file-modal-close").onclick = closeFileModal;
   $("file-modal").addEventListener("click", (e) => {

@@ -73,27 +73,51 @@
  "outputs": [
   {
    "name": "F",
-   "unit": ""
+   "unit": "",
+   "display_range": [
+    0.0,
+    0.25
+   ]
   },
   {
    "name": "kr",
-   "unit": "1/s"
+   "unit": "1/s",
+   "display_range": [
+    0.0,
+    60.0
+   ]
   },
   {
    "name": "R1f",
-   "unit": "1/s"
+   "unit": "1/s",
+   "display_range": [
+    0.0,
+    2.0
+   ]
   },
   {
    "name": "R1r",
-   "unit": "1/s"
+   "unit": "1/s",
+   "display_range": [
+    0.0,
+    2.0
+   ]
   },
   {
    "name": "T2f",
-   "unit": "s"
+   "unit": "s",
+   "display_range": [
+    0.0,
+    0.1
+   ]
   },
   {
    "name": "T2r",
-   "unit": "s"
+   "unit": "s",
+   "display_range": [
+    0.0,
+    2e-05
+   ]
   }
  ],
  "enums": [

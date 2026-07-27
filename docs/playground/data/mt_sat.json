@@ -26,15 +26,27 @@
  "outputs": [
   {
    "name": "MTSAT",
-   "unit": "%"
+   "unit": "%",
+   "display_range": [
+    0.0,
+    6.0
+   ]
   },
   {
    "name": "T1",
-   "unit": "s"
+   "unit": "s",
+   "display_range": [
+    0.0,
+    3.0
+   ]
   },
   {
    "name": "MTR",
-   "unit": "%"
+   "unit": "%",
+   "display_range": [
+    0.0,
+    60.0
+   ]
   }
  ],
  "enums": [],

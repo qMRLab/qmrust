@@ -75,6 +75,18 @@ pub struct ModelDoc {
     /// accepted by the model's own `validate_options` — enforced by
     /// `qmrust-cli`'s `catalog::tests::declared_enums_match_validate_options`.
     pub enums: &'static [(&'static str, &'static [&'static str])],
+    /// `(output_name, min, max)` — the physically sensible display window for
+    /// an output map, in that output's own unit.
+    ///
+    /// A window derived from the data alone is only as good as the data: an
+    /// unmasked fit puts background noise and failed voxels in the same
+    /// histogram as tissue, which stretches the scale until the anatomy is
+    /// flat grey. These are the ranges a reader of *this* quantity expects,
+    /// so a map is legible before anyone touches a slider. Each name must be
+    /// one of the model's `output_names()` — enforced by `qmrust-cli`'s
+    /// `catalog::tests::declared_display_ranges_name_real_outputs`. An output
+    /// with no entry falls back to a percentile window over its own values.
+    pub display_ranges: &'static [(&'static str, f64, f64)],
 }
 
 pub struct ModelEntry {
@@ -113,6 +125,11 @@ pub fn all() -> &'static [ModelEntry] {
                     sim: None,
                 },
                 enums: &[],
+                display_ranges: &[
+                    // MTR in healthy white matter sits near 40-50%; the window
+                    // spans grey matter to white without clipping either.
+                    ("MTR", 0.0, 60.0),
+                ],
             },
         },
         ModelEntry {
@@ -145,6 +162,13 @@ pub fn all() -> &'static [ModelEntry] {
                     sim: None,
                 },
                 enums: &[],
+                display_ranges: &[
+                    // MTsat is a few percent: ~5% in white matter, ~2% in grey.
+                    ("MTSAT", 0.0, 6.0),
+                    // T1 at 3T: ~0.8 s white matter, ~1.4 s grey, ~4 s CSF.
+                    ("T1", 0.0, 3.0),
+                    ("MTR", 0.0, 60.0),
+                ],
             },
         },
         ModelEntry {
@@ -176,6 +200,13 @@ pub fn all() -> &'static [ModelEntry] {
                     sim: None,
                 },
                 enums: &[("fit_type", &["exponential", "linear"])],
+                display_ranges: &[
+                    // T2 at 3T: ~0.07 s white matter, ~0.09 s grey; CSF far
+                    // longer, and left to clip rather than flatten the tissue.
+                    ("T2", 0.0, 0.15),
+                    // M0 is an arbitrary-unit amplitude, so its scale belongs
+                    // to the data and no fixed window can be right.
+                ],
             },
         },
         ModelEntry {
@@ -209,6 +240,7 @@ pub fn all() -> &'static [ModelEntry] {
                     sim: None,
                 },
                 enums: &[("method", &["magnitude", "complex"])],
+                display_ranges: &[("T1", 0.0, 3.0)],
             },
         },
         ModelEntry {
@@ -254,6 +286,17 @@ F &= M_{0r}/M_{0f}, \qquad k_f F = k_r
                     ("qmt_spgr.model", &["Ramani", "SledPikeRP"]),
                     ("qmt_spgr.lineshape", &["SuperLorentzian"]),
                     ("qmt_spgr.pulse.shape", &["gausshann"]),
+                ],
+                display_ranges: &[
+                    // Bound pool fraction, a fraction not a percent.
+                    ("F", 0.0, 0.25),
+                    // Exchange rate from bound to free pool.
+                    ("kr", 0.0, 60.0),
+                    ("R1f", 0.0, 2.0),
+                    ("R1r", 0.0, 2.0),
+                    ("T2f", 0.0, 0.1),
+                    // The bound pool's T2 is on the order of microseconds.
+                    ("T2r", 0.0, 2e-5),
                 ],
             },
         },

@@ -80,6 +80,9 @@ pub struct Output {
     pub bids_suffix: Option<String>,
     pub unit: Option<String>,
     pub diagnostic: bool,
+    /// The declared display window `[min, max]` in this output's unit, when the
+    /// model declares one; `None` leaves the scale to the data.
+    pub display_range: Option<[f64; 2]>,
 }
 
 #[derive(Serialize)]
@@ -151,18 +154,26 @@ fn card(entry: &ModelEntry, repo_root: &Path) -> Result<ModelCard> {
         .collect();
 
     let declared = model.bids_outputs();
+    let window = |name: &str| {
+        doc.display_ranges
+            .iter()
+            .find(|(out, _, _)| *out == name)
+            .map(|(_, lo, hi)| [*lo, *hi])
+    };
     let outputs = model
         .output_names()
         .into_iter()
         .map(
             |name| match declared.iter().find(|(out, _, _)| *out == name) {
                 Some((_, suffix, unit)) => Output {
+                    display_range: window(&name),
                     name,
                     bids_suffix: Some(suffix.to_string()),
                     unit: Some(unit.to_string()),
                     diagnostic: false,
                 },
                 None => Output {
+                    display_range: window(&name),
                     name,
                     bids_suffix: None,
                     unit: None,
@@ -414,6 +425,47 @@ mod tests {
             serde_yaml::Value::String(parts.last().unwrap().to_string()),
             serde_yaml::Value::String(new_value.to_string()),
         );
+    }
+
+    /// A display window that names an output the model does not produce is a
+    /// window that silently never applies, leaving that map on a data-derived
+    /// scale while the declaration suggests otherwise. Names must also be the
+    /// model's own output names — not BIDS suffixes, which differ (`MTSAT` vs
+    /// `MTsat`) and would match nothing.
+    #[test]
+    fn declared_display_ranges_name_real_outputs() {
+        for entry in qmrust_core::registry::all() {
+            let card = card(entry, Path::new("../..")).expect(entry.name);
+            let names: Vec<&str> = card.outputs.iter().map(|o| o.name.as_str()).collect();
+            for (out, lo, hi) in entry.doc.display_ranges {
+                assert!(
+                    names.contains(out),
+                    "{}: display_ranges names '{out}', which is not one of its outputs {names:?}",
+                    entry.name,
+                );
+                assert!(
+                    lo < hi,
+                    "{}: display range for '{out}' is empty or inverted ({lo}, {hi})",
+                    entry.name,
+                );
+            }
+            // And the window must reach the catalog, so the playground sees it.
+            for o in &card.outputs {
+                let declared = entry
+                    .doc
+                    .display_ranges
+                    .iter()
+                    .any(|(n, _, _)| n == &o.name);
+                assert_eq!(
+                    declared,
+                    o.display_range.is_some(),
+                    "{}: '{}' declared={declared} but catalog carries {:?}",
+                    entry.name,
+                    o.name,
+                    o.display_range,
+                );
+            }
+        }
     }
 
     #[test]

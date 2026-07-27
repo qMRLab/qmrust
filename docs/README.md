@@ -103,8 +103,31 @@ curl -sSL -o <repo>/docs/playground/vendor/fflate.js \
 shasum -a 256 <repo>/docs/playground/vendor/fflate.js
 ```
 
-MIT licensed. Only `unzipSync`/`strFromU8` are used; `.nii.gz` entries are
+MIT licensed. Only `unzipSync`/`gunzipSync` are used; `.nii.gz` entries are
 handed to NiiVue still gzip-compressed, which reads them directly.
+
+### Vendored highlight.js
+
+`playground/vendor/highlight-{core,yaml}.js` are highlight.js's own prebuilt ESM
+modules, taken verbatim — they colour the recipe editor. Like `fflate` these need
+no bundling step, so the vendored copies are byte-verifiable against upstream:
+
+```bash
+V=11.10.0
+curl -sSL -o <repo>/docs/playground/vendor/highlight-core.js \
+  https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@$V/es/core.min.js
+curl -sSL -o <repo>/docs/playground/vendor/highlight-yaml.js \
+  https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@$V/es/languages/yaml.min.js
+# expected:
+#   224f718d73f37e1b85fbab697b57d75dc2013e57bc0485a8fa8534070f3e543a  highlight-core.js
+#   61dffad838f9a8cca2e2479e1e14c193d604de02bf5d177528e7f8b82c2626c2  highlight-yaml.js
+shasum -a 256 <repo>/docs/playground/vendor/highlight-*.js
+```
+
+BSD-3-Clause. No highlight.js theme is shipped: `index.html` maps the `hljs-*`
+token classes onto the page's own palette, so the editor follows light/dark with
+everything else. Highlighting is presentation only — `js-yaml` remains the sole
+parser, and the editor's `valid`/`invalid` pill comes from it.
 
 `playground.md`'s iframe references the app with a relative `src`
 (`./playground/index.html`). MyST does not rewrite iframe paths the way it

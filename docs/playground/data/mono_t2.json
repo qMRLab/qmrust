@@ -139,11 +139,16 @@
  "outputs": [
   {
    "name": "T2",
-   "unit": "s"
+   "unit": "s",
+   "display_range": [
+    0.0,
+    0.15
+   ]
   },
   {
    "name": "M0",
-   "unit": ""
+   "unit": "",
+   "display_range": null
   }
  ],
  "enums": [
