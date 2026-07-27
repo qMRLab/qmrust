@@ -1361,6 +1361,35 @@ function renderFilesError(message) {
 // modal), so both behave identically rather than drifting apart.
 
 const HIST_BINS = 64;
+// How much of the distribution the scale spans. An unmasked fit puts division-by-
+// near-zero voxels in the same array as tissue — the MTsat map of a maskless
+// dataset runs to ±1e16 — and a domain taken from raw min/max makes the whole
+// control useless: every real value collapses onto one pixel, so both handles
+// land on the same spot and a drag resolves to ~1e16.
+const DOMAIN_PCT = 1;
+// Enough samples for a stable percentile without sorting a million-voxel map.
+const DOMAIN_SAMPLES = 60000;
+// How far past the window the bar reaches, as a multiple of the window's span.
+// A percentile range alone is not enough: MTsat's robust range is still ~200 %
+// wide against a 6 % window, which would leave the two handles a few pixels
+// apart. Scaling to the window keeps the bar usable whatever the data does,
+// while the robust range stays a hard outer bound so a drag can never reach 1e16.
+const DOMAIN_MARGIN = 2;
+
+// The `[lo, hi]` the scale should span: a robust percentile range of the finite
+// values, estimated from a strided sample rather than a full sort.
+function robustDomain(values) {
+  const stride = Math.max(1, Math.floor(values.length / DOMAIN_SAMPLES));
+  const sample = [];
+  for (let i = 0; i < values.length; i += stride) {
+    const v = values[i];
+    if (Number.isFinite(v)) sample.push(v);
+  }
+  if (sample.length === 0) return null;
+  sample.sort((a, b) => a - b);
+  const at = (pct) => sample[Math.min(sample.length - 1, Math.floor((pct / 100) * sample.length))];
+  return [at(DOMAIN_PCT), at(100 - DOMAIN_PCT)];
+}
 
 // Bin the finite values. NaN (unfitted) voxels are excluded: a histogram of "no
 // data" says nothing about the window.
@@ -1371,10 +1400,11 @@ function buildHistogram(values, lo, hi) {
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
     if (!Number.isFinite(v)) continue;
+    // Clamped, not discarded: the domain is a robust range, so real values do
+    // lie beyond it, and the end bins should show that they exist.
     let b = Math.floor(((v - lo) / span) * HIST_BINS);
-    // The maximum lands exactly on `HIST_BINS`; it belongs in the top bin.
-    if (b === HIST_BINS) b = HIST_BINS - 1;
-    if (b < 0 || b >= HIST_BINS) continue;
+    if (b < 0) b = 0;
+    if (b >= HIST_BINS) b = HIST_BINS - 1;
     bins[b] += 1;
   }
   return bins;
@@ -1384,8 +1414,15 @@ function buildHistogram(values, lo, hi) {
 // `-lo`, `-hi`, `-readout`.
 function createLevelControl(prefix) {
   const el = (part) => $(`${prefix}-${part}`);
-  // { dataMin, dataMax, bins, unit } — the data behind the current histogram.
+  // { dataMin, dataMax, bins, unit, values } — the data behind the current
+  // histogram. `values` is retained so the domain can be re-derived when the
+  // window changes; it is the caller's array, not a copy.
   let data = null;
+
+  // Re-derive the domain for the current window, over the same values.
+  function rescale() {
+    if (data && shownOutput) build(shownOutput, data.values);
+  }
 
   const frac = (v) => (v - data.dataMin) / (data.dataMax - data.dataMin || 1);
   const value = (f) => data.dataMin + f * (data.dataMax - data.dataMin);
@@ -1470,6 +1507,10 @@ function createLevelControl(prefix) {
       handle.classList.remove("dragging");
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      // Re-derive the domain now the window has settled, so dragging a handle to
+      // the end of the bar and letting go opens up more range rather than
+      // stopping there. Rescaling mid-drag would move the bar under the cursor.
+      rescale();
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -1568,6 +1609,48 @@ function createLevelControl(prefix) {
     el("readout").hidden = true;
   });
 
+  // Derive the domain and histogram for one map, then paint.
+  //
+  // The domain is *not* the data's raw extent. An unmasked fit puts
+  // division-by-near-zero voxels in the same array as tissue — MTsat on a
+  // maskless dataset runs to ±1e16 — and a raw domain collapses every real value
+  // onto one pixel, which put both handles on the same spot and made a drag
+  // resolve to 1e16. Instead the bar reaches a couple of window-spans either
+  // side of the current window, bounded by a robust percentile range: usable
+  // whatever the data does, and never reachable to absurd values.
+  function build(entry, values) {
+    const robust = robustDomain(values);
+    if (!robust) {
+      data = null;
+      drawHistogram();
+      return;
+    }
+    const [rLo, rHi] = robust;
+    const wLo = entry.volume.cal_min;
+    const wHi = entry.volume.cal_max;
+    const margin = Math.max(wHi - wLo, Number.EPSILON) * DOMAIN_MARGIN;
+    // Never narrower than the window itself, or a handle would sit off the bar.
+    let dataMin = Math.min(wLo, Math.max(rLo, wLo - margin));
+    let dataMax = Math.max(wHi, Math.min(rHi, wHi + margin));
+    if (!(dataMax > dataMin)) dataMax = dataMin + 1;
+
+    data = {
+      dataMin,
+      dataMax,
+      unit: entry.unit,
+      values,
+      bins: buildHistogram(values, dataMin, dataMax),
+    };
+    // Match the canvas backing store to its laid-out size, or the bars stretch.
+    const canvas = el("hist");
+    const box = canvas.getBoundingClientRect();
+    if (box.width > 0) {
+      canvas.width = Math.round(box.width);
+      canvas.height = Math.max(80, Math.round(box.height));
+    }
+    paint();
+  }
+
   return {
     // Mark where a value sits on the scale — `null` clears the marker. This is
     // what ties a point in the image to a number on the colour bar.
@@ -1588,41 +1671,9 @@ function createLevelControl(prefix) {
       dot.querySelector("span").textContent =
         `${roundBound(v)}${data.unit ? ` ${data.unit}` : ""}`;
     },
-    // The histogram spans the *data's* extent, wider than the display window, so
-    // a window can be widened as well as narrowed.
-    open(entry, values) {
-      // One pass, no intermediate array and no spread: a whole-brain map runs to
-      // millions of voxels, and `Math.min(...values)` on that many arguments
-      // overflows the call stack.
-      let dataMin = Infinity;
-      let dataMax = -Infinity;
-      let n = 0;
-      for (let i = 0; i < values.length; i++) {
-        const v = values[i];
-        if (!Number.isFinite(v)) continue;
-        if (v < dataMin) dataMin = v;
-        if (v > dataMax) dataMax = v;
-        n += 1;
-      }
-      if (n === 0) {
-        data = null;
-        drawHistogram();
-        return;
-      }
-      // Include the current window, so both handles are always reachable.
-      dataMin = Math.min(dataMin, entry.volume.cal_min);
-      dataMax = Math.max(dataMax, entry.volume.cal_max);
-      if (!(dataMax > dataMin)) dataMax = dataMin + 1;
-      data = { dataMin, dataMax, unit: entry.unit, bins: buildHistogram(values, dataMin, dataMax) };
-      // Match the canvas backing store to its laid-out size, or bars stretch.
-      const canvas = el("hist");
-      const box = canvas.getBoundingClientRect();
-      if (box.width > 0) {
-        canvas.width = Math.round(box.width);
-        canvas.height = Math.max(80, Math.round(box.height));
-      }
-      paint();
-    },
+    // Rebuilding is `build` below, defined before the returned object so
+    // `rescale` can reach it too.
+    open: (entry, values) => build(entry, values),
     paint,
     hasData: () => data !== null,
   };
