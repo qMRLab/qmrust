@@ -180,6 +180,11 @@
   .seg {
     display: inline-flex; background: var(--panel-2); border: 1px solid var(--line);
     border-radius: 999px; padding: 3px; gap: 2px;
+    /* `inline-flex` is not enough inside a column flex container, where the
+       default cross-axis stretch would widen the pill to the card. The viewer
+       heads are row containers, so only the recipe's needed this — but stating
+       it here keeps every toggle the same shape wherever one is placed. */
+    align-self: flex-start;
   }
   .seg button {
     border: none; background: transparent; border-radius: 999px; padding: 5px 14px;
