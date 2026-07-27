@@ -548,7 +548,9 @@
 
   .voxel-value { color: var(--ink-2); font: 12px var(--mono); margin: 2px 0 8px; }
 
-  #curve { width: 100%; height: 170px; display: block; }
+  /* ECharts renders into this container and follows its size, so the height
+     has to be real rather than intrinsic. */
+  #curve { width: 100%; height: 210px; }
   #curve-note { color: var(--muted); margin-top: 4px; }
 
   @media (prefers-reduced-motion: reduce) {
@@ -689,7 +691,7 @@
   <div class="curve-wrap card">
     <h2 class="section-h" id="voxel-title">Voxel — click either viewer</h2>
     <div id="voxel-value" class="voxel-value"></div>
-    <canvas id="curve"></canvas>
+    <div id="curve"></div>
     <div id="curve-note"></div>
   </div>
 

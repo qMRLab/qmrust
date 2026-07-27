@@ -129,6 +129,30 @@ token classes onto the page's own palette, so the editor follows light/dark with
 everything else. Highlighting is presentation only — `js-yaml` remains the sole
 parser, and the editor's `valid`/`invalid` pill comes from it.
 
+### Vendored ECharts
+
+`playground/vendor/echarts.js` is Apache ECharts' own prebuilt ESM bundle, taken
+verbatim — it draws the single-voxel fit chart. Like the others it needs no
+bundling step:
+
+```bash
+curl -sSL -o <repo>/docs/playground/vendor/echarts.js \
+  https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.esm.min.js
+# expected: 342d276d87314bfd6af8c4dd48b5cbbf8cb556642aa8a770d740057dbc996588
+shasum -a 256 <repo>/docs/playground/vendor/echarts.js
+```
+
+Apache-2.0, and ~1 MB — by far the largest vendored dependency after NiiVue, so
+it should earn its place. It replaced a hand-drawn canvas plot (axes, ticks and
+labels included) rather than being added beside one, and it is the intended home
+for the charts that follow: a voxelwise scatter, and per-ROI box plots. No ECharts
+theme is shipped; each chart's colours come from this page's CSS custom
+properties, so charts follow light/dark like everything else.
+
+The window/level histogram and colour bar are deliberately *not* ECharts: they
+are small bespoke controls wired directly to NiiVue's colormap and to the
+volume's display window, which a charting library would only get in the way of.
+
 `playground.md`'s iframe references the app with a relative `src`
 (`./playground/index.html`). MyST does not rewrite iframe paths the way it
 rewrites images, and book-theme's client router serves `/playground` without

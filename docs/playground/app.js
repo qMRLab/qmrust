@@ -11,6 +11,7 @@ import { load as yamlLoad, dump as yamlDump } from "./vendor/js-yaml.js";
 import { unzipSync, gunzipSync } from "./vendor/fflate.js";
 import hljs from "./vendor/highlight-core.js";
 import hljsYaml from "./vendor/highlight-yaml.js";
+import * as echarts from "./vendor/echarts.js";
 
 const $ = (id) => document.getElementById(id);
 // The navbar status line. `kind` colours and weights it, because the two states
@@ -1999,9 +2000,7 @@ function populateColormaps() {
 }
 
 function clearCurve() {
-  const c = $("curve");
-  const ctx = c.getContext("2d");
-  ctx.clearRect(0, 0, c.width, c.height);
+  curveChart?.clear();
 }
 
 // Value of the currently-displayed map at `(x, y, z)`, shown beside the
@@ -2120,105 +2119,102 @@ function tickIndices(n, max) {
   return [...idx].sort((a, b) => a - b);
 }
 
-function drawCurve(measured, predicted, labels = []) {
-  const c = $("curve");
-  const dpr = window.devicePixelRatio || 1;
-  const w = c.clientWidth || 380;
-  const h = c.clientHeight || 170;
-  c.width = w * dpr;
-  c.height = h * dpr;
-  const ctx = c.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-  const dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-  const axisColor = dark ? "#30363d" : "#c7ced6";
-  const textColor = dark ? "#9aa7b2" : "#7c8797";
-  // Left/bottom padding sized for the axis value/label text this function
-  // now draws (unlabelled axes previously just looked like an empty box).
-  const padL = 52;
-  const padR = 14;
-  const padT = 20;
-  const padB = 32;
-  const all = measured.concat(predicted).filter(Number.isFinite);
-  const lo = all.length ? Math.min(...all) : 0;
-  const hi = all.length ? Math.max(...all) : 1;
-  const hiSafe = hi > lo ? hi : lo + 1;
-  const sx = (k) => padL + (k / Math.max(1, measured.length - 1)) * (w - padL - padR);
-  const sy = (v) => h - padB - ((v - lo) / (hiSafe - lo)) * (h - padT - padB);
+// The single-voxel fit, as an interactive chart: measured points against the
+// model's own forward curve. ECharts owns the axes, tooltip, legend and zoom, so
+// none of that is hand-drawn here — and its theming is mapped onto this page's
+// palette rather than shipping one of its own.
+//
+// `predicted[k]` may be NaN for a volume the fit excluded (mono_t2's dropped
+// first echo, say); ECharts renders those as gaps, which is the honest picture.
+let curveChart = null;
 
-  ctx.strokeStyle = axisColor;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(padL, padT);
-  ctx.lineTo(padL, h - padB);
-  ctx.lineTo(w - padR, h - padB);
-  ctx.stroke();
-
-  // Y-axis: signal value at the top, bottom and midpoint of the plotted range.
-  ctx.fillStyle = textColor;
-  ctx.font = "10px -apple-system, BlinkMacSystemFont, sans-serif";
-  ctx.textAlign = "right";
-  ctx.textBaseline = "middle";
-  for (const v of [hi, (hi + lo) / 2, lo]) {
-    ctx.fillText(v.toPrecision(3), padL - 6, sy(v));
+function ensureCurveChart() {
+  const host = $("curve");
+  if (!host) return null;
+  if (!curveChart) {
+    curveChart = echarts.init(host, null, { renderer: "canvas" });
+    // The card is flex-sized, so the chart has to follow it rather than assume
+    // the size it was created at.
+    new ResizeObserver(() => curveChart.resize()).observe(host);
   }
-  ctx.textAlign = "left";
-  ctx.save();
-  ctx.translate(12, (padT + h - padB) / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.textAlign = "center";
-  ctx.fillText("signal", 0, 0);
-  ctx.restore();
-
-  // X-axis: a thinned set of each plotted volume's own identity label (the
-  // same strings the inputs viewer's frame scrubber shows), not a bare index
-  // — so a reader can tell *which* acquisition each point is, without this
-  // being keyed to any model-specific parameter name.
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  for (const k of tickIndices(measured.length, 6)) {
-    const label = labels[k] ?? String(k);
-    const short = label.length > 14 ? `${label.slice(0, 13)}…` : label;
-    ctx.fillText(short, sx(k), h - padB + 6);
-  }
-
-  // Forward-model line: skip (break the path across) any volume the fit's
-  // own measurement excluded (NaN here — see `alignSeriesToVolumes`), rather
-  // than drawing a misleading straight line through a point that was never
-  // predicted.
-  ctx.strokeStyle = "#f0883e";
-  ctx.lineWidth = 1.6;
-  ctx.beginPath();
-  let drawing = false;
-  predicted.forEach((v, k) => {
-    if (!Number.isFinite(v)) {
-      drawing = false;
-      return;
-    }
-    if (drawing) ctx.lineTo(sx(k), sy(v));
-    else ctx.moveTo(sx(k), sy(v));
-    drawing = true;
-  });
-  ctx.stroke();
-
-  ctx.fillStyle = "#38c0cf";
-  measured.forEach((v, k) => {
-    if (!Number.isFinite(v)) return;
-    ctx.beginPath();
-    ctx.arc(sx(k), sy(v), 2.8, 0, 2 * Math.PI);
-    ctx.fill();
-  });
-
-  ctx.fillStyle = textColor;
-  ctx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
-  ctx.textBaseline = "alphabetic";
-  ctx.textAlign = "left";
-  ctx.fillText("● measured", padL, 14);
-  ctx.fillText("— forward model", padL + 78, 14);
+  return curveChart;
 }
 
-// The map value under the cursor, marked on the colour scale. Uses NiiVue's own
-// screen-to-voxel conversion, so it agrees with what the viewer is drawing.
+function drawCurve(measured, predicted, labels = []) {
+  const chart = ensureCurveChart();
+  if (!chart) return;
+  const style = getComputedStyle(document.documentElement);
+  const ink = style.getPropertyValue("--ink").trim();
+  const muted = style.getPropertyValue("--muted").trim();
+  const line = style.getPropertyValue("--line").trim();
+  const accent = style.getPropertyValue("--accent").trim();
+  const rust = style.getPropertyValue("--rust").trim();
+  const panel = style.getPropertyValue("--panel").trim();
+
+  chart.setOption(
+    {
+      animation: false,
+      grid: { left: 56, right: 16, top: 28, bottom: 40, containLabel: false },
+      legend: {
+        data: ["measured", "fitted"],
+        top: 0,
+        textStyle: { color: muted, fontSize: 11 },
+        inactiveColor: line,
+      },
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: panel,
+        borderColor: line,
+        textStyle: { color: ink, fontSize: 11 },
+        // The x label is the volume's own identity (e.g. "InversionTime=0.65"),
+        // so a reader sees which acquisition a point belongs to.
+        axisPointer: { type: "cross", label: { backgroundColor: muted } },
+      },
+      xAxis: {
+        type: "category",
+        data: labels.length ? labels : measured.map((_, k) => String(k + 1)),
+        axisLine: { lineStyle: { color: line } },
+        axisLabel: { color: muted, fontSize: 10, hideOverlap: true },
+        axisTick: { lineStyle: { color: line } },
+      },
+      yAxis: {
+        type: "value",
+        scale: true,
+        name: "signal",
+        nameTextStyle: { color: muted, fontSize: 10, align: "right" },
+        axisLine: { lineStyle: { color: line } },
+        axisLabel: { color: muted, fontSize: 10 },
+        splitLine: { lineStyle: { color: line, opacity: 0.45 } },
+      },
+      // Drag to zoom into a subset of the acquisition axis; useful for a
+      // 30-echo series where the interesting part is the first few.
+      dataZoom: [
+        { type: "inside", zoomOnMouseWheel: "shift", moveOnMouseWheel: false },
+      ],
+      series: [
+        {
+          name: "measured",
+          type: "scatter",
+          symbolSize: 7,
+          itemStyle: { color: accent },
+          data: measured.map((v) => (Number.isFinite(v) ? v : null)),
+        },
+        {
+          name: "fitted",
+          type: "line",
+          smooth: false,
+          showSymbol: false,
+          connectNulls: false,
+          lineStyle: { color: rust, width: 2 },
+          itemStyle: { color: rust },
+          data: predicted.map((v) => (Number.isFinite(v) ? v : null)),
+        },
+      ],
+    },
+    { notMerge: true },
+  );
+}
+
 function onMapHover(event) {
   if (!shownOutput || !current) return;
   const nv = event.currentTarget === nvModal?.canvas ? nvModal : nvOut;
