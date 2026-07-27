@@ -120,7 +120,8 @@
       45deg, rgba(255, 255, 255, 0.35) 0 10px, transparent 10px 20px
     );
     background-size: 28px 28px;
-    transition: width 0.15s linear;
+    /* No transition: the last step must land in the frame it is set, or the
+       reset that follows the fit overtakes it and 100% never renders. */
   }
   .fit-progress-bar.active { animation: fit-progress-stripes 0.9s linear infinite; }
   @keyframes fit-progress-stripes {
@@ -296,6 +297,40 @@
   }
   .viewer-head select { font-size: 12px; padding: 4px 8px; }
   .frame-row { display: flex; align-items: center; gap: 8px; flex: 1; margin-top: 8px; }
+  #frame {
+    -webkit-appearance: none; appearance: none;
+    flex: 1 1 auto; height: 18px; padding: 0; border: 0; background: none;
+    cursor: pointer;
+  }
+  #frame:disabled { cursor: default; opacity: 0.5; }
+  /* `--fill` is set from the value, so the coloured part reaches the right edge
+     at the last frame rather than stopping at the thumb's inset. */
+  #frame::-webkit-slider-runnable-track {
+    height: 6px; border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      var(--accent) 0 var(--fill, 0%),
+      var(--panel-2) var(--fill, 0%) 100%
+    );
+    border: 1px solid var(--line);
+  }
+  #frame::-moz-range-track {
+    height: 6px; border-radius: 999px; background: var(--panel-2);
+    border: 1px solid var(--line);
+  }
+  #frame::-moz-range-progress { height: 6px; border-radius: 999px; background: var(--accent); }
+  #frame::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; margin-top: -5px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--panel); box-shadow: var(--shadow);
+  }
+  #frame::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--panel);
+  }
+  #frame:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
   .frame-row input[type=range] { flex: 1; min-width: 90px; accent-color: var(--accent); }
   .frame-label { color: var(--muted); min-width: 8em; text-align: right; font-size: 12px; }
   .viewer {

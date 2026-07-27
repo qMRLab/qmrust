@@ -819,12 +819,22 @@ function sizeViewers() {
   nvOut.resizeListener();
 }
 
+// The track's coloured portion, as a percentage. A single-volume series has no
+// range to travel, so it reads as full rather than empty.
+function syncFrameFill() {
+  const slider = $("frame");
+  const max = Number(slider.max);
+  const pct = max > 0 ? (Number(slider.value) / max) * 100 : 100;
+  slider.style.setProperty("--fill", `${pct}%`);
+}
+
 function setFrameUi(nt, labels) {
   const slider = $("frame");
   slider.max = String(Math.max(0, nt - 1));
   slider.value = "0";
   slider.disabled = nt <= 1;
   $("frame-label").textContent = labels[0] ?? "";
+  syncFrameFill();
 }
 
 // ---------------------------------------------------------------------------
@@ -1951,6 +1961,7 @@ function onFrameChange() {
   current.frame = t;
   nvIn.setFrame4D(current.volume.id, t);
   $("frame-label").textContent = current.meta.labels[t] ?? "";
+  syncFrameFill();
   syncFilesHighlight();
 }
 
@@ -2026,6 +2037,10 @@ async function fitVolumeWithProgress(nx, ny, nz, nt, data, maskU8, auxFlat) {
     setProgress((rowEnd / nx) * 100);
     await nextFrame();
   }
+  // The loop's last block already set 100%, but the caller resets the bar as soon
+  // as it returns — so give that value a frame of its own to actually render.
+  setProgress(100);
+  await nextFrame();
   return maps ?? {};
 }
 
@@ -2461,6 +2476,7 @@ async function main() {
     current.frame = frame;
     $("frame").value = String(frame);
     $("frame-label").textContent = current.meta.labels[frame] ?? "";
+    syncFrameFill();
     syncFilesHighlight();
   };
 
