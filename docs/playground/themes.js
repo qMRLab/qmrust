@@ -11,8 +11,8 @@
 // token. `scripts/check_theme_contrast.mjs` asserts they agree both ways.
 export const THEMES = [
   { id: "patina", label: "Patina" },
-  { id: "oxide", label: "Oxide" },
-  { id: "clinical", label: "Clinical" },
+  { id: "oxide", label: "Verdigris" },
+  { id: "clinical", label: "Cliché" },
 ];
 
 const DEFAULT_FAMILY = "patina";

@@ -183,19 +183,25 @@ function wireTheme() {
   // page's own toggle can change it later with no click here.
   onThemeChange(() => {
     select.value = document.documentElement.dataset.theme;
-    $("theme-mode").textContent = document.documentElement.dataset.mode === "dark" ? "☾" : "☀";
+    const dark = document.documentElement.dataset.mode === "dark";
+    $("mode-dark").classList.toggle("active", dark);
+    $("mode-light").classList.toggle("active", !dark);
   });
   select.onchange = (e) => setFamily(e.target.value);
-  $("theme-mode").onclick = () =>
+  const toggleMode = () =>
     setMode(document.documentElement.dataset.mode === "dark" ? "light" : "dark");
+  $("mode-light").onclick = toggleMode;
+  $("mode-dark").onclick = toggleMode;
 }
 
 // The model picker, the recipe editor, and Fit.
 function wireRecipeControls() {
   $("model").onchange = (e) => loadModel(e.target.value);
   $("fit").onclick = fitSlice;
-  $("tab-form").onclick = () => showTab("form");
-  $("tab-yaml").onclick = () => showTab("yaml");
+  const toggleRecipeView = () =>
+    showTab($("tab-form").classList.contains("active") ? "yaml" : "form");
+  $("tab-form").onclick = toggleRecipeView;
+  $("tab-yaml").onclick = toggleRecipeView;
   $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
   $("cfg-yaml").addEventListener("scroll", syncYamlScroll);
 }
@@ -207,8 +213,10 @@ const WHEEL_STEP_THRESHOLD = 100;
 
 // The inputs viewer: its tabs, the frame slider, and wheel-to-scrub.
 function wireInputsControls() {
-  $("tab-viewer").onclick = () => showInputsTab("viewer");
-  $("tab-files").onclick = () => showInputsTab("files");
+  const toggleInputsView = () =>
+    showInputsTab($("tab-viewer").classList.contains("active") ? "files" : "viewer");
+  $("tab-viewer").onclick = toggleInputsView;
+  $("tab-files").onclick = toggleInputsView;
   $("frame").oninput = onFrameChange;
   $("files-tree").addEventListener("click", onFilesClick);
 
@@ -246,8 +254,14 @@ function wireInputsControls() {
 function wireMapControls() {
   $("output").onchange = (e) => showOutput(e.target.value);
   $("colormap").onchange = onColormapChange;
-  $("tab-slice").onclick = () => showMapView("slice");
-  $("tab-planes").onclick = () => showMapView("planes");
+  // Planes is disabled on a single-slice fit, so the pair stops being a toggle:
+  // there is no second state to reach.
+  const toggleMapView = () => {
+    if ($("tab-planes").disabled) return;
+    showMapView($("tab-slice").classList.contains("active") ? "planes" : "slice");
+  };
+  $("tab-slice").onclick = toggleMapView;
+  $("tab-planes").onclick = toggleMapView;
   $("open-map-modal").onclick = openMapModal;
   $("cal-reset").onclick = resetCalRange;
   $("roi-toggle").onclick = toggleRoi;
