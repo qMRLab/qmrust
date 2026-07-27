@@ -265,14 +265,23 @@
   .skel-name { flex: 1 1 auto; }
   .skel-role { flex: 0 0 auto; width: 96px; }
   .skel-dir { height: 11px; width: 40%; margin: 10px 2px 4px; }
-  /* Fills the viewer region while its images load, so the card does not sit
-     as an empty black rectangle. */
-  .viewer-skeleton {
-    flex: 1 1 auto; min-height: 0; border-radius: 12px;
+  /* Overlays its viewer rather than replacing it, so the card keeps its exact
+     size while data loads — a viewer that resizes mid-load reflows the page.
+     `.viewer` is already `position: relative`. */
+  .viewer-skel {
+    position: absolute; inset: 0; background: #010409;
     display: flex; align-items: center; justify-content: center;
-    background: #010409; color: var(--muted); font-size: 12px;
   }
-  .viewer-skeleton[hidden] { display: none; }
+  .viewer-skel[hidden] { display: none; }
+  /* A slice-shaped block, standing in for the image that is coming. */
+  .viewer-skel::before {
+    content: ""; width: 62%; aspect-ratio: 1; max-height: 76%;
+    border-radius: 12%; background: var(--panel-2);
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .viewer-skel::before { animation: none; opacity: 0.5; }
+  }
 
   /* Single-file viewer, so inspecting a path costs neither a tab round-trip
      nor the tree's scroll position. */
@@ -368,9 +377,9 @@
         <button id="tab-files" role="tab" aria-selected="false">Files</button>
       </div>
     </div>
-    <div class="viewer" id="viewer-in"><canvas id="gl-in"></canvas></div>
-    <div class="viewer-skeleton" id="viewer-skeleton" hidden>
-      <span id="viewer-skeleton-note">loading…</span>
+    <div class="viewer" id="viewer-in">
+      <canvas id="gl-in"></canvas>
+      <div class="viewer-skel" id="skel-in" hidden></div>
     </div>
     <div class="files-panel" id="files-view" hidden>
       <div class="files-summary" id="files-summary"></div>
@@ -392,7 +401,10 @@
       <h2 class="section-h" style="margin:0">Fitted map</h2>
     </div>
     <div class="viewer-row">
-      <div class="viewer" id="viewer-out"><canvas id="gl-out"></canvas></div>
+      <div class="viewer" id="viewer-out">
+        <canvas id="gl-out"></canvas>
+        <div class="viewer-skel" id="skel-out" hidden></div>
+      </div>
       <div class="map-colorbar">
         <div class="map-colorbar-gradient" id="map-colorbar-gradient"></div>
         <div class="map-colorbar-labels" id="map-colorbar-labels"></div>

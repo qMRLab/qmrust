@@ -110,10 +110,9 @@ const datasetCache = {};
 // navbar status and whichever skeleton is on screen.
 function stage(message) {
   status(message);
-  if (loading) {
-    $("viewer-skeleton-note").textContent = message;
-    $("files-summary").textContent = message;
-  }
+  // The files panel's own header doubles as the loading caption; the viewers
+  // carry no text, only their shimmer.
+  if (loading) $("files-summary").textContent = message;
 }
 
 // Compact number for a label: drops trailing zeros so 0.35 reads as 0.35 and
@@ -614,12 +613,10 @@ function showInputsTab(tab) {
   $("tab-files").classList.toggle("active", !isViewer);
   $("tab-viewer").setAttribute("aria-selected", String(isViewer));
   $("tab-files").setAttribute("aria-selected", String(!isViewer));
-  // While loading, the skeletons own the viewer region; flipping tabs must not
-  // reveal a canvas with nothing in it yet.
-  $("viewer-in").hidden = !isViewer || loading;
+  $("viewer-in").hidden = !isViewer;
   $("files-view").hidden = isViewer;
-  $("viewer-skeleton").hidden = !(isViewer && loading);
   // The canvas was display:none while hidden, so its GL viewport is stale.
+  // Skip while loading: the skeleton is over it and there is nothing to resize.
   if (isViewer && !loading) sizeViewers();
 }
 
@@ -628,9 +625,11 @@ function showInputsTab(tab) {
 // stale list or an empty black canvas. `expect` is the file count if known.
 function showLoading(note, expect = 12) {
   loading = true;
-  $("viewer-skeleton-note").textContent = note;
-  $("viewer-skeleton").hidden = false;
-  $("viewer-in").hidden = true;
+  // Both viewers shimmer: the fitted map has nothing to show until a fit runs,
+  // and during a load it has no dataset to run against either. The overlays sit
+  // inside their viewers, so neither card changes size.
+  $("skel-in").hidden = false;
+  $("skel-out").hidden = false;
   const tree = $("files-tree");
   tree.replaceChildren();
   $("files-summary").textContent = note;
@@ -655,7 +654,8 @@ function showLoading(note, expect = 12) {
 // Leaves whichever tab the reader is on selected, now that it has real content.
 function endLoading() {
   loading = false;
-  $("viewer-skeleton").hidden = true;
+  $("skel-in").hidden = true;
+  $("skel-out").hidden = true;
   const onFiles = $("tab-files").classList.contains("active");
   showInputsTab(onFiles ? "files" : "viewer");
 }
