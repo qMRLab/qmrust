@@ -1327,7 +1327,12 @@ function createLevelControl(prefix) {
   }
   for (const which of ["lo", "hi"]) {
     el(which).querySelector("span").addEventListener("pointerdown", (e) => {
+      // `stopPropagation` keeps the handle's drag from starting; `preventDefault`
+      // is what makes the edit survive — without it the gesture's default action
+      // moves focus to the handle (it is `tabindex=0`), which blurs the new input
+      // and commits it before a key can be typed.
       e.stopPropagation();
+      e.preventDefault();
       editBound(which);
     });
   }
@@ -1342,6 +1347,23 @@ function createLevelControl(prefix) {
   });
 
   return {
+    // Mark where a value sits on the scale — `null` clears the marker. This is
+    // what ties a point in the image to a number on the colour bar.
+    mark(v) {
+      const dot = el("dot");
+      if (!data || v === null || !Number.isFinite(v)) {
+        dot.hidden = true;
+        return;
+      }
+      const f = frac(v);
+      // Outside the data's own extent there is no place on the bar for it.
+      if (f < 0 || f > 1) {
+        dot.hidden = true;
+        return;
+      }
+      dot.hidden = false;
+      dot.style.bottom = `${f * 100}%`;
+    },
     // The histogram spans the *data's* extent, wider than the display window, so
     // a window can be widened as well as narrowed.
     open(entry, values) {
@@ -1522,6 +1544,8 @@ async function ensureModalViewer() {
   });
   await nvModal.attachTo("gl-modal");
   nvModal.setHighResolutionCapable(true);
+  nvModal.canvas.addEventListener("mousemove", onMapHover);
+  nvModal.canvas.addEventListener("mouseleave", clearMapHover);
 }
 
 async function openFileModal(path) {
@@ -2175,6 +2199,33 @@ function drawCurve(measured, predicted, labels = []) {
   ctx.fillText("— forward model", padL + 78, 14);
 }
 
+// The map value under the cursor, marked on the colour scale. Uses NiiVue's own
+// screen-to-voxel conversion, so it agrees with what the viewer is drawing.
+function onMapHover(event) {
+  if (!shownOutput || !current) return;
+  const nv = event.currentTarget === nvModal?.canvas ? nvModal : nvOut;
+  // CSS pixels relative to the canvas, which is what NiiVue's own pointer
+  // handling feeds `canvasPos2frac` — no devicePixelRatio scaling.
+  const rect = nv.canvas.getBoundingClientRect();
+  const frac = nv.canvasPos2frac([event.clientX - rect.left, event.clientY - rect.top]);
+  // `canvasPos2frac` reports a negative first component when the cursor is not
+  // over a slice at all (the gaps in a multiplanar view, say).
+  if (!frac || frac[0] < 0) {
+    levelMain?.mark(null);
+    levelModal?.mark(null);
+    return;
+  }
+  const [x, y, z] = nv.frac2vox(frac);
+  const v = shownOutput.volume.getValue(x, y, z, 0);
+  levelMain?.mark(Number.isFinite(v) ? v : null);
+  levelModal?.mark(Number.isFinite(v) ? v : null);
+}
+
+function clearMapHover() {
+  levelMain?.mark(null);
+  levelModal?.mark(null);
+}
+
 function onLocation(loc) {
   if (!current || !loc?.vox) return;
   const [x, y, z] = loc.vox.map((v) => Math.round(v));
@@ -2292,6 +2343,8 @@ async function main() {
   $("roi-clear").onclick = clearRoi;
   // Recompute after each stroke, so the numbers track the region as it is drawn.
   nvOut.onDrawingChanged = renderRoiStats;
+  nvOut.canvas.addEventListener("mousemove", onMapHover);
+  nvOut.canvas.addEventListener("mouseleave", clearMapHover);
 
   // Wheel-to-scrub, alongside the existing slider: a reader hovering the
   // inputs viewer steps through frames without reaching for the slider,

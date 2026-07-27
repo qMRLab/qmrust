@@ -496,6 +496,15 @@
     white-space: nowrap; pointer-events: none;
   }
   .level-readout[hidden] { display: none; }
+  /* Where the voxel under the cursor sits on the scale — the link between a
+     place in the image and a number on the colour bar. */
+  .level-dot {
+    position: absolute; left: 50%; width: 13px; height: 13px; border-radius: 50%;
+    background: transparent; border: 3px solid #fff;
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55);
+    transform: translate(-50%, 50%); pointer-events: none;
+  }
+  .level-dot[hidden] { display: none; }
 
   /* Fitted-map viewer + its colour-scale legend, side by side. NiiVue's own
      `isColorbar` only draws horizontally along the canvas's bottom edge in
@@ -640,6 +649,7 @@
                aria-label="Display maximum"><span></span></div>
           <div class="level-handle" id="mlevel-lo" role="slider" tabindex="0"
                aria-label="Display minimum"><span></span></div>
+          <div class="level-dot" id="mlevel-dot" hidden></div>
           <div class="level-readout" id="mlevel-readout" hidden></div>
         </div>
       </div>
@@ -686,6 +696,7 @@
                aria-label="Display maximum"><span></span></div>
           <div class="level-handle" id="level-lo" role="slider" tabindex="0"
                aria-label="Display minimum"><span></span></div>
+          <div class="level-dot" id="level-dot" hidden></div>
           <div class="level-readout" id="level-readout" hidden></div>
         </div>
       </div>
