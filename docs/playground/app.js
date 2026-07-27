@@ -120,6 +120,67 @@ function applyCrosshairColor() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Tooltips for the panel info buttons. One element, moved and refilled — a
+// native `title` cannot be shown without the browser's ~1s delay, and these
+// should appear the moment a reader asks.
+
+let tipEl = null;
+
+function showTip(anchor) {
+  const text = anchor.dataset.tip;
+  if (!text) return;
+  if (!tipEl) {
+    tipEl = document.createElement("div");
+    tipEl.className = "tip";
+    tipEl.setAttribute("role", "tooltip");
+    document.body.append(tipEl);
+  }
+  tipEl.textContent = text;
+  tipEl.hidden = false;
+  // Measure after filling, then place: below the icon by default, flipped above
+  // when there is no room, and clamped so it never runs off either edge.
+  const a = anchor.getBoundingClientRect();
+  const t = tipEl.getBoundingClientRect();
+  const margin = 8;
+  let left = a.left + a.width / 2 - t.width / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - t.width - margin));
+  const below = a.bottom + 6;
+  const top = below + t.height + margin > window.innerHeight ? a.top - t.height - 6 : below;
+  tipEl.style.left = `${Math.round(left)}px`;
+  tipEl.style.top = `${Math.round(top)}px`;
+}
+
+function hideTip() {
+  if (tipEl) tipEl.hidden = true;
+}
+
+// Delegated, so info buttons added later need no wiring. Focus and blur are
+// covered too, for readers who tab rather than hover.
+function wireTips() {
+  for (const [event, fn] of [
+    ["pointerenter", (e) => showTip(e.target)],
+    ["pointerleave", hideTip],
+    ["focusin", (e) => showTip(e.target)],
+    ["focusout", hideTip],
+  ]) {
+    document.addEventListener(
+      event,
+      (e) => {
+        const info = e.target instanceof Element ? e.target.closest(".info") : null;
+        if (!info) return;
+        fn({ ...e, target: info });
+      },
+      true,
+    );
+  }
+  // A tooltip must not outlive the thing it describes scrolling away.
+  window.addEventListener("scroll", hideTip, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideTip();
+  });
+}
+
 async function loadWasm() {
   try {
     const mod = await import("./pkg/qmrust_wasm.js");
@@ -2300,6 +2361,7 @@ async function main() {
   nvIn.setHighResolutionCapable(true);
   nvOut.setHighResolutionCapable(true);
   applyCrosshairColor();
+  wireTips();
   // ...and again if the reader's system flips theme, since the token changes.
   window
     .matchMedia?.("(prefers-color-scheme: dark)")
