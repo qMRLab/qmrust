@@ -92,6 +92,34 @@ const nvOut = new Niivue({
   loadingText: "",
 });
 
+// A CSS custom property as NiiVue's 0..1 RGBA. Reading the token rather than
+// hardcoding a hex keeps the viewers on the same palette as the charts, and
+// following light/dark with everything else.
+function cssColorToRgba(token, alpha = 1) {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  // A CSS-resolved colour comes back as `rgb(...)`/`rgba(...)`; a raw hex token
+  // does not, so handle both.
+  const hex = raw.match(/^#([0-9a-f]{6})$/i);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, alpha];
+  }
+  const nums = raw.match(/[\d.]+/g);
+  if (!nums || nums.length < 3) return [1, 0, 0, alpha];
+  return [nums[0] / 255, nums[1] / 255, nums[2] / 255, alpha];
+}
+
+// Every viewer's crosshair in the charts' accent colour, so a reader reads the
+// image and the plots as one instrument.
+function applyCrosshairColor() {
+  const rgba = cssColorToRgba("--rust");
+  for (const nv of [nvIn, nvOut, nvModal]) {
+    if (!nv) continue;
+    nv.setCrosshairColor(rgba);
+    nv.drawScene();
+  }
+}
+
 async function loadWasm() {
   try {
     const mod = await import("./pkg/qmrust_wasm.js");
@@ -1554,6 +1582,7 @@ async function ensureModalViewer() {
   });
   await nvModal.attachTo("gl-modal");
   nvModal.setHighResolutionCapable(true);
+  nvModal.setCrosshairColor(cssColorToRgba("--rust"));
   nvModal.canvas.addEventListener("mousemove", onMapHover);
   nvModal.canvas.addEventListener("mouseleave", clearMapHover);
 }
@@ -2272,6 +2301,11 @@ async function main() {
   // keeps the backing store matched to `devicePixelRatio` once this is set.
   nvIn.setHighResolutionCapable(true);
   nvOut.setHighResolutionCapable(true);
+  applyCrosshairColor();
+  // ...and again if the reader's system flips theme, since the token changes.
+  window
+    .matchMedia?.("(prefers-color-scheme: dark)")
+    .addEventListener?.("change", applyCrosshairColor);
   populateColormaps();
 
   // Synced crosshairs both ways, so dragging in either viewer moves the
