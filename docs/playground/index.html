@@ -38,6 +38,10 @@
     background: var(--bg); color: var(--ink); font: 13px/1.5 var(--sans);
     padding: 14px;
     display: flex; flex-direction: column;
+    /* The app owns exactly one viewport and never scrolls as a page: every panel
+       that can outgrow its box scrolls internally instead. `dvh` rather than
+       `vh` so mobile browser chrome does not push the bottom off-screen. */
+    height: 100dvh; overflow: hidden;
   }
   h1, h2, h3 { font-family: var(--sans); }
   code, pre, textarea, input, select, .mono { font-family: var(--mono); }
@@ -135,9 +139,10 @@
   .layout {
     display: grid;
     grid-template-columns: 380px 1fr 1fr;
-    /* Row 1 is the fixed card height below, not a stretch share: leaving it to
-       `1fr` let the three cards end up three different heights. */
-    grid-template-rows: auto auto;
+    /* Proportional rows with a zero minimum: they always divide the height the
+       grid is given, so the layout cannot sum past the viewport however short it
+       is. A fixed height for either row is what used to overflow. */
+    grid-template-rows: minmax(0, 1fr) minmax(0, 0.44fr);
     gap: 14px;
     align-items: stretch;
     flex: 1 1 auto;
@@ -147,9 +152,9 @@
      start`), so a model with a deeply-nested recipe scrolls internally
      instead of the card stretching to the (now viewport-filling) viewer
      row's height and sitting mostly empty. */
-  /* One fixed height for the two viewer cards, so their black boxes line up. */
-  :root { --row1-h: min(58vh, 580px); }
-  .viewer-in-wrap, .viewer-out-wrap { height: var(--row1-h); }
+  /* The viewer cards fill their row rather than declaring a height, so the two
+     black boxes match because the cards match — and neither can overflow. */
+  .viewer-in-wrap, .viewer-out-wrap { min-height: 0; }
   /* The left column is one cell spanning both rows: the recipe grows to fill
      whatever the viewers and curve leave, Fit sits between it and the
      bring-your-own-data panel, and that panel stays at the bottom. */
@@ -188,14 +193,25 @@
      and a foot that grows with its text would put the two viewers back at
      different heights. Sized to fit two wrapped lines of each note. */
   .viewer-foot { height: var(--foot-h); flex: 0 0 auto; overflow: hidden; }
-  .curve-wrap { grid-column: 2 / span 2; grid-row: 2; }
+  .curve-wrap {
+    grid-column: 2 / span 2; grid-row: 2;
+    display: flex; flex-direction: column; min-height: 0;
+  }
   .drop-wrap { flex: 0 0 auto; }
+  @media (max-height: 620px) {
+    body { height: auto; min-height: 100dvh; overflow: auto; }
+    .layout { grid-template-rows: auto auto; }
+    .viewer-in-wrap, .viewer-out-wrap { height: 58vh; min-height: 300px; }
+    #curve { height: 200px; flex: 0 0 auto; }
+  }
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; grid-template-rows: none; }
     .left-col, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap {
       grid-column: 1; grid-row: auto;
     }
-    :root { --row1-h: 62vh; }
+    body { height: auto; min-height: 100dvh; overflow: auto; }
+    .viewer-in-wrap, .viewer-out-wrap { height: 62vh; min-height: 300px; }
+    #curve { height: 200px; flex: 0 0 auto; }
   }
 
   /* recipe editor */
@@ -645,9 +661,9 @@
 
   .voxel-value { color: var(--ink-2); font: 12px var(--mono); margin: 2px 0 8px; }
 
-  /* ECharts renders into this container and follows its size, so the height
-     has to be real rather than intrinsic. */
-  #curve { width: 100%; height: 210px; }
+  /* ECharts follows this container's size (a ResizeObserver in `app.js` calls
+     its `resize`), so the container flexes and the chart tracks it. */
+  #curve { width: 100%; flex: 1 1 auto; min-height: 0; }
   #curve-note { color: var(--muted); margin-top: 4px; }
 
   @media (prefers-reduced-motion: reduce) {
