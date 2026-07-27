@@ -538,9 +538,9 @@ def main(argv=None):
             print(f"  bundle: {h}x{w} (downsampled {factor}x, {n_probes} probes)")
 
     if args.bundle_slice:
-        # The index lists the models a payload was actually written for — read
-        # back from what this run produced, not from every `.json` in the
-        # directory, which also holds non-payload files (`sources.json`).
+        # The index lists catalog models with a payload present, driven by the
+        # catalog's own model names rather than by globbing every `.json` in
+        # the directory, which also holds non-payload files (`sources.json`).
         data_dir = args.repo_root / "docs" / "playground" / "data"
         names = sorted(
             m["name"] for m in models if (data_dir / f"{m['name']}.json").exists()

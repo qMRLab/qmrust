@@ -1,6 +1,6 @@
 {
  "_comment": "Where the playground fetches full BIDS datasets from. Each model's payload JSON names its own archive (ds-<lowercased BIDS suffix>.zip); this file says only which host and record serves them, so adding a model needs no edit here. Built and zipped by scripts/make_bids_examples.sh --zip.",
- "_url_form": "Must be Zenodo's /api/ content URL. The human-facing /records/<id>/files/<name>?download=1 form sends no Access-Control-Allow-Origin and is blocked by the browser; the /api/ form sends 'ACAO: *'. Verified in a real browser, not just from headers.",
+ "_url_form": "Must be Zenodo's /api/ content URL. The human-facing /records/<id>/files/<name>?download=1 form sends no Access-Control-Allow-Origin and is blocked by the browser; the /api/ form sends 'ACAO: *'.",
  "host": "zenodo",
  "record": "21611552",
  "doi": "10.5281/zenodo.21611552",

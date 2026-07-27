@@ -190,36 +190,6 @@ pub fn resolve_bids(
     Ok(out)
 }
 
-/// Walk a real dataset directory into the path→bytes shape [`resolve_bids`]
-/// takes. Native-only convenience for tests and desktop callers; a browser
-/// builds the same map from an unzipped archive or a dropped directory.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn read_dataset_dir(root: &std::path::Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
-    fn walk(
-        dir: &std::path::Path,
-        root: &std::path::Path,
-        out: &mut Vec<(String, Vec<u8>)>,
-    ) -> std::io::Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let path = entry?.path();
-            if path.is_dir() {
-                walk(&path, root, out)?;
-            } else {
-                let rel = path
-                    .strip_prefix(root)
-                    .expect("walked under root")
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                out.push((rel, std::fs::read(&path)?));
-            }
-        }
-        Ok(())
-    }
-    let mut out = Vec::new();
-    walk(root, root, &mut out)?;
-    Ok(out)
-}
-
 /// Emit per-volume identities in the encoding `fit_volume`'s `volume_ids_json`
 /// reads: role names for a `Named` measurement, param-row objects for a
 /// `Series` one.

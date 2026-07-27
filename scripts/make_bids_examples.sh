@@ -194,14 +194,19 @@ if [ -d "$PHANTOM_ANAT" ] && [ -s "$PHANTOM_B1" ]; then
   # correction needs a sequence-simulation artifact self-calibrated on the
   # dataset itself; `recipes/bids/mt_sat_b1corr_config.yaml` names it by the
   # relative path `fitvalues.yaml`, resolved from the working directory, so it
-  # is produced there and archived with the dataset afterwards.
+  # is produced there and moved into `derivatives/preprocessed` — an input the
+  # corrected fit consumes, not one of its output maps, so it belongs in the
+  # zipped archive rather than the excluded `derivatives/qmrust` tree.
   "$BIN" mtsat-b1 --seq recipes/mtsat_b1_seq.yaml \
     --bids-dir "$OUT/ds-mts-b1" --out fitvalues.yaml
   "$BIN" fit --bids-dir "$OUT/ds-mts-b1" \
     --config recipes/bids/mt_sat_b1corr_config.yaml \
     --output-dir "$OUT/ds-mts-b1/derivatives"
   assert_maps "$OUT/ds-mts-b1" MTsat T1map MTRmap
-  mv fitvalues.yaml "$OUT/ds-mts-b1/derivatives/qmrust/sub-01/anat/sub-01_fitvalues.yaml"
+  FITVALUES="$OUT/ds-mts-b1/derivatives/preprocessed/sub-01/sub-01_fitvalues.yaml"
+  mkdir -p "$(dirname "$FITVALUES")"
+  mv fitvalues.yaml "$FITVALUES"
+  test -s "$FITVALUES" || { echo "MISSING or empty: $FITVALUES" >&2; exit 1; }
 else
   echo "Skipping ds-mts-b1: no phantom at $PHANTOM_ANAT (+ $PHANTOM_B1)."
   echo "  Set QMRUST_MTS_B1_PHANTOM/QMRUST_MTS_B1_SUBJECT to build it."

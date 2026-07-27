@@ -826,20 +826,6 @@ pub fn collect_mtsat_r1_b1(bids_dir: &Path) -> Result<Vec<(f64, f64, f64)>> {
     Ok(out)
 }
 
-/// Locate a single input file for a collection by matching its full grouping
-/// `identity` (every entity the dataset groups by) plus `extra` constraints
-/// (the declared BIDS suffix, and any entity the model says indexes the input)
-/// against the whole dataset `table` — raw tree and every `derivatives/`
-/// pipeline alike. `None` when nothing matches; an error when several do, so an
-/// ambiguous input is surfaced rather than silently chosen. Nothing here is
-/// model- or dataset-specific: the model supplies `extra`, the collection
-/// supplies `identity`, and `table_filter` does the rest.
-/// How to locate the brain mask for a fit, declared in `--config` under a
-/// `mask:` key. `suffix` is the BIDS suffix (default `mask`); every other field
-/// is an entity constraint (`desc: brain`) that disambiguates which mask to use
-/// when a dataset holds several. Absent `mask:` means no masking — a mask is
-/// never guessed, because a dataset can carry many (brain, tissue, lesion, …)
-/// and auto-picking one is ill-posed.
 /// Load the aux maps and mask `rust_bids::resolve_input_paths` selected for one
 /// collection. Selection (which file is which input, and the ambiguity and
 /// required-but-missing errors) lives in `rust-bids`; this is only the reading
@@ -929,6 +915,36 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// Walk a real dataset directory into the path→bytes shape
+    /// `qmrust_wasm::bids::resolve_bids` takes, so the in-memory (browser)
+    /// resolution path can be exercised against the same on-disk fixture the
+    /// native path reads directly.
+    fn read_dataset_dir(root: &std::path::Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
+        fn walk(
+            dir: &std::path::Path,
+            root: &std::path::Path,
+            out: &mut Vec<(String, Vec<u8>)>,
+        ) -> std::io::Result<()> {
+            for entry in std::fs::read_dir(dir)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    walk(&path, root, out)?;
+                } else {
+                    let rel = path
+                        .strip_prefix(root)
+                        .expect("walked under root")
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    out.push((rel, std::fs::read(&path)?));
+                }
+            }
+            Ok(())
+        }
+        let mut out = Vec::new();
+        walk(root, root, &mut out)?;
+        Ok(out)
     }
 
     /// Clean IR signal `a + b*exp(-ti/t1)`, matching the fixture the fitting
@@ -1836,7 +1852,7 @@ mod tests {
         let disk = rust_bids::collections_for(&fs, &bids_cfg, "IRT1").unwrap();
 
         // (b) In memory, the way the browser does it.
-        let files = qmrust_wasm::bids::read_dataset_dir(&bids_dir).unwrap();
+        let files = read_dataset_dir(&bids_dir).unwrap();
         let mem = qmrust_wasm::bids::resolve_bids(files, recipe, None).unwrap();
 
         assert_eq!(mem.len(), disk.len(), "collection count");
