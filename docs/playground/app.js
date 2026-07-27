@@ -21,7 +21,7 @@ import {
   syncFrameFill,
 } from "./inputs.js";
 import {
-  applyCrosshairColor,
+  applyViewerTheme,
   onColormapChange,
   populateColormaps,
   resetCalRange,
@@ -29,11 +29,12 @@ import {
   showOutput,
   sizeViewers,
 } from "./viewers.js";
-import { createLevelControl } from "./level.js";
 import { clearRoi, renderRoiStats, toggleRoi } from "./roi.js";
-import { clearMapHover, onLocation, onMapHover, resizeCurve } from "./curve.js";
+import { clearMapHover, onLocation, onMapHover, redrawCurve, resizeCurve } from "./curve.js";
 import { closeFileModal, closeJsonModal, openMapModal } from "./modal.js";
 import { onBrowse, onDrop } from "./drop.js";
+import { THEMES, initTheme, onThemeChange, setFamily, setMode } from "./themes.js";
+import { createLevelControl, repaintLevels } from "./level.js";
 import { fitSlice } from "./fit.js";
 import { loadModel } from "./model.js";
 
@@ -133,11 +134,7 @@ function setUpViewers() {
   // matched to `devicePixelRatio` once this is set.
   nvIn.setHighResolutionCapable(true);
   nvOut.setHighResolutionCapable(true);
-  applyCrosshairColor();
-  // Re-apply if the system flips theme, since the colour token changes.
-  window
-    .matchMedia?.("(prefers-color-scheme: dark)")
-    .addEventListener?.("change", applyCrosshairColor);
+  applyViewerTheme();
   populateColormaps();
 
   // Synced crosshairs both ways, so dragging in either viewer moves the other;
@@ -159,6 +156,40 @@ function setUpViewers() {
     syncFrameFill();
     syncFilesHighlight();
   };
+}
+
+// The theme picker: a family, plus a light/dark toggle that follows the docs
+// page until the reader overrides it.
+//
+// The three repaints live here rather than in `themes.js`: which canvases,
+// charts and controls exist is this page's business, not the theme registry's.
+// Each seam already existed for its own reasons; a theme change is the only
+// caller that needs all three at once.
+function wireTheme() {
+  onThemeChange(() => {
+    applyViewerTheme();
+    repaintLevels();
+    redrawCurve();
+  });
+  const select = $("theme-family");
+  for (const { id, label } of THEMES) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = label;
+    select.append(opt);
+  }
+  const sync = () => {
+    select.value = document.documentElement.dataset.theme;
+  };
+  select.onchange = (e) => {
+    setFamily(e.target.value);
+    sync();
+  };
+  $("theme-mode").onclick = () => {
+    setMode(document.documentElement.dataset.mode === "dark" ? "light" : "dark");
+    sync();
+  };
+  sync();
 }
 
 // The model picker, the recipe editor, and Fit.
@@ -302,6 +333,11 @@ async function populateModels() {
 }
 
 async function main() {
+  // Theme first: `wireTheme` registers the repaint callback, and `initTheme`
+  // sets the attributes — both before `attachTo`, so the canvases are created
+  // against the right background rather than flashing another theme's.
+  wireTheme();
+  initTheme();
   await nvIn.attachTo("gl-in");
   await nvOut.attachTo("gl-out");
   setUpViewers();

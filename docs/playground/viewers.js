@@ -35,13 +35,21 @@ export function clearVolumes(nv) {
   for (const v of [...nv.volumes]) nv.removeVolume(v);
 }
 
-// Every viewer's crosshair in the charts' accent colour, so a reader reads the
-// image and the plots as one instrument.
-export function applyCrosshairColor() {
-  const rgba = cssColorToRgba("--rust");
+// The viewers' share of the theme: crosshair in the charts' accent colour, so a
+// reader takes the image and the plots as one instrument, and the canvas ground
+// from `--viewer-bg`.
+//
+// `--viewer-bg` is near-black in every theme, including the light ones. A pale
+// canvas behind a brain image shifts its apparent intensity, and dark is the
+// radiological convention — so the token exists to be tuned, not lightened.
+export function applyViewerTheme() {
+  const crosshair = cssColorToRgba("--rust");
+  const back = cssColorToRgba("--viewer-bg");
   for (const nv of [nvIn, nvOut, app.nvModal]) {
     if (!nv) continue;
-    nv.setCrosshairColor(rgba);
+    nv.setCrosshairColor(crosshair);
+    // Read at draw time rather than through a setter, which this build lacks.
+    nv.opts.backColor = back;
     nv.drawScene();
   }
 }

@@ -209,6 +209,18 @@ button.primary { background: var(--accent); color: var(--on-accent); border-colo
   color: var(--ink);
 }
 .navbar-status { font-size: 12px; }
+/* Sized and placed for the logo artwork; empty until those files land, and
+   nothing in the theme depends on it. */
+.navbar-logo { width: 22px; height: 22px; flex: none; border-radius: 4px; }
+.theme-family, .theme-mode {
+  background: var(--field); color: var(--ink-2);
+  border: var(--border-w) solid var(--line); border-radius: 4px;
+  font: 11px var(--font-ui); padding: 2px 6px;
+}
+.theme-mode { width: 28px; text-align: center; padding: 2px 0; }
+.theme-family:focus-visible, .theme-mode:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
 
 /* Fitting progress: a permanent fixture above the Fit button (idle = empty
    track), not a topbar element that appears/disappears and shifts the rest

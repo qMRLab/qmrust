@@ -12,8 +12,19 @@ import { app, editor, nvOut } from "./state.js";
 // The ECharts instance for the voxel fit, created on first draw.
 let curveChart = null;
 
+// The last series drawn, so the chart can be repainted in new theme colours
+// without re-running the fit. ECharts caches its option, so a colour change
+// needs the option set again.
+let lastSeries = null;
+
 export function clearCurve() {
   curveChart?.clear();
+  lastSeries = null;
+}
+
+// Repaint the current curve, picking up whatever the theme's tokens now say.
+export function redrawCurve() {
+  if (lastSeries) drawCurve(...lastSeries);
 }
 
 // The chart is sized by its flex parent, so a layout change has to tell it.
@@ -141,6 +152,7 @@ function ensureCurveChart() {
 function drawCurve(measured, predicted, labels = []) {
   const chart = ensureCurveChart();
   if (!chart) return;
+  lastSeries = [measured, predicted, labels];
   const style = getComputedStyle(document.documentElement);
   const ink = style.getPropertyValue("--ink").trim();
   const muted = style.getPropertyValue("--muted").trim();
