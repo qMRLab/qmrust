@@ -2220,10 +2220,17 @@ function drawCurve(measured, predicted, labels = []) {
 function onMapHover(event) {
   if (!shownOutput || !current) return;
   const nv = event.currentTarget === nvModal?.canvas ? nvModal : nvOut;
-  // CSS pixels relative to the canvas, which is what NiiVue's own pointer
-  // handling feeds `canvasPos2frac` — no devicePixelRatio scaling.
+  // `canvasPos2frac` works in the canvas's backing-store pixels, which differ
+  // from CSS pixels whenever the canvas is high-resolution. Deriving the ratio
+  // from the canvas itself is right whatever the display's density.
   const rect = nv.canvas.getBoundingClientRect();
-  const frac = nv.canvasPos2frac([event.clientX - rect.left, event.clientY - rect.top]);
+  if (!rect.width || !rect.height) return;
+  const sx = nv.canvas.width / rect.width;
+  const sy = nv.canvas.height / rect.height;
+  const frac = nv.canvasPos2frac([
+    (event.clientX - rect.left) * sx,
+    (event.clientY - rect.top) * sy,
+  ]);
   // `canvasPos2frac` reports a negative first component when the cursor is not
   // over a slice at all (the gaps in a multiplanar view, say).
   if (!frac || frac[0] < 0) {
@@ -2248,6 +2255,13 @@ function onLocation(loc) {
   const [nx, ny, nz] = current.meta.dims;
   if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) return;
   plotVoxel(x, y, z);
+  // Mark the crosshair's own value too. These voxel indices are NiiVue's, so
+  // this path needs no coordinate conversion of ours.
+  if (shownOutput) {
+    const v = shownOutput.volume.getValue(x, y, z, 0);
+    levelMain?.mark(Number.isFinite(v) ? v : null);
+    levelModal?.mark(Number.isFinite(v) ? v : null);
+  }
 }
 
 async function main() {
