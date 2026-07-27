@@ -127,7 +127,16 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
 body {
-  background: var(--bg); color: var(--ink); font: 13px/1.5 var(--font-ui);
+  /* Colour and image are separate properties, not one shorthand: `--bg` must
+     stay a real colour (NiiVue's backColor and several rgba mixes read it), so a
+     textured theme keeps the colour and adds the gradient plus weathering on top
+     through `--bg-image`. Flat themes set that to `none` and pay nothing.
+     `fixed` so the metal does not slide under a scrolling panel. */
+  background-color: var(--bg);
+  background-image: var(--bg-image);
+  background-size: cover;
+  background-attachment: fixed;
+  color: var(--ink); font: 13px/1.5 var(--font-ui);
   padding: 14px;
   display: flex; flex-direction: column;
   /* The app owns exactly one viewport and never scrolls as a page: every panel

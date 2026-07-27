@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640" preserveAspectRatio="none">
+  <!-- Oxidized bronze, for the Oxide dark theme's ground. Layered over the
+       gradient by the bg-image token, so this file carries only the weathering.
+
+       Smooth noise gives clouds; patina has patches with edges. Each layer is a
+       flat colour punched through its own noise field by the same chain:
+         feTurbulence -> luminanceToAlpha -> feComponentTransfer -> feComposite
+       The steep `feFuncA` table is what turns cloud into patch — values near a
+       step function give hard edges, gentler ramps give soft blooms.
+
+       `baseFrequency` is anisotropic (low across, high down) wherever the mark
+       should read as a vertical run of water-borne oxidation.
+
+       The first four layers are masked by `creep`, so oxidation gathers toward
+       the foot the way it does on real metal; grime, copper runs and grain are
+       unmasked because they occur everywhere. -->
+  <defs>
+    <linearGradient id="creep" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#585858"/>
+      <stop offset="0.45" stop-color="#bcbcbc"/>
+      <stop offset="1" stop-color="#ffffff"/>
+    </linearGradient>
+    <mask id="creepMask"><rect width="640" height="640" fill="url(#creep)"/></mask>
+
+    <filter id="bloom" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="turbulence" baseFrequency="0.009 0.016" numOctaves="5" seed="41"/>
+      <feColorMatrix type="luminanceToAlpha"/>
+      <feComponentTransfer><feFuncA type="table" tableValues="0 0 0.4 1"/></feComponentTransfer>
+      <feComposite in="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="soft" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="turbulence" baseFrequency="0.014 0.024" numOctaves="5" seed="9"/>
+      <feColorMatrix type="luminanceToAlpha"/>
+      <feComponentTransfer><feFuncA type="table" tableValues="0 0.18 0.55 0.9 1"/></feComponentTransfer>
+      <feComposite in="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="hard" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="turbulence" baseFrequency="0.028 0.042" numOctaves="4" seed="21"/>
+      <feColorMatrix type="luminanceToAlpha"/>
+      <feComponentTransfer><feFuncA type="table" tableValues="0 0 0.08 0.92 1 1"/></feComponentTransfer>
+      <feComposite in="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="fleck" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="turbulence" baseFrequency="0.16" numOctaves="3" seed="4"/>
+      <feColorMatrix type="luminanceToAlpha"/>
+      <feComponentTransfer><feFuncA type="table" tableValues="0 0 0 0.55 1"/></feComponentTransfer>
+      <feComposite in="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="grime" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="turbulence" baseFrequency="0.007 0.019" numOctaves="5" seed="33"/>
+      <feColorMatrix type="luminanceToAlpha"/>
+      <feComponentTransfer><feFuncA type="table" tableValues="0 0.45 0.8 1"/></feComponentTransfer>
+      <feComposite in="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="run" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="turbulence" baseFrequency="0.005 0.1" numOctaves="3" seed="17"/>
+      <feColorMatrix type="luminanceToAlpha"/>
+      <feComponentTransfer><feFuncA type="table" tableValues="0 0 0 0.35 1"/></feComponentTransfer>
+      <feComposite in="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="3"/>
+      <feColorMatrix type="luminanceToAlpha"/>
+      <feComposite in="SourceGraphic" operator="in"/>
+    </filter>
+  </defs>
+
+  <g mask="url(#creepMask)">
+    <rect width="640" height="640" fill="#3f8f78" filter="url(#bloom)" opacity="0.55"/>
+    <rect width="640" height="640" fill="#4fa88d" filter="url(#soft)"  opacity="0.60"/>
+    <rect width="640" height="640" fill="#86d3b8" filter="url(#hard)"  opacity="0.42"/>
+    <rect width="640" height="640" fill="#bfe9d6" filter="url(#fleck)" opacity="0.20"/>
+  </g>
+  <rect width="640" height="640" fill="#0b1816" filter="url(#grime)" opacity="0.40"/>
+  <rect width="640" height="640" fill="#c07f52" filter="url(#run)"   opacity="0.10"/>
+  <rect width="640" height="640" fill="#ffffff" filter="url(#grain)" opacity="0.05"/>
+</svg>
