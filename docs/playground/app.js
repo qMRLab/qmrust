@@ -8,7 +8,7 @@
 // naming a model or parameter.
 import { Niivue, NVImage } from "./vendor/niivue.js";
 import { load as yamlLoad, dump as yamlDump } from "./vendor/js-yaml.js";
-import { unzipSync } from "./vendor/fflate.js";
+import { unzipSync, gunzipSync } from "./vendor/fflate.js";
 
 const $ = (id) => document.getElementById(id);
 const status = (m, isError = false) => {
@@ -524,36 +524,49 @@ function buildMapVolume(template, flat, nx, ny, nz, name, unit) {
 }
 
 // In BIDS one file is one 3D volume, while the viewer, the frame slider and
-// `readVolumeSeries` all expect a single 4D image. Stack the loaded volumes —
-// in the order resolution put them, which is the order the model consumes them
-// — into one derived 4D NVImage, so everything downstream is unchanged from the
-// pre-baked-bundle path.
-function buildSeriesVolume(volumes, nx, ny, nz, name) {
-  const nt = volumes.length;
-  const vol = NVImage.zerosLike(volumes[0], "float32");
-  vol.hdr.dims = volumes[0].hdr.dims.slice();
-  vol.hdr.dims[0] = 4;
-  vol.hdr.dims[4] = nt;
-  vol.nFrame4D = nt;
-  const spatial = nx * ny * nz;
-  const img = new Float32Array(spatial * nt);
-  for (let t = 0; t < nt; t++) {
-    const src = volumes[t];
-    for (let z = 0; z < nz; z++) {
-      for (let y = 0; y < ny; y++) {
-        for (let x = 0; x < nx; x++) {
-          img[x + y * nx + z * nx * ny + t * spatial] = src.getValue(x, y, z, 0);
-        }
-      }
-    }
+// `readVolumeSeries` all expect a single 4D image.
+//
+// Rather than assemble an NVImage by hand — which means setting NiiVue's
+// internal 4D bookkeeping correctly and keeping it correct — concatenate the
+// volumes into a real 4D NIfTI and let NiiVue parse it, the same path the
+// pre-baked 4D bundles take. Reading the few header fields needed to do that is
+// the only NIfTI field access this file performs; decoding is still NiiVue's.
+//
+// `parts` are the per-volume file bytes in the order resolution put them, which
+// is the order the model consumes them.
+function buildSeriesNifti(parts) {
+  const raw = parts.map((b) => (b[0] === 0x1f && b[1] === 0x8b ? gunzipSync(b) : b));
+  const head = new DataView(raw[0].buffer, raw[0].byteOffset, raw[0].byteLength);
+  // dim[0] (the dimensionality) is 1..7 in the file's own byte order; anything
+  // else means the header is big-endian, which nothing this project writes.
+  const ndim = head.getInt16(40, true);
+  if (ndim < 1 || ndim > 7) {
+    throw new Error("unsupported NIfTI byte order (big-endian header)");
   }
-  vol.img = img;
-  vol.name = name;
-  vol.colormap = "gray";
-  vol.colorbarVisible = false;
-  vol.calculateRAS();
-  vol.calMinMax();
-  return vol;
+  const voxOffset = head.getFloat32(108, true);
+  const bitpix = head.getInt16(72, true);
+  const [nx, ny, nz] = [1, 2, 3].map((i) => head.getInt16(40 + i * 2, true));
+  const frameBytes = nx * ny * nz * (bitpix / 8);
+  const nt = raw.length;
+
+  const header = raw[0].slice(0, voxOffset);
+  const hv = new DataView(header.buffer, header.byteOffset, header.byteLength);
+  hv.setInt16(40, 4, true); // dim[0]: now four-dimensional
+  hv.setInt16(48, nt, true); // dim[4]: this many volumes
+
+  const out = new Uint8Array(voxOffset + frameBytes * nt);
+  out.set(header, 0);
+  for (let t = 0; t < nt; t++) {
+    const data = raw[t].subarray(voxOffset, voxOffset + frameBytes);
+    if (data.length !== frameBytes) {
+      throw new Error(
+        `volume ${t + 1} of ${nt} holds ${data.length} data bytes, expected ${frameBytes} ` +
+          "(the volumes of one collection must share a shape and datatype)",
+      );
+    }
+    out.set(data, voxOffset + frameBytes * t);
+  }
+  return { bytes: out, nx, ny, nz, nt };
 }
 
 // The two viewer wraps are equal-width grid columns, stretched (CSS
@@ -782,13 +795,18 @@ async function loadModelFromBids(name, meta) {
   setEditorText(meta.config_bids);
 
   status(`loading ${resolved.data_files.length} volumes…`);
-  const loaded = [];
-  for (const path of resolved.data_files) {
-    loaded.push(await volumeFromDataset(ds.files, path));
-  }
-  const [, nx, ny, nz] = loaded[0].hdr.dims;
-  const nt = loaded.length;
-  const volume = buildSeriesVolume(loaded, nx, ny, nz, meta.model);
+  const parts = resolved.data_files.map((path) => {
+    const bytes = ds.files.get(path);
+    if (!bytes) throw new Error(`resolution named "${path}", which the archive does not hold`);
+    return bytes;
+  });
+  const { bytes, nx, ny, nz, nt } = buildSeriesNifti(parts);
+  const volume = await NVImage.loadFromFile({
+    file: new File([bytes], `${meta.model}.nii`),
+    name: meta.model,
+    colormap: "gray",
+    colorbarVisible: false,
+  });
   nvIn.addVolume(volume);
 
   let maskU8 = null;

@@ -223,6 +223,9 @@
      replaces, and scrolls internally — a dataset with many volumes must not
      grow the card. */
   .files-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  /* An explicit `display` beats the `hidden` attribute's own `display: none`,
+     so the tab toggle needs this to hide the panel at all. */
+  .files-panel[hidden] { display: none; }
   .files-summary {
     font-size: 12px; color: var(--muted); padding: 6px 2px;
     border-bottom: 1px solid var(--line);
