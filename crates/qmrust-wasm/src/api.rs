@@ -203,21 +203,32 @@ pub fn parse_aux(aux_json: &str) -> Result<Aux, String> {
 
 /// Fit a single voxel from an identity-keyed measurement (JSON, see
 /// `parse_measurement`); returns values in the model's `output_names` order.
+///
+/// `protocol_json` supplies the acquisition when it came from the data rather
+/// than from `cfg_yaml` (see [`build_model_with_protocol`]); empty means the
+/// recipe carries it.
 pub fn fit_voxel(
     cfg_yaml: &str,
     measurement_json: &str,
     aux_json: &str,
+    protocol_json: &str,
 ) -> Result<Vec<f64>, String> {
-    let model = build_model(cfg_yaml)?;
+    let model = build_model_with_protocol(cfg_yaml, &parse_protocol(protocol_json)?)?;
     let aux = parse_aux(aux_json)?;
     let meas = parse_measurement(measurement_json, &model.measurement())?;
     Ok(model.fit(&meas, &aux))
 }
 
 /// Noise-free forward measurement for `params` (in `param_names` order),
-/// returned as its JSON encoding (see `emit_measurement`).
-pub fn forward(cfg_yaml: &str, params: &[f64], aux_json: &str) -> Result<String, String> {
-    let model = build_model(cfg_yaml)?;
+/// returned as its JSON encoding (see `emit_measurement`). `protocol_json` as
+/// for [`fit_voxel`].
+pub fn forward(
+    cfg_yaml: &str,
+    params: &[f64],
+    aux_json: &str,
+    protocol_json: &str,
+) -> Result<String, String> {
+    let model = build_model_with_protocol(cfg_yaml, &parse_protocol(protocol_json)?)?;
     let aux = parse_aux(aux_json)?;
     emit_measurement(&model.forward(params, &aux))
 }
@@ -344,7 +355,7 @@ mod tests {
     /// Build a clean IR volume as raw values plus their per-volume identity
     /// JSON (the `InversionTime` param rows) for `fit_volume`.
     fn ir_signal_and_ids() -> (Vec<f64>, String) {
-        let meas = forward(IR_YAML, &[0.9, 500.0, -1000.0], "").unwrap();
+        let meas = forward(IR_YAML, &[0.9, 500.0, -1000.0], "", "").unwrap();
         let arr: Vec<serde_json::Value> = serde_json::from_str(&meas).unwrap();
         let data: Vec<f64> = arr.iter().map(|s| s["value"].as_f64().unwrap()).collect();
         let rows: Vec<&serde_json::Value> = arr.iter().map(|s| &s["params"]).collect();
@@ -362,10 +373,10 @@ mod tests {
     #[test]
     fn forward_then_fit_voxel_roundtrips_ir() {
         // forward with known params, then fit the clean measurement back.
-        let meas = forward(IR_YAML, &[0.9, 500.0, -1000.0], "").unwrap();
+        let meas = forward(IR_YAML, &[0.9, 500.0, -1000.0], "", "").unwrap();
         let arr: Vec<serde_json::Value> = serde_json::from_str(&meas).unwrap();
         assert_eq!(arr.len(), 9);
-        let out = fit_voxel(IR_YAML, &meas, "").unwrap();
+        let out = fit_voxel(IR_YAML, &meas, "", "").unwrap();
         // output_names[0] == "T1"
         assert!((out[0] - 0.9).abs() < 1e-3, "T1: {}", out[0]);
     }
@@ -374,12 +385,12 @@ mod tests {
     fn fit_voxel_is_order_free() {
         // Reversing the measurement's samples must not change the fitted T1:
         // the model matches by InversionTime, never by position.
-        let meas = forward(IR_YAML, &[0.9, 500.0, -1000.0], "").unwrap();
+        let meas = forward(IR_YAML, &[0.9, 500.0, -1000.0], "", "").unwrap();
         let mut arr: Vec<serde_json::Value> = serde_json::from_str(&meas).unwrap();
         arr.reverse();
         let reversed = serde_json::to_string(&arr).unwrap();
-        let a = fit_voxel(IR_YAML, &meas, "").unwrap();
-        let b = fit_voxel(IR_YAML, &reversed, "").unwrap();
+        let a = fit_voxel(IR_YAML, &meas, "", "").unwrap();
+        let b = fit_voxel(IR_YAML, &reversed, "", "").unwrap();
         assert_eq!(a[0], b[0], "T1 must be identical under reordering");
     }
 
@@ -393,7 +404,7 @@ mod tests {
 
     #[test]
     fn unknown_model_errs() {
-        let err = fit_voxel("model: nope\n", "[]", "").unwrap_err();
+        let err = fit_voxel("model: nope\n", "[]", "", "").unwrap_err();
         assert!(
             err.to_lowercase().contains("nope") || err.to_lowercase().contains("unknown"),
             "{}",

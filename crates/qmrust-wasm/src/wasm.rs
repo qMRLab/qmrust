@@ -18,19 +18,30 @@ pub fn list_models() -> Result<JsValue, JsError> {
 /// `measurement_json` is the identity-keyed measurement: a `{ role: value }`
 /// object for `Named` models, or a `[{ params, value }, ...]` array for
 /// `Series` models. Returns values in the model's `output_names` order.
+///
+/// `protocol_json` is the acquisition resolved from the data — pass a
+/// `resolve_bids` collection's `protocol_json` for a BIDS dataset, or `""` when
+/// the recipe itself carries the protocol.
 #[wasm_bindgen]
 pub fn fit_voxel(
     cfg_yaml: &str,
     measurement_json: &str,
     aux_json: &str,
+    protocol_json: &str,
 ) -> Result<Vec<f64>, JsError> {
-    api::fit_voxel(cfg_yaml, measurement_json, aux_json).map_err(|e| JsError::new(&e))
+    api::fit_voxel(cfg_yaml, measurement_json, aux_json, protocol_json)
+        .map_err(|e| JsError::new(&e))
 }
 
 /// Noise-free forward measurement for `params`, JSON-encoded (see `fit_voxel`).
 #[wasm_bindgen]
-pub fn forward(cfg_yaml: &str, params: &[f64], aux_json: &str) -> Result<String, JsError> {
-    api::forward(cfg_yaml, params, aux_json).map_err(|e| JsError::new(&e))
+pub fn forward(
+    cfg_yaml: &str,
+    params: &[f64],
+    aux_json: &str,
+    protocol_json: &str,
+) -> Result<String, JsError> {
+    api::forward(cfg_yaml, params, aux_json, protocol_json).map_err(|e| JsError::new(&e))
 }
 
 /// `dims` is `[nx, ny, nz, nt]`. `volume_ids_json` supplies each volume's

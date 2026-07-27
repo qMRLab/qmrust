@@ -31,6 +31,9 @@ let current = null; // { meta, volume (NVImage), maskU8 (Uint8Array|null), frame
 // { archive, files: Map<path, Uint8Array>, resolved: ResolvedCollection }.
 // `null` while the pre-baked demo slice is showing.
 let dataset = null;
+// True while a dataset is being fetched/extracted/resolved, so the tab switcher
+// leaves the skeletons in place instead of revealing a half-built view.
+let loading = false;
 let lastMaps = null; // { [outputName]: Float64Array }, C-order [nx,ny,nz] — every
 // entry fit_volume returns, i.e. the model's full output_names(), not just the
 // quantitative maps in meta.outputs.
@@ -103,6 +106,16 @@ async function loadBundle(name) {
 let sourcesCache = null;
 const datasetCache = {};
 
+// One loading stage, reported in both places a reader might be looking: the
+// navbar status and whichever skeleton is on screen.
+function stage(message) {
+  status(message);
+  if (loading) {
+    $("viewer-skeleton-note").textContent = message;
+    $("files-summary").textContent = message;
+  }
+}
+
 // Compact number for a label: drops trailing zeros so 0.35 reads as 0.35 and
 // 90.0 as 90.
 const fmt = (v) => (typeof v === "number" ? String(Number(v.toPrecision(6))) : String(v));
@@ -142,12 +155,12 @@ async function fetchDataset(name, meta) {
   if (datasetCache[name]) return datasetCache[name];
   const src = await loadSources();
   const url = `${src.base}/${meta.archive}${src.suffix}`;
-  status(`fetching ${meta.archive}…`);
+  stage(`fetching ${meta.archive}…`);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch ${url} failed (HTTP ${res.status})`);
   const buf = new Uint8Array(await res.arrayBuffer());
 
-  status(`extracting ${meta.archive}…`);
+  stage(`extracting ${meta.archive} (${(buf.length / 1e6).toFixed(1)} MB)…`);
   let files;
   try {
     files = unzipDataset(buf);
@@ -155,7 +168,7 @@ async function fetchDataset(name, meta) {
     throw new Error(`could not read ${meta.archive} (${buf.length} bytes): ${e.message}`);
   }
 
-  status("resolving BIDS…");
+  stage(`resolving ${files.size} files as BIDS…`);
   const collections = wasm.resolve_bids(files, meta.config_bids, "");
   const dataset = { archive: meta.archive, files, collections };
   datasetCache[name] = dataset;
@@ -601,10 +614,50 @@ function showInputsTab(tab) {
   $("tab-files").classList.toggle("active", !isViewer);
   $("tab-viewer").setAttribute("aria-selected", String(isViewer));
   $("tab-files").setAttribute("aria-selected", String(!isViewer));
-  $("viewer-in").hidden = !isViewer;
+  // While loading, the skeletons own the viewer region; flipping tabs must not
+  // reveal a canvas with nothing in it yet.
+  $("viewer-in").hidden = !isViewer || loading;
   $("files-view").hidden = isViewer;
+  $("viewer-skeleton").hidden = !(isViewer && loading);
   // The canvas was display:none while hidden, so its GL viewport is stale.
-  if (isViewer) sizeViewers();
+  if (isViewer && !loading) sizeViewers();
+}
+
+// While a dataset is being fetched, extracted and resolved there is nothing
+// truthful to list, so both views show the shape of what is coming rather than a
+// stale list or an empty black canvas. `expect` is the file count if known.
+function showLoading(note, expect = 12) {
+  loading = true;
+  $("viewer-skeleton-note").textContent = note;
+  $("viewer-skeleton").hidden = false;
+  $("viewer-in").hidden = true;
+  const tree = $("files-tree");
+  tree.replaceChildren();
+  $("files-summary").textContent = note;
+  const dir = document.createElement("div");
+  dir.className = "skel skel-dir";
+  tree.append(dir);
+  for (let i = 0; i < expect; i++) {
+    const row = document.createElement("div");
+    row.className = "skel-row";
+    const name = document.createElement("div");
+    // Vary the width a little so the block reads as a list of names rather
+    // than a grid.
+    name.className = "skel skel-name";
+    name.style.maxWidth = `${55 + ((i * 37) % 40)}%`;
+    const role = document.createElement("div");
+    role.className = "skel skel-role";
+    row.append(name, role);
+    tree.append(row);
+  }
+}
+
+// Leaves whichever tab the reader is on selected, now that it has real content.
+function endLoading() {
+  loading = false;
+  $("viewer-skeleton").hidden = true;
+  const onFiles = $("tab-files").classList.contains("active");
+  showInputsTab(onFiles ? "files" : "viewer");
 }
 
 function roleLabel(role) {
@@ -794,7 +847,7 @@ async function loadModelFromBids(name, meta) {
   // the sidecars, via `resolved.protocol_json`.
   setEditorText(meta.config_bids);
 
-  status(`loading ${resolved.data_files.length} volumes…`);
+  stage(`loading ${resolved.data_files.length} volumes…`);
   const parts = resolved.data_files.map((path) => {
     const bytes = ds.files.get(path);
     if (!bytes) throw new Error(`resolution named "${path}", which the archive does not hold`);
@@ -885,9 +938,15 @@ async function loadModel(name) {
   // and fitted with the acquisition its own sidecars declare. The pre-baked
   // slice is the fallback, for no network or a host that is down.
   if (wasm && meta.archive) {
+    // Skeletons rather than a stale list: the file count is unknown until the
+    // archive is open, so guess from the volume count the payload declares.
+    showLoading(`fetching ${meta.archive}…`, (meta.dims?.[3] ?? 8) * 2 + 4);
     try {
-      if (await loadModelFromBids(name, meta)) return;
+      const ok = await loadModelFromBids(name, meta);
+      endLoading();
+      if (ok) return;
     } catch (e) {
+      endLoading();
       renderFilesError(`${e.message} — showing the pre-baked slice instead`);
       status(`${e.message} — fell back to the pre-baked slice`, true);
     }
@@ -1264,7 +1323,12 @@ function plotVoxel(x, y, z) {
     voxelAux[auxName] = auxVolume.getValue(x, y, z, 0);
   }
   const predicted = JSON.parse(
-    wasm.forward(editor.text, Float64Array.from(params), JSON.stringify(voxelAux)),
+    wasm.forward(
+      editor.text,
+      Float64Array.from(params),
+      JSON.stringify(voxelAux),
+      meta.protocol_json ?? "",
+    ),
   );
   // A `Series` model's own measurement doesn't necessarily cover every
   // acquired volume 1:1 — e.g. mono_t2's `drop_first_echo` excludes the
