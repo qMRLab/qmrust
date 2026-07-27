@@ -96,9 +96,19 @@ export function parseThemeBlocks(cssText) {
   return blocks;
 }
 
-// Gradient endpoints, for checking button label contrast at both ends.
-function gradientStops(value) {
-  return [...value.matchAll(/#[0-9a-f]{3,6}|rgba?\([^)]+\)/gi)].map((m) => m[0]);
+// One level of `var(--x)` indirection, so a flat theme's `--grad-action:var(--rust)`
+// is checked as the colour it actually paints rather than skipped as unparseable.
+function deref(value, tokens) {
+  const m = value.trim().match(/^var\(\s*(--[a-z0-9-]+)\s*\)$/i);
+  return m && tokens.has(m[1]) ? tokens.get(m[1]).trim() : value;
+}
+
+// Every colour a fill paints: a gradient's stops, or the single colour of a
+// flat fill. This is what a label has to stay readable against.
+function fillColours(value, tokens) {
+  const resolved = deref(value, tokens);
+  const stops = [...resolved.matchAll(/#[0-9a-f]{3,6}|rgba?\([^)]+\)/gi)].map((m) => m[0]);
+  return stops;
 }
 
 export function main(cssPath, themesPath) {
@@ -131,7 +141,7 @@ export function main(cssPath, themesPath) {
     const bg = parseColor(bgRaw).slice(0, 3);
     // Where --bg-image is a gradient, measure against each of its stops too:
     // panels are translucent and the worst case may be any stop.
-    const grounds = [bg, ...gradientStops(tokens.get("--bg-image") ?? "")
+    const grounds = [bg, ...fillColours(tokens.get("--bg-image") ?? "", tokens)
       .map((s) => parseColor(s).slice(0, 3))];
     const panel = tokens.has("--panel") ? parseColor(tokens.get("--panel")) : null;
 
@@ -160,11 +170,14 @@ export function main(cssPath, themesPath) {
       }
     }
 
-    // Button labels sit on a gradient; check both ends at the 4.5 text floor.
+    // The Fit button's label sits on --grad-action, which is a ramp in a textured
+    // theme and a single colour in a flat one. Every colour it paints is checked
+    // at the 4.5 text floor, middle stops included — a gradient carries the label
+    // across its whole length, not only at its ends.
     const grad = tokens.get("--grad-action");
     const on = tokens.get("--on-action");
     if (grad && on) {
-      for (const stop of gradientStops(grad)) {
+      for (const stop of fillColours(grad, tokens)) {
         const r = contrast(parseColor(on), parseColor(stop));
         if (r < 4.5) {
           problems.push(`${key}: --on-action on gradient stop ${stop} is ${r.toFixed(2)} < 4.5`);

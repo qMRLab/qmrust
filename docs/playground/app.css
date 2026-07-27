@@ -104,7 +104,7 @@
   --track:0; --pad-y:14px; --pad-x:14px;
   --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
   --glow:transparent; --bloom:transparent;
-  --on-action:#fff; --on-accent:#04262a;
+  --on-action:#241209; --on-accent:#04262a;
   color-scheme: dark;
 }
 
@@ -185,7 +185,17 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 }
 button { cursor: pointer; }
 button:disabled { opacity: .5; cursor: default; }
-button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent-ink); font-weight: 600; }
+/* Fit is the action, so it wears `--grad-action`: a flat colour in the plain
+   families, a copper-to-verdigris ramp in Oxide. Colour and image are set
+   separately so the flat case still has a real background colour underneath,
+   and the halo costs nothing where `--glow` is transparent. */
+button.primary {
+  background-color: var(--rust);
+  background-image: var(--grad-action);
+  color: var(--on-action); border-color: var(--line); font-weight: 600;
+  box-shadow: 0 0 14px var(--glow);
+}
+button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 #status { color: var(--muted); }
 #status.error { color: var(--bad); }
 
@@ -367,7 +377,10 @@ button.primary { background: var(--accent); color: var(--on-accent); border-colo
   border: none; background: transparent; border-radius: 999px; padding: 5px 14px;
   font: 600 12px var(--font-ui); color: var(--muted);
 }
-.seg button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+.seg button.active {
+  background-color: var(--panel); background-image: var(--grad-soft);
+  color: var(--ink); box-shadow: var(--shadow);
+}
 .seg button:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
 
 .model-line { margin: 12px 0; color: var(--ink-2); }
@@ -606,7 +619,8 @@ button.primary { background: var(--accent); color: var(--on-accent); border-colo
 /* Tinted rather than solid: an invitation on a panel that is mostly empty
    space, not a primary action competing with Fit. */
 .accent-btn {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background-image: var(--grad-soft);
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   color: var(--ink); font-weight: 600;
 }
