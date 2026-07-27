@@ -68,6 +68,7 @@ region of the page.
 |---|---|
 | `app.js` | startup, and the `wire*` functions that attach each region's listeners |
 | `state.js` | the mutable state more than one module touches, and its invariants |
+| `themes.js` | the theme list, resolution order and persistence |
 | `dom.js` | `$`, the navbar status line, display formatting, CSS colour tokens |
 | `bundles.js` | the wasm module and the per-model payload JSON |
 | `dataset.js` | fetching, unzipping and resolving a BIDS dataset; the download ring |
@@ -93,6 +94,44 @@ Three rules keep the graph honest, and are worth preserving:
   rather than silently becoming a new one. Anything one module owns stays a
   `let` in that module.
 - **Export nothing unused.** A helper only its own module calls is not exported.
+- **A module meant for `node --test` imports nothing that reaches `state.js`**,
+  which constructs NiiVue at module scope and needs a browser. `themes.js` and
+  `stats.js` observe this; it is why a theme change reaches the viewers through
+  an `onThemeChange` callback rather than a direct import.
+
+### Themes
+
+A theme is **data**: one CSS declaration block per family and mode in `app.css`,
+selected by the `data-theme`/`data-mode` attributes that `themes.js` always sets.
+No token is defined inside a media query — the OS preference is one input to the
+resolution, not a second source of truth. The bare `:root` block is the pre-JS
+default and shares its body with Patina dark, so the default costs no duplicate.
+
+Three families ship: **Patina** (default), **Oxide** (textured), **Clinical**.
+Mode resolves independently of family, in this order: the reader's stored choice,
+then the parent MyST page's `dark` class, then `prefers-color-scheme`.
+
+Rules a new skin must respect:
+
+- `--line` is desaturated copper for structure; `--rust` is saturated for data
+  and action. A structural edge is never as saturated as a data mark.
+- **Map colormaps are never themed.** `CMAP_BY_UNIT` picks a perceptually
+  uniform colormap per output unit; restyling one for looks would make a
+  quantitative map misreport values.
+- **`--viewer-bg` is near-black in every theme, including light ones.** A pale
+  canvas shifts a brain image's apparent intensity.
+- Gradients may decorate a control; they may never encode a value.
+
+Adding a skin is one `THEMES` entry plus a light and a dark block. Both are gated:
+
+```bash
+node scripts/check_theme_contrast.mjs   # contrast floors, token contract, list ↔ CSS
+node --test "scripts/tests/**/*.test.mjs"
+```
+
+The checker composites translucent panels over the ground before measuring, walks
+every stop of a gradient ground, and holds button labels to 4.5:1 at **both** ends
+of a gradient fill — the three places where a bad value looks fine by eye.
 
 ### Vendored NiiVue
 
