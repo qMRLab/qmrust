@@ -444,6 +444,22 @@
     transition: stroke-dashoffset 0.15s linear;
   }
   .dl-pct { font: 700 11px var(--mono); color: var(--rust); }
+  .dl-pct[hidden] { display: none; }
+  /* Before the response headers arrive there is no total to measure against, so
+     the ring spins rather than sitting at 0% through the part of the wait that
+     is actually the longest (redirects and time-to-first-byte). */
+  .navbar-dl.pending .dl-arc {
+    stroke-dasharray: 58 170;
+    transition: none;
+    animation: dl-spin 0.9s linear infinite;
+  }
+  @keyframes dl-spin {
+    from { transform: rotate(-90deg); }
+    to { transform: rotate(270deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .navbar-dl.pending .dl-arc { animation: none; stroke-dashoffset: 113; }
+  }
 
   /* Status severity. "Ready" and "Downloading…" are the two a reader watches
      for, so each gets a colour and weight rather than uniform grey. */

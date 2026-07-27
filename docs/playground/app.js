@@ -222,13 +222,27 @@ const datasetCache = {};
 // number it cannot know.
 const RING_CIRCUMFERENCE = 2 * Math.PI * 36; // r=36, matching the SVG
 
+// Three states, because a download has three phases a reader can distinguish:
+// connecting (no total known yet — spin), transferring (show the percentage),
+// and done (gone).
+function showDownloadPending() {
+  const box = $("navbar-dl");
+  box.hidden = false;
+  box.classList.add("pending");
+  $("dl-pct").hidden = true;
+  $("dl-arc").style.strokeDashoffset = "";
+}
+
 function setDownloadProgress(fraction) {
   const box = $("navbar-dl");
   if (fraction === null) {
     box.hidden = true;
+    box.classList.remove("pending");
     return;
   }
   box.hidden = false;
+  box.classList.remove("pending");
+  $("dl-pct").hidden = false;
   const clamped = Math.max(0, Math.min(1, fraction));
   $("dl-arc").style.strokeDashoffset = String(RING_CIRCUMFERENCE * (1 - clamped));
   $("dl-pct").textContent = `${Math.round(clamped * 100)}%`;
@@ -242,10 +256,15 @@ function hideDownloadProgress() {
 // server that sends no length (or a browser without streams) still works — it
 // just gets no ring.
 async function fetchWithProgress(url) {
+  // Spin from the moment the request goes out: waiting for headers (redirects,
+  // time-to-first-byte) is often the longest part, and leaving the ring hidden
+  // until the first chunk made the whole transfer look instantaneous.
+  showDownloadPending();
   const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch ${url} failed (HTTP ${res.status})`);
   const total = Number(res.headers.get("content-length")) || 0;
   if (!res.body?.getReader || !total) {
+    // No length to measure against, so keep spinning rather than inventing one.
     return new Uint8Array(await res.arrayBuffer());
   }
   const reader = res.body.getReader();
@@ -275,6 +294,10 @@ function stage(message) {
   // The files panel's own header doubles as the loading caption; the viewers
   // carry no text, only their shimmer.
   if (loading) $("files-summary").textContent = message;
+  // Every stage other than the transfer itself is indeterminate — extracting a
+  // few MB and resolving it take real time but report no total — so the ring
+  // spins through them rather than parking at 100% until the very end.
+  if (loading) showDownloadPending();
 }
 
 // Compact number for a label: drops trailing zeros so 0.35 reads as 0.35 and
