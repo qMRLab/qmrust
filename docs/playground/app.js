@@ -178,18 +178,16 @@ function wireTheme() {
     opt.textContent = label;
     select.append(opt);
   }
-  const sync = () => {
+  // Reflect the applied theme rather than tracking it separately: the first
+  // apply happens in `initTheme`, after this function runs, and the parent
+  // page's own toggle can change it later with no click here.
+  onThemeChange(() => {
     select.value = document.documentElement.dataset.theme;
-  };
-  select.onchange = (e) => {
-    setFamily(e.target.value);
-    sync();
-  };
-  $("theme-mode").onclick = () => {
+    $("theme-mode").textContent = document.documentElement.dataset.mode === "dark" ? "☾" : "☀";
+  });
+  select.onchange = (e) => setFamily(e.target.value);
+  $("theme-mode").onclick = () =>
     setMode(document.documentElement.dataset.mode === "dark" ? "light" : "dark");
-    sync();
-  };
-  sync();
 }
 
 // The model picker, the recipe editor, and Fit.

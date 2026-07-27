@@ -8,39 +8,44 @@ test("THEMES lists the three shipped families in picker order", () => {
 
 test("a stored choice wins over everything", () => {
   assert.deepEqual(
-    resolveTheme({ stored: { family: "oxide", mode: "light" }, parentDark: true, prefersDark: true }),
+    resolveTheme({ stored: { family: "oxide", mode: "light" }, parentDark: true }),
     { family: "oxide", mode: "light" },
   );
 });
 
 test("the parent page decides mode when nothing is stored", () => {
   assert.deepEqual(
-    resolveTheme({ stored: {}, parentDark: true, prefersDark: false }),
+    resolveTheme({ stored: {}, parentDark: true }),
     { family: "patina", mode: "dark" },
   );
   assert.deepEqual(
-    resolveTheme({ stored: {}, parentDark: false, prefersDark: true }),
+    resolveTheme({ stored: {}, parentDark: false }),
     { family: "patina", mode: "light" },
   );
 });
 
-test("the OS preference decides when there is no parent", () => {
+test("with nothing stored and no parent, the default is Patina dark", () => {
+  assert.deepEqual(resolveTheme({}), { family: "patina", mode: "dark" });
   assert.deepEqual(
-    resolveTheme({ stored: {}, parentDark: null, prefersDark: true }),
+    resolveTheme({ stored: {}, parentDark: null }),
     { family: "patina", mode: "dark" },
   );
 });
 
 test("family and mode resolve independently", () => {
   assert.deepEqual(
-    resolveTheme({ stored: { family: "clinical" }, parentDark: true, prefersDark: false }),
+    resolveTheme({ stored: { family: "clinical" }, parentDark: true }),
     { family: "clinical", mode: "dark" },
+  );
+  assert.deepEqual(
+    resolveTheme({ stored: { mode: "light" }, parentDark: true }),
+    { family: "patina", mode: "light" },
   );
 });
 
 test("an unknown stored family falls back to the default", () => {
   assert.deepEqual(
-    resolveTheme({ stored: { family: "bogus" }, parentDark: null, prefersDark: false }),
+    resolveTheme({ stored: { family: "bogus" }, parentDark: false }),
     { family: "patina", mode: "light" },
   );
 });

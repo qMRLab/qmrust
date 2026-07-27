@@ -16,18 +16,22 @@ export const THEMES = [
 ];
 
 const DEFAULT_FAMILY = "patina";
+// Dark unless something says otherwise. The images are the point of this page
+// and they are read on a dark ground, so dark is the right resting state — not
+// whatever the operating system happens to prefer.
+const DEFAULT_MODE = "dark";
 const KEY_FAMILY = "qmrust-theme-family";
 const KEY_MODE = "qmrust-theme-mode";
 
 // Pure: no DOM, no storage, no clock. `parentDark` is null when there is no
 // reachable parent page — the standalone /app/index.html case — which is
 // different from a parent that is light.
-export function resolveTheme({ stored = {}, parentDark = null, prefersDark = false }) {
+export function resolveTheme({ stored = {}, parentDark = null }) {
   const known = THEMES.some((t) => t.id === stored.family);
   const family = known ? stored.family : DEFAULT_FAMILY;
   const mode = stored.mode === "light" || stored.mode === "dark"
     ? stored.mode
-    : (parentDark ?? prefersDark) ? "dark" : "light";
+    : (parentDark ?? DEFAULT_MODE === "dark") ? "dark" : "light";
   return { family, mode };
 }
 
@@ -72,11 +76,7 @@ export function applyTheme({ family, mode }) {
 }
 
 function current() {
-  return resolveTheme({
-    stored: readStored(),
-    parentDark: readParentDark(),
-    prefersDark: window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false,
-  });
+  return resolveTheme({ stored: readStored(), parentDark: readParentDark() });
 }
 
 export function setFamily(id) {

@@ -103,13 +103,15 @@ Three rules keep the graph honest, and are worth preserving:
 
 A theme is **data**: one CSS declaration block per family and mode in `app.css`,
 selected by the `data-theme`/`data-mode` attributes that `themes.js` always sets.
-No token is defined inside a media query — the OS preference is one input to the
-resolution, not a second source of truth. The bare `:root` block is the pre-JS
+No token is defined inside a media query, and nothing reads `prefers-color-scheme`:
+resolution happens once, in JavaScript. The bare `:root` block is the pre-JS
 default and shares its body with Patina dark, so the default costs no duplicate.
 
 Three families ship: **Patina** (default), **Oxide** (textured), **Clinical**.
 Mode resolves independently of family, in this order: the reader's stored choice,
-then the parent MyST page's `dark` class, then `prefers-color-scheme`.
+then the parent MyST page's `dark` class, then **dark**. The OS preference is
+deliberately not consulted: the images are the point of this page and are read on
+a dark ground, so dark is the resting state.
 
 Rules a new skin must respect:
 
