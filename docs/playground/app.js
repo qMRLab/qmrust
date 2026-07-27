@@ -1363,6 +1363,8 @@ function createLevelControl(prefix) {
       }
       dot.hidden = false;
       dot.style.bottom = `${f * 100}%`;
+      dot.querySelector("span").textContent =
+        `${roundBound(v)}${data.unit ? ` ${data.unit}` : ""}`;
     },
     // The histogram spans the *data's* extent, wider than the display window, so
     // a window can be widened as well as narrowed.

@@ -505,6 +505,15 @@
     transform: translate(-50%, 50%); pointer-events: none;
   }
   .level-dot[hidden] { display: none; }
+  /* The hovered voxel's own value, offset far enough left to clear the bar.
+     Accent-tinted so it reads as "where you are" rather than as one of the
+     window's bounds, which are the plain labels at the handles. */
+  .level-dot > span {
+    position: absolute; right: calc(100% + 20px); top: 50%; transform: translateY(-50%);
+    font: 700 11px var(--mono); color: var(--accent-ink);
+    background: var(--panel); border: 1px solid var(--accent);
+    border-radius: 6px; padding: 1px 5px; white-space: nowrap;
+  }
 
   /* Fitted-map viewer + its colour-scale legend, side by side. NiiVue's own
      `isColorbar` only draws horizontally along the canvas's bottom edge in
@@ -649,7 +658,7 @@
                aria-label="Display maximum"><span></span></div>
           <div class="level-handle" id="mlevel-lo" role="slider" tabindex="0"
                aria-label="Display minimum"><span></span></div>
-          <div class="level-dot" id="mlevel-dot" hidden></div>
+          <div class="level-dot" id="mlevel-dot" hidden><span></span></div>
           <div class="level-readout" id="mlevel-readout" hidden></div>
         </div>
       </div>
@@ -696,7 +705,7 @@
                aria-label="Display maximum"><span></span></div>
           <div class="level-handle" id="level-lo" role="slider" tabindex="0"
                aria-label="Display minimum"><span></span></div>
-          <div class="level-dot" id="level-dot" hidden></div>
+          <div class="level-dot" id="level-dot" hidden><span></span></div>
           <div class="level-readout" id="level-readout" hidden></div>
         </div>
       </div>
