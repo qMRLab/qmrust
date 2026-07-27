@@ -1719,7 +1719,6 @@ async function loadModel(name) {
   $("output").hidden = true;
   $("output").replaceChildren();
   updateMapColorbar();
-  $("voxel-title").textContent = "Voxel — click either viewer";
   $("voxel-value").textContent = "";
   $("model-info").textContent = "";
   $("fit-timing").textContent = "";
@@ -1827,7 +1826,7 @@ function goToFrame(t) {
   onFrameChange();
 }
 
-// The progress track is a permanent fixture above "Fit slice" (an empty
+// The progress track is a permanent fixture above the Fit button (an empty
 // track at idle, not an element that appears/disappears and reflows the
 // page); only its fill width and the "active" stripe animation change.
 function showProgress() {
@@ -2053,7 +2052,6 @@ function plotVoxel(x, y, z) {
   current.lastVox = { x, y, z };
   const { meta, volume, auxVolumes } = current;
   const [nx, ny, nz, nt] = meta.dims;
-  $("voxel-title").textContent = `Voxel (${x}, ${y})`;
   updateVoxelValue(x, y, z);
   if (!lastMaps) {
     $("curve-note").textContent = "fit the slice first, then click a voxel";
@@ -2382,14 +2380,11 @@ async function main() {
   });
   dropZone.addEventListener("drop", onDrop);
   $("browse-folder").onclick = () => $("folder-input").click();
-  $("browse-zip").onclick = () => $("zip-input").click();
-  for (const id of ["folder-input", "zip-input"]) {
-    $(id).addEventListener("change", (e) => {
-      if (e.target.files.length) onBrowse(e.target.files);
-      // Reset, so picking the same folder twice fires `change` again.
-      e.target.value = "";
-    });
-  }
+  $("folder-input").addEventListener("change", (e) => {
+    if (e.target.files.length) onBrowse(e.target.files);
+    // Reset, so picking the same folder twice fires `change` again.
+    e.target.value = "";
+  });
   $("files-tree").addEventListener("click", onFilesClick);
   $("file-modal-close").onclick = closeFileModal;
   levelMain = createLevelControl("mlevel");

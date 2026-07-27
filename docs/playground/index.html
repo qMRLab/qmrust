@@ -41,6 +41,17 @@
   }
   h1, h2, h3 { font-family: var(--sans); }
   code, pre, textarea, input, select, .mono { font-family: var(--mono); }
+  /* A hoverable explanation beside a panel's heading. `title` carries the text,
+     so it needs no scripting and stays available to assistive tech through
+     `aria-label`. */
+  .info {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; margin-left: 6px; padding: 0; flex: 0 0 auto;
+    border: 1px solid var(--line); border-radius: 50%; background: none;
+    color: var(--muted); font: 600 9px var(--sans); line-height: 1; cursor: help;
+    vertical-align: middle; text-transform: none; letter-spacing: 0;
+  }
+  .info:hover, .info:focus-visible { color: var(--ink); border-color: var(--accent); }
   .section-h {
     font: 700 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .09em;
     color: var(--muted); margin: 0 0 8px;
@@ -84,7 +95,7 @@
   }
   .navbar-status { font-size: 12px; }
 
-  /* Fitting progress: a permanent fixture above "Fit slice" (idle = empty
+  /* Fitting progress: a permanent fixture above the Fit button (idle = empty
      track), not a topbar element that appears/disappears and shifts the rest
      of the page. Track/fill/stripe colours are fixed (not theme-token-based)
      to match the reference look asked for. */
@@ -382,7 +393,18 @@
     line-height: 1.45;
   }
   .drop-actions { display: flex; gap: 8px; position: relative; }
-  .drop-actions button { font-size: 12px; padding: 6px 12px; }
+  .drop-actions button { font-size: 12px; padding: 6px 14px; }
+  /* Tinted rather than solid: an invitation on a panel that is mostly empty
+     space, not a primary action competing with Fit. */
+  .accent-btn {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    color: var(--ink); font-weight: 600;
+  }
+  .accent-btn:hover {
+    background: color-mix(in srgb, var(--accent) 34%, transparent);
+    border-color: var(--accent);
+  }
   .drop-privacy {
     font-size: 10px; color: var(--muted); position: relative;
     text-transform: uppercase; letter-spacing: .07em;
@@ -576,7 +598,7 @@
 <div class="layout">
   <div class="left-col">
   <div class="recipe-card card">
-    <div class="section-h">Recipe</div>
+    <div class="section-h">Recipe<button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." title="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit.">i</button></div>
     <div class="seg" role="tablist" aria-label="Recipe editor view">
       <button id="tab-form" class="active" role="tab" aria-selected="true">Form</button>
       <button id="tab-yaml" role="tab" aria-selected="false">YAML</button>
@@ -599,25 +621,23 @@
       <div id="fit-progress" class="fit-progress">
         <div id="progress-bar" class="fit-progress-bar"></div>
       </div>
-      <button id="fit" class="primary">Fit slice</button>
+      <button id="fit" class="primary">Fit Data</button>
     </div>
 
     <div class="drop-wrap card" id="drop-wrap">
-      <div class="drop-title">Fit your own data</div>
-      <div class="drop-sub">Drop a BIDS folder or a .zip here.</div>
+      <div class="drop-title">Fit your own data<button class="info" type="button" aria-label="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it." title="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it.">i</button></div>
+      <div class="drop-sub">Drop a BIDS folder (or .zip) here.</div>
       <div class="drop-actions">
-        <button id="browse-folder" type="button">Folder…</button>
-        <button id="browse-zip" type="button">.zip…</button>
+        <button id="browse-folder" class="accent-btn" type="button">Browse…</button>
       </div>
       <div class="drop-privacy">Nothing is uploaded</div>
       <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
-      <input type="file" id="zip-input" accept=".zip" hidden>
     </div>
   </div>
 
   <div class="viewer-in-wrap card" id="viewer-in-wrap">
     <div class="viewer-head">
-      <h2 class="section-h" style="margin:0">Inputs</h2>
+      <h2 class="section-h" style="margin:0">Inputs<button class="info" type="button" aria-label="The acquired volumes this model fits, in the order it consumes them. Scroll or drag the slider to step through them. Files shows every file in the dataset and what BIDS resolution decided about each one." title="The acquired volumes this model fits, in the order it consumes them. Scroll or drag the slider to step through them. Files shows every file in the dataset and what BIDS resolution decided about each one.">i</button></h2>
       <div class="seg" role="tablist" aria-label="Inputs view">
         <button id="tab-viewer" class="active" role="tab" aria-selected="true">Viewer</button>
         <button id="tab-files" role="tab" aria-selected="false">Files</button>
@@ -646,7 +666,7 @@
 
   <div class="viewer-out-wrap card">
     <div class="viewer-head">
-      <h2 class="section-h" style="margin:0">Fitted map</h2>
+      <h2 class="section-h" style="margin:0">Fitted map<button class="info" type="button" aria-label="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region." title="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region.">i</button></h2>
       <div class="seg" role="tablist" aria-label="Fitted map view">
         <button id="tab-slice" class="active" role="tab" aria-selected="true">Slice</button>
         <button id="tab-planes" role="tab" aria-selected="false">Planes</button>
@@ -689,7 +709,7 @@
   </div>
 
   <div class="curve-wrap card">
-    <h2 class="section-h" id="voxel-title">Voxel — click either viewer</h2>
+    <h2 class="section-h" id="voxel-title">Single Voxel Fit<button class="info" type="button" aria-label="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume." title="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume.">i</button></h2>
     <div id="voxel-value" class="voxel-value"></div>
     <div id="curve"></div>
     <div id="curve-note"></div>
