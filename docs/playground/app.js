@@ -182,6 +182,32 @@ function wireTips() {
   });
 }
 
+// The recipe fields collapse away on a narrow screen, where they would otherwise
+// push the viewers off the first screenful. The header and model picker stay, so
+// switching models needs no expanding first.
+const NARROW = "(max-width: 900px)";
+
+function setRecipeCollapsed(collapsed) {
+  const card = document.querySelector(".recipe-card");
+  card.classList.toggle("collapsed", collapsed);
+  const btn = $("recipe-collapse");
+  btn.textContent = collapsed ? "Show" : "Hide";
+  btn.setAttribute("aria-expanded", String(!collapsed));
+  // The chart and viewers are sized by the space this frees or takes.
+  curveChart?.resize();
+  sizeViewers();
+}
+
+function wireRecipeCollapse() {
+  const narrow = window.matchMedia?.(NARROW);
+  // Start collapsed on a narrow screen, expanded otherwise.
+  setRecipeCollapsed(Boolean(narrow?.matches));
+  $("recipe-collapse").onclick = () =>
+    setRecipeCollapsed(!document.querySelector(".recipe-card").classList.contains("collapsed"));
+  // Rotating a phone changes which default is right.
+  narrow?.addEventListener?.("change", (e) => setRecipeCollapsed(e.matches));
+}
+
 async function loadWasm() {
   try {
     const mod = await import("./pkg/qmrust_wasm.js");
@@ -2452,6 +2478,7 @@ async function main() {
   nvOut.setHighResolutionCapable(true);
   applyCrosshairColor();
   wireTips();
+  wireRecipeCollapse();
   // ...and again if the reader's system flips theme, since the token changes.
   window
     .matchMedia?.("(prefers-color-scheme: dark)")

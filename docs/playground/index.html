@@ -171,6 +171,18 @@
   /* Only the editor scrolls, so the model picker stays put at the top and Fit
      stays put at the bottom however deeply nested a recipe is. */
   .recipe-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  /* Collapsing keeps the header and the model picker — the parts you still need
+     to switch models — and hides only the fields. */
+  .recipe-card.collapsed .recipe-scroll,
+  .recipe-card.collapsed .local-note { display: none; }
+  .recipe-card.collapsed { flex: 0 0 auto; }
+  .recipe-head { display: flex; align-items: center; }
+  .collapse-btn {
+    display: none; margin-left: auto; padding: 2px 8px; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+    font: 600 10px var(--mono); text-transform: uppercase; letter-spacing: .06em;
+  }
+  .collapse-btn:hover { color: var(--ink); border-color: var(--accent); }
   /* The viewer wraps *do* stretch (the grid default) to fill whatever
      vertical space the row has — the point of this layout pass — with their
      own content (`.viewer`) flexed to fill that stretched height in turn. */
@@ -206,12 +218,26 @@
   }
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; grid-template-rows: none; }
-    .left-col, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap {
+    /* `display: contents` dissolves the left column so its three cards become
+       grid items in their own right. Keeping it as a flex column is what squashed
+       the recipe: `flex: 1 1 0` with no height to distribute collapses to nothing
+       while its content spills over the cards below. */
+    .left-col { display: contents; }
+    .viewer-in-wrap, .viewer-out-wrap, .curve-wrap, .recipe-card, .fit-strip {
       grid-column: 1; grid-row: auto;
     }
+    /* Everything sizes to its content and the page scrolls, rather than dividing
+       a height that is not there. */
     body { height: auto; min-height: 100dvh; overflow: auto; }
+    .recipe-card { flex: 0 0 auto; height: auto; }
+    .recipe-scroll { max-height: 46vh; }
     .viewer-in-wrap, .viewer-out-wrap { height: 62vh; min-height: 300px; }
-    #curve { height: 200px; flex: 0 0 auto; }
+    .curve-wrap { height: auto; }
+    #curve { height: 220px; flex: 0 0 auto; }
+    /* Last on a narrow screen: it is the least-used panel, and burying it keeps
+       the model's own data in view first. */
+    .drop-wrap { order: 99; grid-column: 1; }
+    .collapse-btn { display: inline-flex; }
   }
 
   /* recipe editor */
@@ -689,7 +715,7 @@
 <div class="layout">
   <div class="left-col">
   <div class="recipe-card card">
-    <div class="section-h">Recipe<button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." data-tip="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit.">i</button></div>
+    <div class="section-h recipe-head">Recipe<button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." data-tip="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit.">i</button><button id="recipe-collapse" class="collapse-btn" type="button" aria-expanded="true">Hide</button></div>
     <div class="seg" role="tablist" aria-label="Recipe editor view">
       <button id="tab-form" class="active" role="tab" aria-selected="true">Form</button>
       <button id="tab-yaml" role="tab" aria-selected="false">YAML</button>
