@@ -8,6 +8,7 @@
 // naming a model or parameter.
 import { Niivue, NVImage } from "./vendor/niivue.js";
 import { load as yamlLoad, dump as yamlDump } from "./vendor/js-yaml.js";
+import { unzipSync } from "./vendor/fflate.js";
 
 const $ = (id) => document.getElementById(id);
 const status = (m, isError = false) => {
@@ -26,6 +27,10 @@ const CANDIDATE_COLORMAPS = ["gray", "viridis", "magma", "inferno", "plasma", "h
 let wasm = null;
 const bundleCache = {};
 let current = null; // { meta, volume (NVImage), maskU8 (Uint8Array|null), frame }
+// The fetched BIDS dataset behind `current`, when there is one:
+// { archive, files: Map<path, Uint8Array>, resolved: ResolvedCollection }.
+// `null` while the pre-baked demo slice is showing.
+let dataset = null;
 let lastMaps = null; // { [outputName]: Float64Array }, C-order [nx,ny,nz] — every
 // entry fit_volume returns, i.e. the model's full output_names(), not just the
 // quantitative maps in meta.outputs.
@@ -87,6 +92,74 @@ async function loadBundle(name) {
   const meta = await (await fetchOrThrow(`./data/${name}.json`)).json();
   bundleCache[name] = meta;
   return meta;
+}
+
+// ---------------------------------------------------------------------------
+// Full BIDS datasets: fetched, unzipped, and resolved in the browser through
+// the same `rust-bids` code the CLI's `--bids-dir` path runs. The acquisition
+// comes from the dataset's own JSON sidecars, so the recipe for this path
+// carries options only — see `meta.config_bids`.
+
+let sourcesCache = null;
+const datasetCache = {};
+
+// Compact number for a label: drops trailing zeros so 0.35 reads as 0.35 and
+// 90.0 as 90.
+const fmt = (v) => (typeof v === "number" ? String(Number(v.toPrecision(6))) : String(v));
+
+async function loadSources() {
+  if (!sourcesCache) {
+    sourcesCache = await (await fetchOrThrow("./data/sources.json")).json();
+  }
+  return sourcesCache;
+}
+
+// Unzip into the dataset-root-relative `path -> bytes` shape `resolve_bids`
+// requires. The archives wrap their dataset in a `ds-<slug>/` directory; that
+// wrapper is the caller's to strip, since only the caller knows where its root
+// is (a dropped folder answers differently).
+function unzipDataset(buf) {
+  const files = new Map();
+  for (const [path, bytes] of Object.entries(unzipSync(buf))) {
+    if (path.endsWith("/") || bytes.length === 0) continue;
+    const cut = path.indexOf("/");
+    files.set(cut === -1 ? path : path.slice(cut + 1), bytes);
+  }
+  return files;
+}
+
+// A volume's label, from whatever identity it resolved to — a role name for a
+// named measurement, its parameter values for a series one. Never keyed on a
+// model or parameter name.
+function identityLabel(id) {
+  if (!id) return "volume";
+  if (id.role) return id.role;
+  const parts = Object.entries(id.params ?? {}).map(([k, v]) => `${k}=${fmt(v)}`);
+  return parts.length ? parts.join(", ") : "volume";
+}
+
+async function fetchDataset(name, meta) {
+  if (datasetCache[name]) return datasetCache[name];
+  const src = await loadSources();
+  const url = `${src.base}/${meta.archive}${src.suffix}`;
+  status(`fetching ${meta.archive}…`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url} failed (HTTP ${res.status})`);
+  const buf = new Uint8Array(await res.arrayBuffer());
+
+  status(`extracting ${meta.archive}…`);
+  let files;
+  try {
+    files = unzipDataset(buf);
+  } catch (e) {
+    throw new Error(`could not read ${meta.archive} (${buf.length} bytes): ${e.message}`);
+  }
+
+  status("resolving BIDS…");
+  const collections = wasm.resolve_bids(files, meta.config_bids, "");
+  const dataset = { archive: meta.archive, files, collections };
+  datasetCache[name] = dataset;
+  return dataset;
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +523,39 @@ function buildMapVolume(template, flat, nx, ny, nz, name, unit) {
   return vol;
 }
 
+// In BIDS one file is one 3D volume, while the viewer, the frame slider and
+// `readVolumeSeries` all expect a single 4D image. Stack the loaded volumes —
+// in the order resolution put them, which is the order the model consumes them
+// — into one derived 4D NVImage, so everything downstream is unchanged from the
+// pre-baked-bundle path.
+function buildSeriesVolume(volumes, nx, ny, nz, name) {
+  const nt = volumes.length;
+  const vol = NVImage.zerosLike(volumes[0], "float32");
+  vol.hdr.dims = volumes[0].hdr.dims.slice();
+  vol.hdr.dims[0] = 4;
+  vol.hdr.dims[4] = nt;
+  vol.nFrame4D = nt;
+  const spatial = nx * ny * nz;
+  const img = new Float32Array(spatial * nt);
+  for (let t = 0; t < nt; t++) {
+    const src = volumes[t];
+    for (let z = 0; z < nz; z++) {
+      for (let y = 0; y < ny; y++) {
+        for (let x = 0; x < nx; x++) {
+          img[x + y * nx + z * nx * ny + t * spatial] = src.getValue(x, y, z, 0);
+        }
+      }
+    }
+  }
+  vol.img = img;
+  vol.name = name;
+  vol.colormap = "gray";
+  vol.colorbarVisible = false;
+  vol.calculateRAS();
+  vol.calMinMax();
+  return vol;
+}
+
 // The two viewer wraps are equal-width grid columns, stretched (CSS
 // `align-items: stretch`) to the grid row's full height, with `.viewer`
 // flexed to fill that in turn — so both viewers are always exactly the same
@@ -468,6 +574,263 @@ function setFrameUi(nt, labels) {
   slider.value = "0";
   slider.disabled = nt <= 1;
   $("frame-label").textContent = labels[0] ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// Files panel: the dataset as resolution saw it. Every verdict arrives as data
+// from `resolve_bids`; this only chooses how to draw it, and branches on the
+// verdict's shape alone — never on a model, suffix, or parameter name.
+
+// The Inputs card shows either the image or where the image came from.
+function showInputsTab(tab) {
+  const isViewer = tab === "viewer";
+  $("tab-viewer").classList.toggle("active", isViewer);
+  $("tab-files").classList.toggle("active", !isViewer);
+  $("tab-viewer").setAttribute("aria-selected", String(isViewer));
+  $("tab-files").setAttribute("aria-selected", String(!isViewer));
+  $("viewer-in").hidden = !isViewer;
+  $("files-view").hidden = isViewer;
+  // The canvas was display:none while hidden, so its GL viewport is stale.
+  if (isViewer) sizeViewers();
+}
+
+function roleLabel(role) {
+  switch (role.kind) {
+    case "volume": {
+      const detail = identityLabel(role.identity);
+      const n = `volume ${role.index + 1} of ${role.total}`;
+      return detail === "volume" ? n : `${n} · ${detail}`;
+    }
+    case "sidecar":
+      return role.applies_to.length === 1
+        ? "sidecar → 1 volume"
+        : `sidecar → ${role.applies_to.length} volumes`;
+    case "mask":
+      return "mask";
+    case "aux":
+      return role.input;
+    case "dataset_metadata":
+      return "dataset metadata";
+    case "unused":
+      return role.reason;
+    default:
+      return role.kind;
+  }
+}
+
+// Group by directory, preserving path order. Directory order, not resolution
+// order: this is a file browser, so the dataset's real layout is what it shows —
+// a volume's position on the model's axis is in its label. For a named model the
+// two genuinely disagree, and reordering rows would misrepresent the directory.
+function groupByDir(files) {
+  const dirs = new Map();
+  for (const [path, role] of files) {
+    const cut = path.lastIndexOf("/");
+    const dir = cut === -1 ? "" : path.slice(0, cut);
+    const name = cut === -1 ? path : path.slice(cut + 1);
+    if (!dirs.has(dir)) dirs.set(dir, []);
+    dirs.get(dir).push({ path, name, role });
+  }
+  return dirs;
+}
+
+const VIEWABLE = ["volume", "mask", "aux"];
+
+function renderFiles() {
+  const tree = $("files-tree");
+  tree.replaceChildren();
+  if (!dataset?.resolved?.files) {
+    $("files-summary").textContent = dataset
+      ? "No per-file verdicts for this dataset."
+      : "Showing the pre-baked demo slice — no BIDS dataset loaded.";
+    return;
+  }
+  const entries = dataset.resolved.files;
+  const counts = new Map();
+  for (const [, role] of entries) counts.set(role.kind, (counts.get(role.kind) ?? 0) + 1);
+  const parts = [...counts].map(([k, n]) => `${n} ${k.replace(/_/g, " ")}`);
+  $("files-summary").textContent =
+    `${dataset.archive} · ${entries.length} files · ${parts.join(" · ")}`;
+
+  for (const [dir, rows] of groupByDir(entries)) {
+    const head = document.createElement("div");
+    head.className = "files-dir";
+    head.textContent = dir === "" ? "./" : `${dir}/`;
+    tree.append(head);
+    for (const { path, name, role } of rows) {
+      const row = document.createElement("div");
+      row.className = `files-row ${role.kind}`;
+      row.dataset.path = path;
+      if (role.kind === "volume") {
+        row.dataset.frame = String(role.index);
+        row.classList.add("clickable");
+        row.title = "Click to show this volume";
+      }
+      const label = document.createElement("span");
+      label.className = "files-name";
+      label.textContent = name;
+      const kind = document.createElement("span");
+      kind.className = "files-role";
+      kind.textContent = roleLabel(role);
+      row.append(label, kind);
+      if (VIEWABLE.includes(role.kind) && dataset.files?.has(path)) {
+        const open = document.createElement("button");
+        open.className = "files-open";
+        open.textContent = "⤢";
+        open.title = "Open this file in a viewer";
+        open.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openFileModal(path);
+        });
+        row.append(open);
+        row.addEventListener("dblclick", () => openFileModal(path));
+      }
+      tree.append(row);
+    }
+  }
+  syncFilesHighlight();
+}
+
+// The row and the frame slider drive the same state, so a filename and the
+// image it produced are one click apart.
+function onFilesClick(event) {
+  const row = event.target.closest(".files-row");
+  if (!row?.dataset.frame) return;
+  goToFrame(Number(row.dataset.frame));
+}
+
+function syncFilesHighlight() {
+  const frame = String(current?.frame ?? 0);
+  for (const row of $("files-tree").querySelectorAll(".files-row")) {
+    row.classList.toggle("current", row.dataset.frame === frame);
+  }
+}
+
+// Failures show in the panel as well as the status bar: this is where a reader
+// looks for why nothing appeared.
+function renderFilesError(message) {
+  $("files-tree").replaceChildren();
+  $("files-summary").textContent = message;
+  showInputsTab("files");
+}
+
+// One NiiVue instance, created on first open and reused. Each holds a WebGL
+// context and browsers cap those, so constructing one per open would leak
+// contexts until the other viewers stopped rendering.
+let nvModal = null;
+
+async function openFileModal(path) {
+  if (!dataset?.files?.has(path)) {
+    status(`no bytes held for "${path}"`, true);
+    return;
+  }
+  $("file-modal").hidden = false;
+  $("file-modal-title").textContent = path;
+  if (!nvModal) {
+    nvModal = new Niivue({
+      isResizeCanvas: true,
+      backColor: [0.02, 0.02, 0.03, 1],
+      loadingText: "",
+    });
+    await nvModal.attachTo("gl-modal");
+    nvModal.setHighResolutionCapable(true);
+  }
+  for (const v of [...nvModal.volumes]) nvModal.removeVolume(v);
+  const volume = await volumeFromDataset(dataset.files, path, { colormap: "gray" });
+  nvModal.addVolume(volume);
+  // Slice type from the data, never from which dataset this is: a single-slice
+  // volume has no second or third plane to show.
+  const nz = volume.hdr?.dims?.[3] ?? 1;
+  nvModal.setSliceType(nz > 1 ? nvModal.sliceTypeMultiplanar : nvModal.sliceTypeAxial);
+  nvModal.resizeListener();
+  nvModal.drawScene();
+}
+
+function closeFileModal() {
+  $("file-modal").hidden = true;
+}
+
+// Load one file's bytes out of the extracted archive as an NVImage. NiiVue
+// infers the format from the name, so the basename must survive.
+async function volumeFromDataset(files, path, extra = {}) {
+  const bytes = files.get(path);
+  if (!bytes) throw new Error(`resolution named "${path}", which the archive does not hold`);
+  const name = path.split("/").pop();
+  return NVImage.loadFromFile({ file: new File([bytes], name), name, ...extra });
+}
+
+// Fetch → unzip → resolve → load → ready to fit. Returns false when the dataset
+// holds nothing this model can fit, having already explained that in the panel;
+// throws when the fetch or the archive itself failed.
+async function loadModelFromBids(name, meta) {
+  const ds = await fetchDataset(name, meta);
+  if (ds.collections.length === 0) {
+    const files = wasm.annotate_non_matching(ds.files, meta.config_bids);
+    dataset = { ...ds, resolved: { files } };
+    renderFiles();
+    $("files-summary").textContent =
+      `${ds.archive} · ${files.length} files · nothing this model can fit`;
+    showInputsTab("files");
+    status(`${ds.archive} holds no ${meta.title} data`, true);
+    return false;
+  }
+
+  const resolved = ds.collections[0];
+  dataset = { ...ds, resolved };
+  // The recipe for BIDS input carries options only; the acquisition comes from
+  // the sidecars, via `resolved.protocol_json`.
+  setEditorText(meta.config_bids);
+
+  status(`loading ${resolved.data_files.length} volumes…`);
+  const loaded = [];
+  for (const path of resolved.data_files) {
+    loaded.push(await volumeFromDataset(ds.files, path));
+  }
+  const [, nx, ny, nz] = loaded[0].hdr.dims;
+  const nt = loaded.length;
+  const volume = buildSeriesVolume(loaded, nx, ny, nz, meta.model);
+  nvIn.addVolume(volume);
+
+  let maskU8 = null;
+  if (resolved.mask_file) {
+    maskU8 = readMask(await volumeFromDataset(ds.files, resolved.mask_file), nx, ny, nz);
+  }
+  const auxFlat = {};
+  const auxVolumes = {};
+  for (const [auxName, path] of resolved.aux_files) {
+    const auxVolume = await volumeFromDataset(ds.files, path);
+    auxFlat[auxName] = Array.from(readScalarVolume(auxVolume, nx, ny, nz));
+    auxVolumes[auxName] = auxVolume;
+  }
+
+  const ids = JSON.parse(resolved.volume_ids_json);
+  const labels = ids.map((id) =>
+    identityLabel(typeof id === "string" ? { role: id } : { params: id }),
+  );
+  // A BIDS-resolved view of this model: the model's own facts come from the
+  // payload, everything data-derived from resolution.
+  const bidsMeta = {
+    ...meta,
+    dims: [nx, ny, nz, nt],
+    labels,
+    volume_ids: ids,
+    protocol_json: resolved.protocol_json,
+    config: meta.config_bids,
+  };
+
+  nvIn.setSliceType(nvIn.sliceTypeAxial);
+  nvOut.setSliceType(nvOut.sliceTypeAxial);
+  sizeViewers();
+  nvIn.drawScene();
+  setFrameUi(nt, labels);
+  current = { meta: bidsMeta, volume, maskU8, auxFlat, auxVolumes, frame: 0 };
+  renderFiles();
+  $("fit").disabled = false;
+  for (const w of resolved.warnings) status(w, true);
+  $("model-info").textContent =
+    `${meta.title}: ${nt} volumes, ${nx}×${ny}${nz > 1 ? `×${nz}` : ""} (${resolved.subject})`;
+  status("ready — press Fit slice");
+  return true;
 }
 
 async function loadModel(name) {
@@ -498,8 +861,21 @@ async function loadModel(name) {
   clearCurve();
   enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
   wheelAccum = 0;
-  setEditorText(meta.config);
+  dataset = null;
 
+  // The full BIDS dataset is the real thing: fetched, resolved in the browser,
+  // and fitted with the acquisition its own sidecars declare. The pre-baked
+  // slice is the fallback, for no network or a host that is down.
+  if (wasm && meta.archive) {
+    try {
+      if (await loadModelFromBids(name, meta)) return;
+    } catch (e) {
+      renderFilesError(`${e.message} — showing the pre-baked slice instead`);
+      status(`${e.message} — fell back to the pre-baked slice`, true);
+    }
+  }
+
+  setEditorText(meta.config);
   const [nx, ny, nz, nt] = meta.dims;
   let volume, maskVolume;
   try {
@@ -564,6 +940,7 @@ function onFrameChange() {
   current.frame = t;
   nvIn.setFrame4D(current.volume.id, t);
   $("frame-label").textContent = current.meta.labels[t] ?? "";
+  syncFilesHighlight();
 }
 
 // Jumps to frame `t` (NiiVue's own `setFrame4D`, the same call `onFrameChange`
@@ -1057,6 +1434,7 @@ async function main() {
     current.frame = frame;
     $("frame").value = String(frame);
     $("frame-label").textContent = current.meta.labels[frame] ?? "";
+    syncFilesHighlight();
   };
 
   wasm = await loadWasm();
@@ -1091,6 +1469,16 @@ async function main() {
   $("colormap").onchange = onColormapChange;
   $("tab-form").onclick = () => showTab("form");
   $("tab-yaml").onclick = () => showTab("yaml");
+  $("tab-viewer").onclick = () => showInputsTab("viewer");
+  $("tab-files").onclick = () => showInputsTab("files");
+  $("files-tree").addEventListener("click", onFilesClick);
+  $("file-modal-close").onclick = closeFileModal;
+  $("file-modal").addEventListener("click", (e) => {
+    if (e.target === $("file-modal")) closeFileModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("file-modal").hidden) closeFileModal();
+  });
   $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
   $("cal-min").onchange = applyCalRange;
   $("cal-max").onchange = applyCalRange;

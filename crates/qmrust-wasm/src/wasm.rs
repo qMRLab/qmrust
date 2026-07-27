@@ -80,6 +80,19 @@ pub fn sim(mode: &str, cfg_yaml: &str) -> Result<String, JsError> {
     api::sim(mode, cfg_yaml).map_err(|e| JsError::new(&e))
 }
 
+/// Per-file verdicts for a dataset that resolved to no collections, so a reader
+/// sees why each file was not selected rather than an empty panel.
+///
+/// `files` is the same path → `Uint8Array` map `resolve_bids` takes.
+#[wasm_bindgen]
+pub fn annotate_non_matching(files: JsValue, cfg_yaml: &str) -> Result<JsValue, JsError> {
+    let files: std::collections::BTreeMap<String, Vec<u8>> = serde_wasm_bindgen::from_value(files)
+        .map_err(|e| JsError::new(&format!("files must be path -> bytes: {e}")))?;
+    let roles = crate::bids::annotate_non_matching(files.into_iter().collect(), cfg_yaml)
+        .map_err(|e| JsError::new(&e))?;
+    serde_wasm_bindgen::to_value(&roles).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Resolve a whole BIDS dataset held in memory against the model `cfg_yaml`
 /// names, through the same `rust-bids` logic the CLI's `--bids-dir` path uses.
 ///
