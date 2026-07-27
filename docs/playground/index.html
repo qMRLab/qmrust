@@ -125,17 +125,22 @@
      start`), so a model with a deeply-nested recipe scrolls internally
      instead of the card stretching to the (now viewport-filling) viewer
      row's height and sitting mostly empty. */
-  /* One fixed height for every card in the top row, so the recipe, the inputs
-     and the fitted map line up exactly. Each card flexes internally: the recipe
-     scrolls its editor, the viewers fill what their feet leave. */
+  /* One fixed height for the two viewer cards, so their black boxes line up. */
   :root { --row1-h: min(58vh, 580px); }
-  .recipe-card, .viewer-in-wrap, .viewer-out-wrap {
-    height: var(--row1-h);
+  .viewer-in-wrap, .viewer-out-wrap { height: var(--row1-h); }
+  /* The left column is one cell spanning both rows: the recipe grows to fill
+     whatever the viewers and curve leave, Fit sits between it and the
+     bring-your-own-data panel, and that panel stays at the bottom. */
+  .left-col {
+    grid-column: 1; grid-row: 1 / span 2;
+    display: flex; flex-direction: column; gap: 12px; min-height: 0;
   }
   .recipe-card {
-    grid-column: 1; grid-row: 1;
-    display: flex; flex-direction: column; min-height: 0;
+    flex: 1 1 0; min-height: 0;
+    display: flex; flex-direction: column;
   }
+  /* Always between the recipe and the drop panel, never scrolled away. */
+  .fit-strip { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
   /* Only the editor scrolls, so the model picker stays put at the top and Fit
      stays put at the bottom however deeply nested a recipe is. */
   .recipe-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
@@ -162,10 +167,10 @@
      different heights. Sized to fit two wrapped lines of each note. */
   .viewer-foot { height: var(--foot-h); flex: 0 0 auto; overflow: hidden; }
   .curve-wrap { grid-column: 2 / span 2; grid-row: 2; }
-  .drop-wrap { grid-column: 1; grid-row: 2; }
+  .drop-wrap { flex: 0 0 auto; }
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; grid-template-rows: none; }
-    .recipe-card, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap, .drop-wrap {
+    .left-col, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap {
       grid-column: 1; grid-row: auto;
     }
     :root { --row1-h: 62vh; }
@@ -344,7 +349,7 @@
   .drop-wrap {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 7px; text-align: center; position: relative; overflow: hidden;
-    padding: 12px; align-self: end;
+    padding: 12px;
     border-style: dashed; border-width: 2px; border-color: var(--line);
     transition: border-color 0.15s ease, background-color 0.15s ease;
   }
@@ -462,10 +467,27 @@
     position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%);
     font: 700 11px var(--mono); color: var(--ink); background: var(--panel);
     border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px;
-    white-space: nowrap; opacity: 0; transition: opacity 0.12s ease;
+    white-space: nowrap; cursor: text;
   }
-  .level-handle:hover > span, .level-handle:focus-visible > span,
-  .level-handle.dragging > span { opacity: 1; }
+  .level-handle:hover > span, .level-handle.dragging > span { border-color: var(--accent); }
+  /* Typing a bound directly, for when a drag is not precise enough. */
+  .level-edit {
+    position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%);
+    width: 8ch; font: 700 11px var(--mono); padding: 1px 4px; border-radius: 6px;
+    z-index: 2;
+  }
+  .range-hint { color: var(--muted); font-size: 11px; }
+  /* Statistics of the fitted map beneath a drawn ROI. A quantitative map is only
+     as useful as the numbers you can get out of a region. */
+  .roi-stats {
+    margin-top: 8px; display: grid; gap: 2px 10px; font: 11px var(--mono);
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  }
+  .roi-stats[hidden] { display: none; }
+  .roi-stat { display: flex; justify-content: space-between; gap: 6px; }
+  .roi-stat b { color: var(--ink); font-weight: 700; }
+  .roi-stat span { color: var(--muted); }
+  .roi-empty { color: var(--muted); grid-column: 1 / -1; }
   /* Value under the pointer as it moves over the bar. */
   .level-readout {
     position: absolute; right: calc(100% + 8px); transform: translateY(-50%);
@@ -527,6 +549,7 @@
   <pre><code>cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg</code></pre>
 </div>
 <div class="layout">
+  <div class="left-col">
   <div class="recipe-card card">
     <div class="section-h">Recipe</div>
     <div class="seg" role="tablist" aria-label="Recipe editor view">
@@ -545,11 +568,25 @@
     </div>
     </div>
     <p class="local-note">Edits are local to your browser — nothing is uploaded or saved.</p>
-    <div id="fit-progress" class="fit-progress">
-      <div id="progress-bar" class="fit-progress-bar"></div>
     </div>
-    <div class="recipe-actions">
+
+    <div class="fit-strip">
+      <div id="fit-progress" class="fit-progress">
+        <div id="progress-bar" class="fit-progress-bar"></div>
+      </div>
       <button id="fit" class="primary">Fit slice</button>
+    </div>
+
+    <div class="drop-wrap card" id="drop-wrap">
+      <div class="drop-title">Fit your own data</div>
+      <div class="drop-sub">Drop a BIDS folder or a .zip here.</div>
+      <div class="drop-actions">
+        <button id="browse-folder" type="button">Folder…</button>
+        <button id="browse-zip" type="button">.zip…</button>
+      </div>
+      <div class="drop-privacy">Nothing is uploaded</div>
+      <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
+      <input type="file" id="zip-input" accept=".zip" hidden>
     </div>
   </div>
 
@@ -616,10 +653,12 @@
         </button>
       </div>
       <div class="range-controls">
-        <label>min <input type="number" id="cal-min" step="any"></label>
-        <label>max <input type="number" id="cal-max" step="any"></label>
-        <button id="cal-reset" type="button">reset range</button>
+        <span class="range-hint">Drag or click the scale's end values to window</span>
+        <button id="cal-reset" class="ghost-btn" type="button">reset range</button>
+        <button id="roi-toggle" class="ghost-btn" type="button" disabled>✎ draw ROI</button>
+        <button id="roi-clear" class="ghost-btn" type="button" hidden>clear ROI</button>
       </div>
+      <div class="roi-stats" id="roi-stats" hidden></div>
     </div>
   </div>
 
@@ -630,17 +669,6 @@
     <div id="curve-note"></div>
   </div>
 
-  <div class="drop-wrap card" id="drop-wrap">
-    <div class="drop-title">Fit your own data</div>
-    <div class="drop-sub">Drop a BIDS folder or a .zip here.</div>
-    <div class="drop-actions">
-      <button id="browse-folder" type="button">Folder…</button>
-      <button id="browse-zip" type="button">.zip…</button>
-    </div>
-    <div class="drop-privacy">Nothing is uploaded</div>
-    <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
-    <input type="file" id="zip-input" accept=".zip" hidden>
-  </div>
 </div>
 
 <div class="modal" id="file-modal" hidden>

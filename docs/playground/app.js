@@ -6,7 +6,7 @@
 // `[nx,ny,nz,nt]` contract (see crates/qmrust-wasm/src/api.rs), and a generic
 // YAML-tree walk that turns a model's recipe into form widgets without ever
 // naming a model or parameter.
-import { Niivue, NVImage } from "./vendor/niivue.js";
+import { Niivue, NVImage, DRAG_MODE } from "./vendor/niivue.js";
 import { load as yamlLoad, dump as yamlDump } from "./vendor/js-yaml.js";
 import { unzipSync, gunzipSync } from "./vendor/fflate.js";
 import hljs from "./vendor/highlight-core.js";
@@ -973,6 +973,9 @@ function syncMapViewControls() {
     ? "Show all three planes"
     : "This fit is a single slice — there are no other planes";
   $("open-map-modal").disabled = !haveMap;
+  // Nothing to measure until a map exists.
+  $("roi-toggle").disabled = !haveMap;
+  if (!haveMap && roiDrawing) toggleRoi();
   if (!volumetric) showMapView("slice");
 }
 
@@ -1283,6 +1286,52 @@ function createLevelControl(prefix) {
     readout.textContent = `${roundBound(value(f))}${data.unit ? ` ${data.unit}` : ""}`;
   }
 
+  // Click a bound's label to type an exact value, for when dragging is not
+  // precise enough. The input replaces the label in place and commits on Enter
+  // or blur; Escape abandons it.
+  function editBound(which) {
+    if (!shownOutput || el(which).querySelector("input")) return;
+    const handle = el(which);
+    const label = handle.querySelector("span");
+    const current = which === "lo" ? shownOutput.volume.cal_min : shownOutput.volume.cal_max;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.step = "any";
+    input.className = "level-edit";
+    input.value = String(roundBound(current));
+    label.style.visibility = "hidden";
+    handle.append(input);
+    input.focus();
+    input.select();
+    const finish = (commit) => {
+      if (commit) {
+        const v = Number(input.value);
+        if (Number.isFinite(v)) {
+          if (which === "lo") setWindow(Math.min(v, shownOutput.volume.cal_max), null);
+          else setWindow(null, Math.max(v, shownOutput.volume.cal_min));
+        }
+      }
+      input.remove();
+      label.style.visibility = "";
+      paint();
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") finish(true);
+      if (e.key === "Escape") finish(false);
+      // A drag handler on the parent must not see these.
+      e.stopPropagation();
+    });
+    input.addEventListener("blur", () => finish(true));
+    // Typing in the input must not start a handle drag.
+    input.addEventListener("pointerdown", (e) => e.stopPropagation());
+  }
+  for (const which of ["lo", "hi"]) {
+    el(which).querySelector("span").addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      editBound(which);
+    });
+  }
+
   el("lo").addEventListener("pointerdown", (e) => beginDrag("lo", e));
   el("hi").addEventListener("pointerdown", (e) => beginDrag("hi", e));
   el("lo").addEventListener("keydown", (e) => onKey("lo", e));
@@ -1329,6 +1378,119 @@ function createLevelControl(prefix) {
 let levelMain = null;
 let levelModal = null;
 
+// ---------------------------------------------------------------------------
+// ROI statistics. NiiVue's own pen writes into a drawing bitmap the same shape
+// as the volume, so "the voxels beneath the ROI" is just the fitted map sampled
+// where that bitmap is non-zero — no geometry of our own to get wrong.
+
+let roiDrawing = false;
+
+// Summary statistics of `values`, which must already be the in-ROI finite set.
+// Quartiles use the same linear-interpolation convention as `percentileWindow`,
+// so a reader comparing the two sees consistent numbers.
+function describeValues(values) {
+  const v = Float64Array.from(values).sort();
+  const n = v.length;
+  const at = (p) => {
+    const idx = (p / 100) * (n - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    return lo === hi ? v[lo] : v[lo] + (v[hi] - v[lo]) * (idx - lo);
+  };
+  const mean = v.reduce((a, b) => a + b, 0) / n;
+  // Sample standard deviation (n-1): these voxels are a sample of a region, not
+  // the whole population of it.
+  const sd =
+    n > 1 ? Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1)) : 0;
+  const q1 = at(25);
+  const q3 = at(75);
+  return { n, mean, sd, min: v[0], max: v[n - 1], median: at(50), q1, q3, iqr: q3 - q1 };
+}
+
+// Sample the shown map wherever the drawing bitmap is set. NiiVue's bitmap is in
+// the volume's own voxel order, which is the order `buildMapVolume` wrote — so
+// index `i` is the same voxel in both.
+function roiValues() {
+  const bitmap = nvOut.drawBitmap;
+  if (!bitmap || !shownOutput || !lastMaps) return [];
+  const flat = lastMaps[shownOutput.name];
+  if (!flat) return [];
+  const [nx, ny, nz] = current.meta.dims;
+  const out = [];
+  for (let z = 0; z < nz; z++) {
+    for (let y = 0; y < ny; y++) {
+      for (let x = 0; x < nx; x++) {
+        // The bitmap is NiiVue's x-fastest order; `lastMaps` is C-order
+        // [nx,ny,nz] (see `readVolumeSeries`), so each needs its own index.
+        if (bitmap[x + y * nx + z * nx * ny] === 0) continue;
+        const v = flat[(x * ny + y) * nz + z];
+        if (Number.isFinite(v)) out.push(v);
+      }
+    }
+  }
+  return out;
+}
+
+function renderRoiStats() {
+  const box = $("roi-stats");
+  if (!roiDrawing && !nvOut.drawBitmap) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const values = roiValues();
+  box.replaceChildren();
+  if (values.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "roi-empty";
+    empty.textContent = "Draw on the map to measure a region.";
+    box.append(empty);
+    return;
+  }
+  const s = describeValues(values);
+  const unit = shownOutput?.unit ? ` ${shownOutput.unit}` : "";
+  const rows = [
+    ["voxels", String(s.n)],
+    ["mean", `${roundBound(s.mean)}${unit}`],
+    ["SD", `${roundBound(s.sd)}${unit}`],
+    ["median", `${roundBound(s.median)}${unit}`],
+    ["min", `${roundBound(s.min)}${unit}`],
+    ["max", `${roundBound(s.max)}${unit}`],
+    ["IQR", `${roundBound(s.iqr)}${unit}`],
+    ["Q1–Q3", `${roundBound(s.q1)} – ${roundBound(s.q3)}`],
+  ];
+  for (const [label, value] of rows) {
+    const row = document.createElement("div");
+    row.className = "roi-stat";
+    const k = document.createElement("span");
+    k.textContent = label;
+    const val = document.createElement("b");
+    val.textContent = value;
+    row.append(k, val);
+    box.append(row);
+  }
+}
+
+function toggleRoi() {
+  roiDrawing = !roiDrawing;
+  nvOut.setDrawingEnabled(roiDrawing);
+  if (roiDrawing) nvOut.setPenValue(1, true);
+  $("roi-toggle").classList.toggle("active", roiDrawing);
+  $("roi-toggle").textContent = roiDrawing ? "✎ drawing…" : "✎ draw ROI";
+  $("roi-clear").hidden = !roiDrawing;
+  // Drawing and drag-to-window are the same gesture, so one must yield while the
+  // pen is active.
+  nvOut.opts.dragMode = roiDrawing ? DRAG_MODE.none : DRAG_MODE.contrast;
+  renderRoiStats();
+}
+
+function clearRoi() {
+  nvOut.drawBitmap = null;
+  nvOut.updateGLVolume();
+  nvOut.drawScene();
+  renderRoiStats();
+}
+
 // The one place a display window is changed. Every control routes through here,
 // so the number inputs, both sets of handles, and the reset button cannot drift
 // apart in what they update. `null` leaves that bound alone.
@@ -1347,8 +1509,6 @@ function setWindow(min, max) {
     nvModal.updateGLVolume();
     nvModal.drawScene();
   }
-  $("cal-min").value = String(roundBound(vol.cal_min));
-  $("cal-max").value = String(roundBound(vol.cal_max));
   levelMain?.paint();
   levelModal?.paint();
 }
@@ -1500,8 +1660,6 @@ async function loadModel(name) {
   $("voxel-value").textContent = "";
   $("model-info").textContent = "";
   $("fit-timing").textContent = "";
-  $("cal-min").value = "";
-  $("cal-max").value = "";
   $("curve-note").textContent = "";
   clearCurve();
   enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
@@ -1736,10 +1894,6 @@ async function fitSlice() {
   if (current.lastVox) plotVoxel(current.lastVox.x, current.lastVox.y, current.lastVox.z);
 }
 
-function seedCalRangeInputs(entry) {
-  $("cal-min").value = entry.volume.cal_min;
-  $("cal-max").value = entry.volume.cal_max;
-}
 
 // A vertical colour-scale legend beside the fitted-map viewer — NiiVue's own
 // `isColorbar` only draws horizontally along the canvas's bottom edge in
@@ -1764,7 +1918,6 @@ function showOutput(name) {
   const cmap = availableColormaps.includes(preferred) ? preferred : availableColormaps[0];
   if (availableColormaps.includes(cmap)) cmapSelect.value = cmap;
   nvOut.setColormap(entry.volume.id, cmapSelect.value || cmap);
-  seedCalRangeInputs(entry);
   nvOut.drawScene();
   // Rebuild the histogram for whichever map is now shown — each output has its
   // own distribution, so the previous one's bins would misdescribe this window.
@@ -1784,10 +1937,6 @@ function onColormapChange() {
 // Reader-adjustable colour scale: min/max feed `volume.cal_min`/`cal_max`
 // directly (the same fields NiiVue's own auto windowing sets), so the
 // colorbar — which reads off the volume — tracks the change for free.
-function applyCalRange() {
-  setWindow(Number($("cal-min").value), Number($("cal-max").value));
-}
-
 function resetCalRange() {
   if (!shownOutput) return;
   setWindow(shownOutput.defaultCalMin, shownOutput.defaultCalMax);
@@ -2138,9 +2287,11 @@ async function main() {
     if (e.key === "Escape" && !$("file-modal").hidden) closeFileModal();
   });
   $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
-  $("cal-min").onchange = applyCalRange;
-  $("cal-max").onchange = applyCalRange;
   $("cal-reset").onclick = resetCalRange;
+  $("roi-toggle").onclick = toggleRoi;
+  $("roi-clear").onclick = clearRoi;
+  // Recompute after each stroke, so the numbers track the region as it is drawn.
+  nvOut.onDrawingChanged = renderRoiStats;
 
   // Wheel-to-scrub, alongside the existing slider: a reader hovering the
   // inputs viewer steps through frames without reaching for the slider,
