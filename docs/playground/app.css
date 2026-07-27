@@ -1,37 +1,53 @@
-:root {
-  --bg:#eef1f4; --panel:#fff; --panel-2:#f5f7f9; --ink:#161b21; --ink-2:#455060;
-  --muted:#7c8797; --line:#d6dde4; --accent:#0f9bab; --accent-ink:#0b7c8a;
-  --good:#1f9d64; --bad:#c0503a; --field:#fff;
-  --rust:#b7410e;
-  --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --sans: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --shadow: 0 1px 2px rgba(20,30,45,.06), 0 10px 30px rgba(20,30,45,.07);
+/* A theme is data: one declaration block per family and mode, chosen by the
+   `data-theme`/`data-mode` attributes that themes.js always sets. No token is
+   ever defined in a media query — the OS preference is one input to the
+   resolution in themes.js, not a second source of truth here.
+   Adding a skin: one THEMES entry in themes.js, plus a light and a dark block
+   below. `node scripts/check_theme_contrast.mjs` gates both.
+
+   Two selectors on the first block, one body: the bare `:root` is what applies
+   before JS runs, so it must stand alone — and the default costs no duplicate.
+
+   `--line` is desaturated copper and draws structure only; `--rust` is saturated
+   and means data or action only. Keeping them apart is what stops a copper-edged
+   panel from competing with the crosshair. */
+:root,
+:root[data-theme="clinical"][data-mode="dark"] {
+  --bg:#0b0e12; --panel:#141a21; --panel-2:#0f151b; --field:#0e141a;
+  --ink:#e7edf3; --ink-2:#a9b6c4; --muted:#6c7887;
+  --line:#232c37; --rust:#e2703a; --accent:#38c0cf; --accent-ink:#5fd3e0;
+  --brass:#d0b070; --good:#3ecb86; --bad:#e0765c; --viewer-bg:#010409;
+  --radius:16px; --border-w:1px;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.34);
+  --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --track:0; --pad-y:14px; --pad-x:14px;
+  --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
+  --glow:transparent; --bloom:transparent;
+  --on-action:#fff; --on-accent:#04262a;
   color-scheme: light dark;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg:#0b0e12; --panel:#141a21; --panel-2:#0f151b; --ink:#e7edf3; --ink-2:#a9b6c4;
-    --muted:#6c7887; --line:#232c37; --accent:#38c0cf; --accent-ink:#5fd3e0;
-    --good:#3ecb86; --bad:#e0765c; --field:#0e141a;
-    --rust:#e2703a;
-  }
-}
-:root[data-theme="dark"] {
-  --bg:#0b0e12; --panel:#141a21; --panel-2:#0f151b; --ink:#e7edf3; --ink-2:#a9b6c4;
-  --muted:#6c7887; --line:#232c37; --accent:#38c0cf; --accent-ink:#5fd3e0;
-  --good:#3ecb86; --bad:#e0765c; --field:#0e141a;
-  --rust:#e2703a;
-}
-:root[data-theme="light"] {
-  --bg:#eef1f4; --panel:#fff; --panel-2:#f5f7f9; --ink:#161b21; --ink-2:#455060;
-  --muted:#7c8797; --line:#d6dde4; --accent:#0f9bab; --accent-ink:#0b7c8a;
-  --good:#1f9d64; --bad:#c0503a; --field:#fff;
-  --rust:#b7410e;
+
+:root[data-theme="clinical"][data-mode="light"] {
+  --bg:#eef1f4; --panel:#fff; --panel-2:#f5f7f9; --field:#fff;
+  --ink:#161b21; --ink-2:#455060; --muted:#7c8797;
+  --line:#d6dde4; --rust:#b7410e; --accent:#0c8290; --accent-ink:#0b7c8a;
+  --brass:#8a6d3b; --good:#1f9d64; --bad:#c0503a; --viewer-bg:#010409;
+  --radius:16px; --border-w:1px;
+  --shadow: 0 1px 2px rgba(20,30,45,.06), 0 10px 30px rgba(20,30,45,.07);
+  --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --track:0; --pad-y:14px; --pad-x:14px;
+  --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
+  --glow:transparent; --bloom:transparent;
+  --on-action:#fff; --on-accent:#ffffff;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
 body {
-  background: var(--bg); color: var(--ink); font: 13px/1.5 var(--sans);
+  background: var(--bg); color: var(--ink); font: 13px/1.5 var(--font-ui);
   padding: 14px;
   display: flex; flex-direction: column;
   /* The app owns exactly one viewport and never scrolls as a page: every panel
@@ -39,8 +55,8 @@ body {
      `vh` so mobile browser chrome does not push the bottom off-screen. */
   height: 100dvh; overflow: hidden;
 }
-h1, h2, h3 { font-family: var(--sans); }
-code, pre, textarea, input, select, .mono { font-family: var(--mono); }
+h1, h2, h3 { font-family: var(--font-h); }
+code, pre, textarea, input, select, .mono { font-family: var(--font-mono); }
 /* A hoverable explanation beside a panel's heading. `title` carries the text,
    so it needs no scripting and stays available to assistive tech through
    `aria-label`. */
@@ -48,7 +64,7 @@ code, pre, textarea, input, select, .mono { font-family: var(--mono); }
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; margin-left: 6px; padding: 0; flex: 0 0 auto;
   border: 1px solid var(--line); border-radius: 50%; background: none;
-  color: var(--muted); font: 600 9px var(--sans); line-height: 1; cursor: help;
+  color: var(--muted); font: 600 9px var(--font-ui); line-height: 1; cursor: help;
   vertical-align: middle; text-transform: none; letter-spacing: 0;
 }
 .info:hover, .info:focus-visible { color: var(--ink); border-color: var(--accent); }
@@ -58,21 +74,21 @@ code, pre, textarea, input, select, .mono { font-family: var(--mono); }
 .tip {
   position: fixed; z-index: 100; max-width: 34ch; pointer-events: none;
   background: color-mix(in srgb, var(--accent) 90%, transparent);
-  color: #04262a; border-radius: 8px; padding: 7px 10px;
-  font: 500 11.5px/1.45 var(--sans); box-shadow: var(--shadow);
+  color: var(--on-accent); border-radius: 8px; padding: 7px 10px;
+  font: 500 11.5px/1.45 var(--font-ui); box-shadow: var(--shadow);
 }
 .tip[hidden] { display: none; }
 .section-h {
-  font: 700 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .09em;
+  font: 700 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .09em;
   color: var(--muted); margin: 0 0 8px;
 }
 .card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
-  box-shadow: var(--shadow); padding: 14px;
+  background: var(--panel); border: var(--border-w) solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: var(--pad-y) var(--pad-x);
 }
 input, select, textarea, button {
   background: var(--field); color: var(--ink); border: 1px solid var(--line);
-  border-radius: 9px; padding: 6px 9px; font: 13px var(--mono);
+  border-radius: 9px; padding: 6px 9px; font: 13px var(--font-mono);
 }
 input:focus, select:focus, textarea:focus, button:focus-visible {
   outline: none; border-color: var(--accent);
@@ -80,7 +96,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 }
 button { cursor: pointer; }
 button:disabled { opacity: .5; cursor: default; }
-button.primary { background: var(--accent); color: #04262a; border-color: var(--accent-ink); font-weight: 600; }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent-ink); font-weight: 600; }
 #status { color: var(--muted); }
 #status.error { color: var(--bad); }
 
@@ -100,22 +116,22 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
   border-bottom: 1px solid var(--line); background: var(--panel-2);
 }
 .navbar-title {
-  font: 700 12px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .08em;
+  font: 700 12px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em;
   color: var(--ink);
 }
 .navbar-status { font-size: 12px; }
 
 /* Fitting progress: a permanent fixture above the Fit button (idle = empty
    track), not a topbar element that appears/disappears and shifts the rest
-   of the page. Track/fill/stripe colours are fixed (not theme-token-based)
-   to match the reference look asked for. */
+   of the page. The stripe is a white sheen rather than a token: it reads as a
+   highlight over any accent a theme supplies. */
 .fit-progress {
-  height: 10px; border-radius: 999px; background: #6b7280; overflow: hidden;
+  height: 10px; border-radius: 999px; background: var(--panel-2); overflow: hidden;
   margin: 2px 0 2px;
 }
 .fit-progress-bar {
   height: 100%; width: 0%; border-radius: 999px;
-  background-color: #4f9dff;
+  background-color: var(--accent);
   background-image: repeating-linear-gradient(
     45deg, rgba(255, 255, 255, 0.35) 0 10px, transparent 10px 20px
   );
@@ -176,7 +192,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 .collapse-btn {
   display: none; margin-left: auto; padding: 2px 8px; border-radius: 999px;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
-  font: 600 10px var(--mono); text-transform: uppercase; letter-spacing: .06em;
+  font: 600 10px var(--font-mono); text-transform: uppercase; letter-spacing: .06em;
 }
 .collapse-btn:hover { color: var(--ink); border-color: var(--accent); }
 /* The viewer wraps *do* stretch (the grid default) to fill whatever
@@ -248,7 +264,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 }
 .seg button {
   border: none; background: transparent; border-radius: 999px; padding: 5px 14px;
-  font: 600 12px var(--sans); color: var(--muted);
+  font: 600 12px var(--font-ui); color: var(--muted);
 }
 .seg button.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
 .seg button:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
@@ -258,7 +274,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 
 .yaml-wrap { position: relative; }
 .yaml-pill {
-  position: absolute; top: 8px; right: 8px; font: 700 10px var(--mono);
+  position: absolute; top: 8px; right: 8px; font: 700 10px var(--font-mono);
   text-transform: uppercase; letter-spacing: .06em; padding: 2px 8px; border-radius: 999px;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
 }
@@ -270,7 +286,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
    textarea stays the single source of truth for text and editing. */
 .yaml-edit { position: relative; }
 .yaml-edit > #cfg-yaml, .yaml-edit > #yaml-hl {
-  font: 12px/1.5 var(--mono); padding: 6px 9px; border: 1px solid transparent;
+  font: 12px/1.5 var(--font-mono); padding: 6px 9px; border: 1px solid transparent;
   border-radius: 9px; white-space: pre-wrap; overflow-wrap: break-word;
   tab-size: 2; margin: 0;
 }
@@ -298,15 +314,15 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
   border: 1px solid var(--line); border-radius: 12px; padding: 10px; background: var(--panel-2);
 }
 .group > .group-title {
-  font: 700 11px var(--mono); text-transform: uppercase; letter-spacing: .07em;
+  font: 700 11px var(--font-mono); text-transform: uppercase; letter-spacing: .07em;
   color: var(--muted); margin-bottom: 8px;
 }
 .group .form-fields { gap: 8px; }
 .field-row {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
 }
-.field-label { color: var(--ink-2); font: 12px var(--sans); }
-.field-key { display: block; color: var(--muted); font: 11px var(--mono); }
+.field-label { color: var(--ink-2); font: 12px var(--font-ui); }
+.field-key { display: block; color: var(--muted); font: 11px var(--font-mono); }
 .field-row input, .field-row textarea { width: 100%; }
 .field-row textarea { min-height: 44px; resize: vertical; }
 
@@ -373,7 +389,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 .frame-label { color: var(--muted); min-width: 8em; text-align: right; font-size: 12px; }
 .viewer {
   position: relative; border-radius: 12px; overflow: hidden;
-  background: #010409; margin: 0; width: 100%;
+  background: var(--viewer-bg); margin: 0; width: 100%;
   flex: 1 1 auto; min-height: 0;
 }
 .viewer canvas { width: 100%; height: 100%; display: block; }
@@ -437,7 +453,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
    size while data loads — a viewer that resizes mid-load reflows the page.
    `.viewer` is already `position: relative`. */
 .viewer-skel {
-  position: absolute; inset: 0; background: #010409;
+  position: absolute; inset: 0; background: var(--viewer-bg);
   display: flex; align-items: center; justify-content: center;
 }
 .viewer-skel[hidden] { display: none; }
@@ -471,14 +487,14 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 @media (prefers-color-scheme: dark) {
   .drop-wrap::before { filter: invert(1); opacity: 0.13; }
 }
-:root[data-theme="dark"] .drop-wrap::before { filter: invert(1); opacity: 0.13; }
+:root[data-mode="dark"] .drop-wrap::before { filter: invert(1); opacity: 0.13; }
 .drop-wrap.drop-over {
   border-color: var(--accent);
   background-color: color-mix(in srgb, var(--accent) 8%, var(--panel));
 }
 .drop-wrap.drop-over::before { opacity: 0.26; }
 .drop-title {
-  font: 700 13px var(--sans); color: var(--ink); position: relative;
+  font: 700 13px var(--font-ui); color: var(--ink); position: relative;
 }
 .drop-sub {
   font-size: 11px; color: var(--muted); max-width: 34ch; position: relative;
@@ -516,7 +532,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
   transform: rotate(-90deg); transform-origin: 50% 50%;
   transition: stroke-dashoffset 0.15s linear;
 }
-.dl-pct { font: 700 11px var(--mono); color: var(--rust); }
+.dl-pct { font: 700 11px var(--font-mono); color: var(--rust); }
 .dl-pct[hidden] { display: none; }
 /* Before the response headers arrive there is no total to measure against, so
    the ring spins rather than sitting at 0% through the part of the wait that
@@ -570,7 +586,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 .json-view {
   flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0;
   background: var(--field); border: 1px solid var(--line); border-radius: 9px;
-  padding: 12px; font: 12px/1.55 var(--mono); white-space: pre;
+  padding: 12px; font: 12px/1.55 var(--font-mono); white-space: pre;
 }
 .modal-body .viewer { flex: 1 1 auto; height: auto; }
 
@@ -605,7 +621,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 /* The value that a handle currently sits at, shown while it is touched. */
 .level-handle > span {
   position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%);
-  font: 700 11px var(--mono); color: var(--ink); background: var(--panel);
+  font: 700 11px var(--font-mono); color: var(--ink); background: var(--panel);
   border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px;
   white-space: nowrap; cursor: text;
 }
@@ -613,14 +629,14 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 /* Typing a bound directly, for when a drag is not precise enough. */
 .level-edit {
   position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%);
-  width: 8ch; font: 700 11px var(--mono); padding: 1px 4px; border-radius: 6px;
+  width: 8ch; font: 700 11px var(--font-mono); padding: 1px 4px; border-radius: 6px;
   z-index: 2;
 }
 .range-hint { color: var(--muted); font-size: 11px; }
 /* Statistics of the fitted map beneath a drawn ROI. A quantitative map is only
    as useful as the numbers you can get out of a region. */
 .roi-stats {
-  margin-top: 8px; display: grid; gap: 2px 10px; font: 11px var(--mono);
+  margin-top: 8px; display: grid; gap: 2px 10px; font: 11px var(--font-mono);
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
 }
 .roi-stats[hidden] { display: none; }
@@ -631,7 +647,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 /* Value under the pointer as it moves over the bar. */
 .level-readout {
   position: absolute; right: calc(100% + 8px); transform: translateY(-50%);
-  font: 11px var(--mono); color: var(--muted); background: var(--panel);
+  font: 11px var(--font-mono); color: var(--muted); background: var(--panel);
   border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px;
   white-space: nowrap; pointer-events: none;
 }
@@ -650,7 +666,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
    window's bounds, which are the plain labels at the handles. */
 .level-dot > span {
   position: absolute; right: calc(100% + 20px); top: 50%; transform: translateY(-50%);
-  font: 700 11px var(--mono); color: var(--accent-ink);
+  font: 700 11px var(--font-mono); color: var(--accent-ink);
   background: var(--panel); border: 1px solid var(--accent);
   border-radius: 6px; padding: 1px 5px; white-space: nowrap;
 }
@@ -667,7 +683,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 }
 .map-colorbar-labels {
   display: flex; flex-direction: column; justify-content: space-between;
-  font: 11px var(--mono); color: var(--ink-2); white-space: nowrap; padding: 2px 0;
+  font: 11px var(--font-mono); color: var(--ink-2); white-space: nowrap; padding: 2px 0;
 }
 
 .out-controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
@@ -681,7 +697,7 @@ button.primary { background: var(--accent); color: #04262a; border-color: var(--
 .range-controls input[type=number] { width: 8em; font-size: 12px; padding: 4px 7px; }
 .range-controls button { font-size: 12px; padding: 4px 10px; }
 
-.voxel-value { color: var(--ink-2); font: 12px var(--mono); margin: 2px 0 8px; }
+.voxel-value { color: var(--ink-2); font: 12px var(--font-mono); margin: 2px 0 8px; }
 
 /* ECharts follows this container's size (a ResizeObserver in `curve.js` calls
    its `resize`), so the container flexes and the chart tracks it. */

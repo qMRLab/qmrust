@@ -19,7 +19,13 @@ export const REQUIRED = [
   "--line", "--rust", "--accent", "--accent-ink", "--brass", "--good", "--bad",
   "--viewer-bg", "--radius", "--border-w", "--shadow",
   "--font-ui", "--font-h", "--font-mono", "--track", "--pad-y", "--pad-x",
+  "--on-accent",
 ];
+
+// Ink that sits on a filled surface rather than on a panel. Each pair is
+// (ink token, fill token) and is held to the 4.5 text floor: these are button
+// labels and tooltip copy, which are small text however bold.
+const ON_PAIRS = [["--on-accent", "--accent"]];
 
 export function parseColor(str) {
   const s = str.trim();
@@ -129,6 +135,16 @@ export function main(cssPath, themesPath) {
       }
       if (worst < floor) {
         problems.push(`${key}: ${token} contrast ${worst.toFixed(2)} < ${floor}`);
+      }
+    }
+
+    // Ink on a filled surface: the tooltip and the primary button both put text
+    // straight onto --accent, where a light-on-light pairing is easy to miss.
+    for (const [inkToken, fillToken] of ON_PAIRS) {
+      if (!tokens.has(inkToken) || !tokens.has(fillToken)) continue;
+      const r = contrast(parseColor(tokens.get(inkToken)), parseColor(tokens.get(fillToken)));
+      if (r < 4.5) {
+        problems.push(`${key}: ${inkToken} on ${fillToken} is ${r.toFixed(2)} < 4.5`);
       }
     }
 
