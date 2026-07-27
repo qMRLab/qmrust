@@ -5,12 +5,23 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// Floors per token. `--muted` is deliberately 3.0 rather than AA's 4.5: a
-// 4.5-contrast "muted" grey no longer reads as muted, and the shipped clinical
-// light theme has sat at 3.64 since it was written.
+// Floors per token, and which surfaces each is actually drawn on.
+//
+// `--muted` is deliberately 3.0 rather than AA's 4.5: a 4.5-contrast "muted"
+// grey no longer reads as muted, and the shipped clinical light theme has sat
+// at 3.64 since it was written.
+//
+// Text can land on the bare page ground as well as on a panel, so it is held to
+// both. Marks — series colours, the crosshair, the active-tool fill — only ever
+// appear on a panel or a canvas, so measuring them against a textured ground
+// they never touch would reject good palettes for an imaginary fault.
 export const FLOORS = {
-  "--ink": 4.5, "--ink-2": 4.5, "--muted": 3.0,
-  "--accent": 3.0, "--rust": 3.0, "--brass": 3.0,
+  "--ink": { floor: 4.5, on: "both" },
+  "--ink-2": { floor: 4.5, on: "both" },
+  "--muted": { floor: 3.0, on: "both" },
+  "--accent": { floor: 3.0, on: "panel" },
+  "--rust": { floor: 3.0, on: "panel" },
+  "--brass": { floor: 3.0, on: "panel" },
 };
 
 // Every token a theme must define.
@@ -124,17 +135,18 @@ export function main(cssPath, themesPath) {
       .map((s) => parseColor(s).slice(0, 3))];
     const panel = tokens.has("--panel") ? parseColor(tokens.get("--panel")) : null;
 
-    for (const [token, floor] of Object.entries(FLOORS)) {
+    for (const [token, { floor, on }] of Object.entries(FLOORS)) {
       if (!tokens.has(token)) continue;
       const fg = parseColor(tokens.get(token));
       let worst = Infinity;
       for (const ground of grounds) {
-        const surfaces = [ground];
-        if (panel) surfaces.push(composite(panel, ground));
-        for (const surface of surfaces) worst = Math.min(worst, contrast(fg, surface));
+        // A translucent panel must be composited over the ground before it can
+        // be measured, or every alpha theme reports a reassuring wrong number.
+        if (panel) worst = Math.min(worst, contrast(fg, composite(panel, ground)));
+        if (on === "both") worst = Math.min(worst, contrast(fg, ground));
       }
       if (worst < floor) {
-        problems.push(`${key}: ${token} contrast ${worst.toFixed(2)} < ${floor}`);
+        problems.push(`${key}: ${token} contrast ${worst.toFixed(2)} < ${floor} (on ${on})`);
       }
     }
 

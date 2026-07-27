@@ -10,5 +10,7 @@
 // Values live in app.css; this is the list, so the two cannot disagree about a
 // token. `scripts/check_theme_contrast.mjs` asserts they agree both ways.
 export const THEMES = [
+  { id: "patina", label: "Patina" },
+  { id: "oxide", label: "Oxide" },
   { id: "clinical", label: "Clinical" },
 ];

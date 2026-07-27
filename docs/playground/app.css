@@ -12,6 +12,85 @@
    and means data or action only. Keeping them apart is what stops a copper-edged
    panel from competing with the crosshair. */
 :root,
+:root[data-theme="patina"][data-mode="dark"] {
+  --bg:#23272e; --panel:#2c323a; --panel-2:#262b32; --field:#1e232a;
+  --ink:#ece5da; --ink-2:#c2b8aa; --muted:#8a8275;
+  --line:#5d4132; --rust:#c47c56; --accent:#7cc3b5; --accent-ink:#96d6c8;
+  --brass:#c9a86a; --good:#8fc39a; --bad:#d76a4c; --viewer-bg:#101317;
+  --radius:6px; --border-w:1px;
+  --shadow: 0 1px 2px rgba(0,0,0,.34), 0 8px 20px rgba(0,0,0,.28);
+  --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --track:.04em; --pad-y:8px; --pad-x:9px;
+  --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
+  --glow:transparent; --bloom:transparent;
+  --on-action:#241209; --on-accent:#0d221e;
+  color-scheme: dark;
+}
+
+:root[data-theme="patina"][data-mode="light"] {
+  --bg:#e9e1d5; --panel:#f7f1e7; --panel-2:#f0e9de; --field:#fffdf8;
+  --ink:#2a2620; --ink-2:#574f44; --muted:#7d7466;
+  --line:#c9ad91; --rust:#a85a34; --accent:#2b7a6d; --accent-ink:#246d61;
+  --brass:#96762f; --good:#4b7d52; --bad:#c0533a; --viewer-bg:#141a1e;
+  --radius:6px; --border-w:1px;
+  --shadow: 0 1px 2px rgba(70,52,30,.07), 0 8px 20px rgba(70,52,30,.11);
+  --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --track:.04em; --pad-y:8px; --pad-x:9px;
+  --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
+  --glow:transparent; --bloom:transparent;
+  --on-action:#fff8f1; --on-accent:#ffffff;
+  color-scheme: light;
+}
+
+/* Oxide: verdigris is the material, copper the fittings. The ground oxidizes
+   downward — see texture-oxide.svg — and the panels are translucent so the
+   weathering reads through the UI instead of stopping at every card edge.
+   `--bg` stays a solid colour (the gradient's midpoint) because NiiVue's
+   backColor and several rgba mixes need a colour, not an image. */
+:root[data-theme="oxide"][data-mode="dark"] {
+  --bg:#28413b; --panel:rgba(15,26,25,.80); --panel-2:rgba(11,20,19,.86); --field:rgba(8,16,15,.74);
+  --ink:#e9f0ec; --ink-2:#b6c8c2; --muted:#8ea39e;
+  --line:#5d4132; --rust:#cf8a5f; --accent:#6fd6bd; --accent-ink:#8ee3cd;
+  --brass:#c9a86a; --good:#8fd3a9; --bad:#e0765c; --viewer-bg:#06090a;
+  --radius:7px; --border-w:1px;
+  --shadow: 0 1px 2px rgba(0,0,0,.55), 0 10px 26px rgba(0,0,0,.45);
+  --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --track:.05em; --pad-y:8px; --pad-x:9px;
+  --bg-image: url("texture-oxide.svg"),
+              linear-gradient(180deg,#26292a 0%,#243330 34%,#254440 66%,#28564b 100%);
+  --grad-action: linear-gradient(100deg,#b8764e,#7fae95 55%,#6fd6bd);
+  --grad-soft: linear-gradient(100deg,rgba(162,96,60,.22),rgba(111,214,189,.16));
+  --glow:rgba(111,214,189,.26); --bloom:rgba(60,150,130,.22);
+  --on-action:#04140f; --on-accent:#04140f;
+  color-scheme: dark;
+}
+
+:root[data-theme="oxide"][data-mode="light"] {
+  --bg:#d7ded2; --panel:rgba(252,250,244,.84); --panel-2:rgba(244,241,232,.88); --field:rgba(255,254,250,.90);
+  --ink:#232520; --ink-2:#4e5147; --muted:#6c7367;
+  --line:#c9ad91; --rust:#a85a34; --accent:#2b7a6d; --accent-ink:#246d61;
+  --brass:#96762f; --good:#4b7d52; --bad:#c0533a; --viewer-bg:#141a1e;
+  --radius:7px; --border-w:1px;
+  --shadow: 0 1px 2px rgba(60,70,55,.09), 0 10px 24px rgba(60,70,55,.14);
+  --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --track:.05em; --pad-y:8px; --pad-x:9px;
+  --bg-image: url("texture-oxide-light.svg"),
+              linear-gradient(180deg,#e9e5da 0%,#dee2d6 40%,#cfdcd0 72%,#bed4c6 100%);
+  --grad-action: linear-gradient(100deg,#9c5230,#537565 58%,#2b7a6d);
+  --grad-soft: linear-gradient(100deg,rgba(156,82,48,.14),rgba(47,133,119,.12));
+  --glow:rgba(47,133,119,.14); --bloom:rgba(90,150,130,.18);
+  --on-action:#fff8f1; --on-accent:#ffffff;
+  color-scheme: light;
+}
+
 :root[data-theme="clinical"][data-mode="dark"] {
   --bg:#0b0e12; --panel:#141a21; --panel-2:#0f151b; --field:#0e141a;
   --ink:#e7edf3; --ink-2:#a9b6c4; --muted:#6c7887;
@@ -26,7 +105,7 @@
   --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
   --glow:transparent; --bloom:transparent;
   --on-action:#fff; --on-accent:#04262a;
-  color-scheme: light dark;
+  color-scheme: dark;
 }
 
 :root[data-theme="clinical"][data-mode="light"] {
@@ -43,6 +122,7 @@
   --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
   --glow:transparent; --bloom:transparent;
   --on-action:#fff; --on-accent:#ffffff;
+  color-scheme: light;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
