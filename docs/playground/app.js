@@ -13,10 +13,20 @@ import hljs from "./vendor/highlight-core.js";
 import hljsYaml from "./vendor/highlight-yaml.js";
 
 const $ = (id) => document.getElementById(id);
-const status = (m, isError = false) => {
+// The navbar status line. `kind` colours and weights it, because the two states
+// a reader actually watches for — work in progress, and done — should be
+// distinguishable at a glance rather than uniform grey.
+//   "ok"    finished and usable      (green)
+//   "busy"  something is happening   (rust)
+//   "error" it did not work          (red)
+//   "info"  neutral aside            (muted)
+// A boolean is accepted for `kind` and means "error".
+const status = (m, kind = "info") => {
   const el = $("status");
   el.textContent = m;
-  el.classList.toggle("error", isError);
+  const resolved = kind === true ? "error" : kind || "info";
+  el.classList.remove("ok", "busy", "error");
+  if (resolved !== "info") el.classList.add(resolved);
 };
 
 // Colormap per output unit, never per model/output name — mirrors
@@ -88,7 +98,7 @@ async function loadWasm() {
     return mod;
   } catch (e) {
     $("fallback").hidden = false;
-    status("wasm unavailable — viewers still work, fitting does not");
+    status("Fitting unavailable — wasm failed to load; viewers still work", "error");
     return null;
   }
 }
@@ -122,18 +132,15 @@ const datasetCache = {};
 const RING_CIRCUMFERENCE = 2 * Math.PI * 36; // r=36, matching the SVG
 
 function setDownloadProgress(fraction) {
-  const ring = $("dl-ring");
-  const pct = $("dl-pct");
+  const box = $("navbar-dl");
   if (fraction === null) {
-    ring.hidden = true;
-    pct.hidden = true;
+    box.hidden = true;
     return;
   }
-  ring.hidden = false;
-  pct.hidden = false;
+  box.hidden = false;
   const clamped = Math.max(0, Math.min(1, fraction));
   $("dl-arc").style.strokeDashoffset = String(RING_CIRCUMFERENCE * (1 - clamped));
-  pct.textContent = `${Math.round(clamped * 100)}%`;
+  $("dl-pct").textContent = `${Math.round(clamped * 100)}%`;
 }
 
 function hideDownloadProgress() {
@@ -173,7 +180,7 @@ async function fetchWithProgress(url) {
 // One loading stage, reported in both places a reader might be looking: the
 // navbar status and whichever skeleton is on screen.
 function stage(message) {
-  status(message);
+  status(message, "busy");
   // The files panel's own header doubles as the loading caption; the viewers
   // carry no text, only their shimmer.
   if (loading) $("files-summary").textContent = message;
@@ -220,7 +227,7 @@ async function fetchDataset(name, meta) {
   if (droppedFiles) {
     const files = droppedFiles;
     droppedFiles = null;
-    stage(`resolving ${files.size} files as BIDS…`);
+    stage(`Resolving ${files.size} files as BIDS…`);
     return {
       archive: "your dataset",
       files,
@@ -230,10 +237,10 @@ async function fetchDataset(name, meta) {
   if (datasetCache[name]) return datasetCache[name];
   const src = await loadSources();
   const url = `${src.base}/${meta.archive}${src.suffix}`;
-  stage(`fetching ${meta.archive}…`);
+  stage("Downloading example data…");
   const buf = await fetchWithProgress(url);
 
-  stage(`extracting ${meta.archive} (${(buf.length / 1e6).toFixed(1)} MB)…`);
+  stage(`Extracting ${(buf.length / 1e6).toFixed(1)} MB…`);
   let files;
   try {
     files = unzipDataset(buf);
@@ -785,47 +792,87 @@ async function modelsMatching(files) {
 }
 
 async function loadDropped(entries) {
-  showLoading("reading your dataset…", 16);
+  showLoading("Reading your dataset…", 16);
   try {
-    const files = await filesFromDrop(entries);
-    stage(`resolving ${files.size} dropped files…`);
-    const matches = await modelsMatching(files);
-    if (matches.length === 0) {
-      const meta = await loadBundle($("model").value);
-      const verdicts = wasm.annotate_non_matching(files, meta.config_bids);
-      dataset = { archive: "your dataset", files, resolved: { files: verdicts } };
-      endLoading();
-      renderFiles();
-      $("files-summary").textContent =
-        `your dataset · ${verdicts.length} files · no registered model can fit this`;
-      showInputsTab("files");
-      status("no registered model matches that dataset — see Files for why", true);
-      return;
-    }
-
-    // Switching the select re-enters the normal load path, so pin the dropped
-    // dataset for it to pick up instead of fetching.
-    const pick = matches.includes($("model").value) ? $("model").value : matches[0];
-    droppedFiles = files;
-    $("model").value = pick;
-    endLoading();
-    await loadModel(pick);
-    const others = matches.filter((m) => m !== pick);
-    if (others.length) {
-      status(`fitted as ${pick}; this dataset also matches ${others.join(", ")}`);
-    }
+    await useDataset(await filesFromDrop(entries));
   } catch (e) {
     endLoading();
-    renderFilesError(`could not read that drop: ${e.message}`);
-    status(`could not read that drop: ${e.message}`, true);
+    renderFilesError(`Could not read that dataset — ${e.message}`);
+    status(`Could not read that dataset — ${e.message}`, "error");
+  }
+}
+
+// A reader's dataset, however it arrived: find which models can fit it, load it
+// through the ordinary path, or explain per file why nothing matched.
+async function useDataset(files) {
+  stage(`Resolving your ${files.size} files as BIDS…`);
+  const matches = await modelsMatching(files);
+  if (matches.length === 0) {
+    // Explain it against the model currently selected, since that is the one
+    // the reader was looking at when they handed the dataset over.
+    const meta = await loadBundle($("model").value);
+    const verdicts = wasm.annotate_non_matching(files, meta.config_bids);
+    dataset = { archive: "your dataset", files, resolved: { files: verdicts } };
+    endLoading();
+    renderFiles();
+    $("files-summary").textContent =
+      `your dataset · ${verdicts.length} files · no model here can fit this`;
+    showInputsTab("files");
+    status("No model matches that dataset — see Files for why", "error");
+    return;
+  }
+
+  // Pinning the dataset lets the ordinary load path pick it up instead of
+  // fetching, so nothing downstream knows where it came from.
+  const pick = matches.includes($("model").value) ? $("model").value : matches[0];
+  droppedFiles = files;
+  $("model").value = pick;
+  endLoading();
+  await loadModel(pick);
+  const others = matches.filter((m) => m !== pick);
+  if (others.length) {
+    status(`Loaded as ${pick} — also matches ${others.join(", ")}`, "info");
+  }
+}
+
+// Turn `<input type="file">` output into the same path -> bytes map a drop
+// produces. A directory picker reports each file's `webkitRelativePath`, which
+// is exactly the relative path resolution needs; a picked `.zip` goes through
+// the same extractor a fetched archive does.
+async function filesFromInput(fileList) {
+  const picked = [...fileList];
+  if (picked.length === 0) throw new Error("nothing selected");
+  if (picked.length === 1 && /\.zip$/i.test(picked[0].name)) {
+    return unzipDataset(new Uint8Array(await picked[0].arrayBuffer()));
+  }
+  const pairs = picked.map((f) => [f.webkitRelativePath || f.name, f]);
+  const files = new Map();
+  for (const [path, file] of rootRelative(pairs)) {
+    files.set(path, new Uint8Array(await file.arrayBuffer()));
+  }
+  return files;
+}
+
+async function onBrowse(fileList) {
+  if (!wasm) {
+    status("Fitting unavailable — wasm failed to load", "error");
+    return;
+  }
+  showLoading("Reading your dataset…", 16);
+  try {
+    await useDataset(await filesFromInput(fileList));
+  } catch (e) {
+    endLoading();
+    renderFilesError(`Could not read that dataset — ${e.message}`);
+    status(`Could not read that dataset — ${e.message}`, "error");
   }
 }
 
 function onDrop(event) {
   event.preventDefault();
-  $("viewer-in-wrap").classList.remove("drop-over");
+  $("drop-wrap").classList.remove("drop-over");
   if (!wasm) {
-    status("wasm unavailable — cannot resolve a dropped dataset", true);
+    status("Fitting unavailable — wasm failed to load", "error");
     return;
   }
   // Capture the entries here, synchronously: the DataTransfer is neutered as
@@ -834,7 +881,7 @@ function onDrop(event) {
     .map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null))
     .filter(Boolean);
   if (entries.length === 0) {
-    status("that drop carried no files", true);
+    status("That drop carried no files", "error");
     return;
   }
   loadDropped(entries);
@@ -1085,7 +1132,7 @@ async function ensureModalViewer() {
 
 async function openFileModal(path) {
   if (!dataset?.files?.has(path)) {
-    status(`no bytes held for "${path}"`, true);
+    status(`No data held for "${path}"`, "error");
     return;
   }
   $("file-modal").hidden = false;
@@ -1127,7 +1174,7 @@ async function loadModelFromBids(name, meta) {
     $("files-summary").textContent =
       `${ds.archive} · ${files.length} files · nothing this model can fit`;
     showInputsTab("files");
-    status(`${ds.archive} holds no ${meta.title} data`, true);
+    status(`No ${meta.title} data in that dataset — see Files for why`, "error");
     return false;
   }
 
@@ -1137,7 +1184,7 @@ async function loadModelFromBids(name, meta) {
   // the sidecars, via `resolved.protocol_json`.
   setEditorText(meta.config_bids);
 
-  stage(`loading ${resolved.data_files.length} volumes…`);
+  stage(`Loading ${resolved.data_files.length} volumes…`);
   const parts = resolved.data_files.map((path) => {
     const bytes = ds.files.get(path);
     if (!bytes) throw new Error(`resolution named "${path}", which the archive does not hold`);
@@ -1188,20 +1235,20 @@ async function loadModelFromBids(name, meta) {
   renderFiles();
   syncMapViewControls();
   $("fit").disabled = false;
-  for (const w of resolved.warnings) status(w, true);
+  for (const w of resolved.warnings) status(w, "error");
   $("model-info").textContent =
     `${meta.title}: ${nt} volumes, ${nx}×${ny}${nz > 1 ? `×${nz}` : ""} (${resolved.subject})`;
-  status("ready — press Fit slice");
+  status("Ready", "ok");
   return true;
 }
 
 async function loadModel(name) {
-  status(`loading ${name}…`);
+  status(`Loading ${name}…`, "busy");
   let meta;
   try {
     meta = await loadBundle(name);
   } catch (e) {
-    status(`could not load bundle "${name}" (${e.message})`, true);
+    status(`Could not load ${name} — ${e.message}`, "error");
     return;
   }
 
@@ -1239,7 +1286,7 @@ async function loadModel(name) {
     } catch (e) {
       endLoading();
       renderFilesError(`${e.message} — showing the pre-baked slice instead`);
-      status(`${e.message} — fell back to the pre-baked slice`, true);
+      status(`${e.message} — showing the built-in sample instead`, "error");
     }
   }
 
@@ -1254,7 +1301,7 @@ async function loadModel(name) {
       colorbarVisible: false,
     });
   } catch (e) {
-    status(`could not load "${meta.files.data}" (${e.message})`, true);
+    status(`Could not load image data — ${e.message}`, "error");
     return;
   }
   let maskU8 = null;
@@ -1263,7 +1310,7 @@ async function loadModel(name) {
       maskVolume = await NVImage.loadFromUrl({ url: `./data/${meta.files.mask}` });
       maskU8 = readMask(maskVolume, nx, ny, nz);
     } catch (e) {
-      status(`could not load "${meta.files.mask}" (${e.message})`, true);
+      status(`Could not load the mask — ${e.message}`, "error");
       return;
     }
   }
@@ -1281,7 +1328,7 @@ async function loadModel(name) {
       auxFlat[auxName] = Array.from(readScalarVolume(auxVolume, nx, ny, nz));
       auxVolumes[auxName] = auxVolume;
     } catch (e) {
-      status(`could not load "${filename}" (${e.message})`, true);
+      status(`Could not load ${filename} — ${e.message}`, "error");
       return;
     }
   }
@@ -1300,7 +1347,10 @@ async function loadModel(name) {
   // model switch.
   $("model-info").textContent = `${meta.title}: ${nt} volumes, ${nx}×${ny}`;
   syncMapViewControls();
-  status(wasm ? "ready — press Fit slice" : "wasm unavailable — viewers still work, fitting does not");
+  status(
+    wasm ? "Ready" : "Fitting unavailable — wasm failed to load; viewers still work",
+    wasm ? "ok" : "error",
+  );
 }
 
 function onFrameChange() {
@@ -1388,15 +1438,15 @@ async function fitVolumeWithProgress(nx, ny, nz, nt, data, maskU8, auxFlat) {
 }
 
 async function fitSlice() {
-  if (!current) { status("pick a model first"); return; }
-  if (!wasm) { status("wasm unavailable — build the package to fit", true); return; }
+  if (!current) { status("Pick a model first", "info"); return; }
+  if (!wasm) { status("Fitting unavailable — wasm failed to load", "error"); return; }
   if (!editor.valid) {
-    status("recipe YAML is invalid — fix it before fitting", true);
+    status("Recipe YAML is invalid — fix it before fitting", "error");
     return;
   }
   const { meta, volume, maskU8, auxFlat } = current;
   const [nx, ny, nz, nt] = meta.dims;
-  status("fitting…");
+  status("Fitting…", "busy");
   $("fit-timing").textContent = "";
   showProgress();
   $("fit").disabled = true;
@@ -1406,7 +1456,7 @@ async function fitSlice() {
   try {
     maps = await fitVolumeWithProgress(nx, ny, nz, nt, data, maskU8, auxFlat);
   } catch (e) {
-    status(`fit failed: ${e?.message ?? e}`, true);
+    status(`Fit failed — ${e?.message ?? e}`, "error");
     hideProgress();
     $("fit").disabled = false;
     return;
@@ -1818,7 +1868,7 @@ async function main() {
   try {
     index = await (await fetchOrThrow("./data/index.json")).json();
   } catch (e) {
-    status(`could not load ./data/index.json (${e.message})`, true);
+    status(`Could not load the model index — ${e.message}`, "error");
     return;
   }
 
@@ -1829,7 +1879,7 @@ async function main() {
     try {
       meta = await loadBundle(name);
     } catch (e) {
-      status(`could not load bundle "${name}" (${e.message})`, true);
+      status(`Could not load ${name} — ${e.message}`, "error");
       continue;
     }
     const opt = document.createElement("option");
@@ -1852,9 +1902,10 @@ async function main() {
   $("open-map-modal").onclick = openMapModal;
   $("cfg-yaml").addEventListener("scroll", syncYamlScroll);
 
-  // Drop a BIDS folder on the inputs card. `dragover` must be prevented for a
-  // drop to fire at all.
-  const dropZone = $("viewer-in-wrap");
+  // Bring-your-own-data panel. `dragover` must be prevented for a drop to fire
+  // at all; `dragleave` is filtered to the panel itself, since it also fires
+  // when the cursor crosses onto a child.
+  const dropZone = $("drop-wrap");
   dropZone.addEventListener("dragover", (e) => {
     e.preventDefault();
     dropZone.classList.add("drop-over");
@@ -1863,6 +1914,15 @@ async function main() {
     if (e.target === dropZone) dropZone.classList.remove("drop-over");
   });
   dropZone.addEventListener("drop", onDrop);
+  $("browse-folder").onclick = () => $("folder-input").click();
+  $("browse-zip").onclick = () => $("zip-input").click();
+  for (const id of ["folder-input", "zip-input"]) {
+    $(id).addEventListener("change", (e) => {
+      if (e.target.files.length) onBrowse(e.target.files);
+      // Reset, so picking the same folder twice fires `change` again.
+      e.target.value = "";
+    });
+  }
   $("files-tree").addEventListener("click", onFilesClick);
   $("file-modal-close").onclick = closeFileModal;
   $("file-modal").addEventListener("click", (e) => {

@@ -142,24 +142,21 @@
      different heights, since the cards carry different controls — so the box is
      sized here instead, once, and any leftover card height falls below it. */
   .viewer-in-wrap, .viewer-out-wrap { justify-content: flex-start; }
-  /* Drop your own BIDS folder here. Outlined only while a drag is over it, so
-     the affordance never competes with the data for attention. */
-  .viewer-in-wrap.drop-over {
-    outline: 2px dashed var(--accent); outline-offset: -4px;
-  }
-  .drop-hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
   /* The two cards are the same height, so matching the chrome below each viewer
      is what makes the two black boxes match. Sizing the viewers directly does
      not work: a fixed height cannot shrink, and overflows the card. */
-  :root { --foot-h: 148px; }
+  :root { --foot-h: 104px; }
   /* A fixed box, not a minimum: the per-model summary it holds varies in length,
      and a foot that grows with its text would put the two viewers back at
      different heights. Sized to fit two wrapped lines of each note. */
   .viewer-foot { height: var(--foot-h); flex: 0 0 auto; overflow: hidden; }
-  .curve-wrap { grid-column: 2 / span 2; grid-row: 2; }
+  .curve-wrap { grid-column: 2; grid-row: 2; }
+  .drop-wrap { grid-column: 3; grid-row: 2; }
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; grid-template-rows: none; }
-    .recipe-card, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap { grid-column: 1; grid-row: auto; }
+    .recipe-card, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap, .drop-wrap {
+      grid-column: 1; grid-row: auto;
+    }
     .viewer-in-wrap, .viewer-out-wrap { height: 62vh; min-height: 320px; }
   }
 
@@ -330,23 +327,60 @@
     .viewer-skel::before { animation: none; opacity: 0.5; }
   }
 
-  /* Download ring, centred on the fitted-map skeleton: the one place with
-     nothing else to say while bytes are arriving. */
-  .dl-ring { position: absolute; width: 40%; max-width: 132px; aspect-ratio: 1; }
-  .dl-ring[hidden] { display: none; }
-  .dl-track, .dl-arc { fill: none; stroke-width: 6; }
+
+  /* Bring-your-own-data panel. The BIDS logo sits behind at low opacity — an
+     identity cue, not decoration competing with the text. */
+  .drop-wrap {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; text-align: center; position: relative; overflow: hidden;
+    border-style: dashed; border-width: 2px; border-color: var(--line);
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+  }
+  .drop-wrap::before {
+    content: ""; position: absolute; inset: 0;
+    background: url("./vendor/bids-logo.png") center/58% no-repeat;
+    opacity: 0.07; pointer-events: none;
+  }
+  .drop-wrap.drop-over {
+    border-color: var(--accent);
+    background-color: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  }
+  .drop-wrap.drop-over::before { opacity: 0.14; }
+  .drop-title {
+    font: 700 13px var(--sans); color: var(--ink); position: relative;
+  }
+  .drop-sub {
+    font-size: 11px; color: var(--muted); max-width: 34ch; position: relative;
+    line-height: 1.45;
+  }
+  .drop-actions { display: flex; gap: 8px; position: relative; }
+  .drop-actions button { font-size: 12px; padding: 6px 12px; }
+  .drop-privacy {
+    font-size: 10px; color: var(--muted); position: relative;
+    text-transform: uppercase; letter-spacing: .07em;
+  }
+
+  /* Download progress: navbar, immediately left of the status label. Compact
+     enough to sit in a 30px bar, and gone when nothing is downloading. */
+  .navbar-dl { display: flex; align-items: center; gap: 7px; }
+  .navbar-dl[hidden] { display: none; }
+  .dl-ring { width: 18px; height: 18px; }
+  .dl-track, .dl-arc { fill: none; stroke-width: 10; }
   .dl-track { stroke: var(--line); }
   .dl-arc {
     stroke: var(--rust); stroke-linecap: round;
-    /* 2πr for r=36, so dashoffset can be driven as a fraction of the whole. */
+    /* 2πr for r=36 in the SVG's own 84-unit box. */
     stroke-dasharray: 226.19; stroke-dashoffset: 226.19;
     transform: rotate(-90deg); transform-origin: 50% 50%;
     transition: stroke-dashoffset 0.15s linear;
   }
-  .dl-pct {
-    position: absolute; font: 600 13px var(--mono); color: var(--rust);
-  }
-  .dl-pct[hidden] { display: none; }
+  .dl-pct { font: 700 11px var(--mono); color: var(--rust); }
+
+  /* Status severity. "Ready" and "Downloading…" are the two a reader watches
+     for, so each gets a colour and weight rather than uniform grey. */
+  #status.ok { color: var(--good); font-weight: 700; }
+  #status.busy { color: var(--rust); font-weight: 700; }
+  #status.error { color: var(--bad); font-weight: 700; }
 
   .ghost-btn {
     background: none; border: 1px solid var(--line); color: var(--ink-2);
@@ -412,7 +446,14 @@
 </style>
 <div class="navbar">
   <span class="navbar-title">qMRust Playground</span>
-  <span id="status" class="navbar-status">loading…</span>
+  <span class="navbar-dl" id="navbar-dl" hidden>
+    <svg class="dl-ring" viewBox="0 0 84 84" aria-hidden="true">
+      <circle class="dl-track" cx="42" cy="42" r="36"></circle>
+      <circle class="dl-arc" id="dl-arc" cx="42" cy="42" r="36"></circle>
+    </svg>
+    <span class="dl-pct" id="dl-pct"></span>
+  </span>
+  <span id="status" class="navbar-status busy">Starting…</span>
 </div>
 <div id="fallback" hidden>
   <p><strong>The WebAssembly build is not present.</strong> The viewers below still work —
@@ -470,10 +511,6 @@
         <span id="model-info"></span>
         <span id="fit-timing"></span>
       </p>
-      <p class="drop-hint">
-        Drop your own BIDS folder (or a zipped one) here to fit it — read in your
-        browser, never uploaded.
-      </p>
     </div>
   </div>
 
@@ -488,13 +525,7 @@
     <div class="viewer-row">
       <div class="viewer" id="viewer-out">
         <canvas id="gl-out"></canvas>
-        <div class="viewer-skel" id="skel-out" hidden>
-          <svg class="dl-ring" id="dl-ring" viewBox="0 0 84 84" hidden aria-hidden="true">
-            <circle class="dl-track" cx="42" cy="42" r="36"></circle>
-            <circle class="dl-arc" id="dl-arc" cx="42" cy="42" r="36"></circle>
-          </svg>
-          <span class="dl-pct" id="dl-pct" hidden></span>
-        </div>
+        <div class="viewer-skel" id="skel-out" hidden></div>
       </div>
       <div class="map-colorbar">
         <div class="map-colorbar-gradient" id="map-colorbar-gradient"></div>
@@ -523,7 +554,23 @@
     <canvas id="curve"></canvas>
     <div id="curve-note"></div>
   </div>
+
+  <div class="drop-wrap card" id="drop-wrap">
+    <div class="drop-title">Fit your own data</div>
+    <div class="drop-sub">
+      Drop a BIDS folder — or a zipped one — anywhere on this panel. It is read
+      and fitted entirely in your browser.
+    </div>
+    <div class="drop-actions">
+      <button id="browse-folder" type="button">Choose folder…</button>
+      <button id="browse-zip" type="button">Choose .zip…</button>
+    </div>
+    <div class="drop-privacy">Nothing is uploaded</div>
+    <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
+    <input type="file" id="zip-input" accept=".zip" hidden>
+  </div>
 </div>
+
 <div class="modal" id="file-modal" hidden>
   <div class="modal-card">
     <div class="modal-head">
