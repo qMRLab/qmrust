@@ -38,38 +38,89 @@ const status = (m, kind = "info") => {
 const CMAP_BY_UNIT = { s: "magma", "1/s": "viridis", "%": "cividis", "": "inferno" };
 const CANDIDATE_COLORMAPS = ["gray", "viridis", "magma", "inferno", "plasma", "hot", "cool", "turbo", "cividis"];
 
+// ---------------------------------------------------------------------------
+// Module state.
+//
+// Kept in one place because much of it is coupled, and the coupling is what goes
+// wrong. Two invariants are load-bearing:
+//
+//  1. `current`, `lastMaps`, `outputVolumes` and `shownOutput` describe one fit
+//     of one model. Whenever a model is (re)loaded they are reset together; a
+//     partial update leaves the page reporting one model's fit over another's
+//     data. `fitSlice` therefore wraps its display half in try/finally, so a
+//     drawing failure cannot leave them half-updated with the UI disabled.
+//  2. `dataset` is non-null exactly when a real BIDS dataset is loaded, and
+//     `null` when the pre-baked demo slice is showing. The Files panel and the
+//     file/JSON viewers all key off that distinction.
+
+// The wasm module, or null when it failed to load (viewers still work).
 let wasm = null;
+
+// Per-model payload JSON (`docs/playground/data/<model>.json`), fetched once.
 const bundleCache = {};
-let current = null; // { meta, volume (NVImage), maskU8 (Uint8Array|null), frame }
+
+// The loaded model and its data: { meta, volume (NVImage), maskU8, auxFlat,
+// auxVolumes, frame, lastVox }.
+let current = null;
+
 // The fetched BIDS dataset behind `current`, when there is one:
 // { archive, files: Map<path, Uint8Array>, resolved: ResolvedCollection }.
-// `null` while the pre-baked demo slice is showing.
+// `null` while the pre-baked demo slice is showing — see invariant 2.
 let dataset = null;
+
 // True while a dataset is being fetched/extracted/resolved, so the tab switcher
 // leaves the skeletons in place instead of revealing a half-built view.
 let loading = false;
+
 // A reader's own dropped dataset, waiting for the next `loadModel` to consume
 // instead of fetching. Cleared once taken, so switching models afterwards goes
 // back to the hosted datasets.
 let droppedFiles = null;
+
 // Every model the payload index lists, for asking which of them can fit a
 // dropped dataset.
 let modelNames = [];
-let lastMaps = null; // { [outputName]: Float64Array }, C-order [nx,ny,nz] — every
-// entry fit_volume returns, i.e. the model's full output_names(), not just the
-// quantitative maps in meta.outputs.
-let outputVolumes = []; // [{ name, unit, volume, defaultCalMin, defaultCalMax }]
-let shownOutput = null; // the outputVolumes entry currently drawn in the fitted-map viewer
+
+// The last fit's maps: { [outputName]: Float64Array } in C-order `[nx,ny,nz]` —
+// every entry fit_volume returns, i.e. the model's full output_names(), not just
+// the quantitative maps in meta.outputs.
+let lastMaps = null;
+
+// The fitted maps as viewable volumes:
+// [{ name, unit, volume, defaultCalMin, defaultCalMax }].
+let outputVolumes = [];
+
+// The `outputVolumes` entry currently drawn in the fitted-map viewer, and the one
+// every window/level and ROI action applies to.
+let shownOutput = null;
+
+// Colormap names this NiiVue build actually provides, intersected with the
+// candidates below.
 let availableColormaps = [];
+
 // Config keys restricted to a fixed set of values (dotted path -> allowed
 // values), from this model's bundle `enums` — the catalog/registry decides
 // which keys get a dropdown, never a name or key hard-coded here.
 let enumFields = new Map();
-// Accumulated wheel `deltaY` for the inputs viewer's frame-step gesture (see
-// the `wheel` listener in `main`); reset on every model load so a gesture
-// mid-flight on the old model can't carry a partial step into the new one.
+
+// Accumulated wheel `deltaY` for the inputs viewer's frame-step gesture (see the
+// `wheel` listener in `main`); reset on every model load so a gesture mid-flight
+// on the old model cannot carry a partial step into the new one.
 let wheelAccum = 0;
 const WHEEL_STEP_THRESHOLD = 100;
+
+// Lazily created UI singletons. Each is null until first needed: the modal viewer
+// and the chart both hold a rendering context, and the level controls bind to
+// elements that must exist first.
+let tipEl = null;            // the one tooltip element, moved and refilled
+let nvModal = null;          // the modal's NiiVue instance, reused across opens
+let levelMain = null;        // window/level control in the fitted-map panel
+let levelModal = null;       // window/level control in the modal
+let curveChart = null;       // the ECharts instance for the voxel fit
+let sourcesCache = null;     // data/sources.json, fetched once
+
+// True while NiiVue's pen is active on the fitted map.
+let roiDrawing = false;
 
 // Recipe editor state: `text` is always the source of truth handed to
 // fit_volume; `obj` is its parsed form (null while the text is invalid).
@@ -126,7 +177,6 @@ function applyCrosshairColor() {
 // native `title` cannot be shown without the browser's ~1s delay, and these
 // should appear the moment a reader asks.
 
-let tipEl = null;
 
 function showTip(anchor) {
   const text = anchor.dataset.tip;
@@ -239,7 +289,6 @@ async function loadBundle(name) {
 // comes from the dataset's own JSON sidecars, so the recipe for this path
 // carries options only — see `meta.config_bids`.
 
-let sourcesCache = null;
 const datasetCache = {};
 
 // The download ring, on the fitted-map skeleton — the one panel with nothing
@@ -653,8 +702,6 @@ function showTab(tab) {
   $("yaml-view").hidden = isForm;
   if (isForm && editor.valid) renderForm();
 }
-
-// ---------------------------------------------------------------------------
 
 // Every element of `flat` (C-order `[nx,ny,nz]`, i.e. index `(x*ny+y)*nz+z`,
 // matching fit_volume's own output convention) read from `volume` via its
@@ -1303,7 +1350,6 @@ function renderFilesError(message) {
 // One NiiVue instance, created on first open and reused. Each holds a WebGL
 // context and browsers cap those, so constructing one per open would leak
 // contexts until the other viewers stopped rendering.
-let nvModal = null;
 
 // ---------------------------------------------------------------------------
 // Window/level control: the map's value histogram beside a colour bar whose two
@@ -1582,15 +1628,12 @@ function createLevelControl(prefix) {
   };
 }
 
-let levelMain = null;
-let levelModal = null;
 
 // ---------------------------------------------------------------------------
 // ROI statistics. NiiVue's own pen writes into a drawing bitmap the same shape
 // as the volume, so "the voxels beneath the ROI" is just the fitted map sampled
 // where that bitmap is non-zero — no geometry of our own to get wrong.
 
-let roiDrawing = false;
 
 // Summary statistics of `values`, which must already be the in-ROI finite set.
 // Quartiles use the same linear-interpolation convention as `percentileWindow`,
@@ -2330,7 +2373,6 @@ function tickIndices(n, max) {
 //
 // `predicted[k]` may be NaN for a volume the fit excluded (mono_t2's dropped
 // first echo, say); ECharts renders those as gaps, which is the honest picture.
-let curveChart = null;
 
 function ensureCurveChart() {
   const host = $("curve");
@@ -2466,38 +2508,38 @@ function onLocation(loc) {
   }
 }
 
-async function main() {
-  await nvIn.attachTo("gl-in");
-  await nvOut.attachTo("gl-out");
-  // Otherwise the canvas backing store renders at 1x and is upscaled by CSS
-  // to its layout size — soft/blurry on any HiDPI (retina) display,
-  // regardless of how much native resolution the bundle ships. NiiVue's own
-  // `resizeListener` (already called on every model load and viewer resize)
-  // keeps the backing store matched to `devicePixelRatio` once this is set.
+// ---------------------------------------------------------------------------
+// Startup. `main` reads as a sequence of stages; each `wire*` function owns the
+// listeners for one region of the page, so a control's wiring sits with the
+// other controls it belongs with rather than in one long block.
+
+// The two always-present viewers, and the state they share.
+function setUpViewers() {
+  // Otherwise the canvas backing store renders at 1x and is upscaled by CSS to
+  // its layout size — soft/blurry on any HiDPI (retina) display, regardless of
+  // how much native resolution the data has. NiiVue's own `resizeListener`
+  // (called on every model load and viewer resize) keeps the backing store
+  // matched to `devicePixelRatio` once this is set.
   nvIn.setHighResolutionCapable(true);
   nvOut.setHighResolutionCapable(true);
   applyCrosshairColor();
-  wireTips();
-  wireRecipeCollapse();
-  // ...and again if the reader's system flips theme, since the token changes.
+  // Re-apply if the system flips theme, since the colour token changes.
   window
     .matchMedia?.("(prefers-color-scheme: dark)")
     .addEventListener?.("change", applyCrosshairColor);
   populateColormaps();
 
-  // Synced crosshairs both ways, so dragging in either viewer moves the
-  // other; click handling is registered on both instances too, so a click
-  // on the fitted map updates the voxel curve exactly as one on the inputs
-  // viewer does.
+  // Synced crosshairs both ways, so dragging in either viewer moves the other;
+  // location handling is registered on both, so a click on the fitted map
+  // updates the voxel curve exactly as one on the inputs viewer does.
   nvIn.broadcastTo([nvOut], { "2d": true, "3d": true });
   nvOut.broadcastTo([nvIn], { "2d": true, "3d": true });
   nvIn.onLocationChange = onLocation;
   nvOut.onLocationChange = onLocation;
   // NiiVue steps a volume's 4D frame on its own (ArrowLeft/ArrowRight, bound
-  // internally to `frame_previous`/`frame_next`) whenever the inputs viewer
-  // has focus — every path ends up at `setFrame4D`, which fires this
-  // callback, so the slider/label stay in sync with the arrow keys exactly
-  // as they already do with the wheel and the slider itself.
+  // internally to `frame_previous`/`frame_next`) whenever the inputs viewer has
+  // focus — every path ends at `setFrame4D`, which fires this callback, so the
+  // slider and label stay in sync with the arrow keys as they do with the wheel.
   nvIn.onFrameChange = (volume, frame) => {
     if (!current || volume.id !== current.volume.id) return;
     current.frame = frame;
@@ -2506,104 +2548,35 @@ async function main() {
     syncFrameFill();
     syncFilesHighlight();
   };
+}
 
-  wasm = await loadWasm();
-
-  let index;
-  try {
-    index = await (await fetchOrThrow("./data/index.json")).json();
-  } catch (e) {
-    status(`Could not load the model index — ${e.message}`, "error");
-    return;
-  }
-
-  modelNames = index.models;
-  const select = $("model");
-  for (const name of index.models) {
-    let meta;
-    try {
-      meta = await loadBundle(name);
-    } catch (e) {
-      status(`Could not load ${name} — ${e.message}`, "error");
-      continue;
-    }
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = meta.title;
-    select.append(opt);
-  }
-
-  select.onchange = () => loadModel(select.value);
-  $("frame").oninput = onFrameChange;
+// The model picker, the recipe editor, and Fit.
+function wireRecipeControls() {
+  $("model").onchange = (e) => loadModel(e.target.value);
   $("fit").onclick = fitSlice;
-  $("output").onchange = (e) => showOutput(e.target.value);
-  $("colormap").onchange = onColormapChange;
   $("tab-form").onclick = () => showTab("form");
   $("tab-yaml").onclick = () => showTab("yaml");
+  $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
+  $("cfg-yaml").addEventListener("scroll", syncYamlScroll);
+}
+
+// The inputs viewer: its tabs, the frame slider, and wheel-to-scrub.
+function wireInputsControls() {
   $("tab-viewer").onclick = () => showInputsTab("viewer");
   $("tab-files").onclick = () => showInputsTab("files");
-  $("tab-slice").onclick = () => showMapView("slice");
-  $("tab-planes").onclick = () => showMapView("planes");
-  $("open-map-modal").onclick = openMapModal;
-  $("cfg-yaml").addEventListener("scroll", syncYamlScroll);
-
-  // Bring-your-own-data panel. `dragover` must be prevented for a drop to fire
-  // at all; `dragleave` is filtered to the panel itself, since it also fires
-  // when the cursor crosses onto a child.
-  const dropZone = $("drop-wrap");
-  dropZone.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    dropZone.classList.add("drop-over");
-  });
-  dropZone.addEventListener("dragleave", (e) => {
-    if (e.target === dropZone) dropZone.classList.remove("drop-over");
-  });
-  dropZone.addEventListener("drop", onDrop);
-  $("browse-folder").onclick = () => $("folder-input").click();
-  $("folder-input").addEventListener("change", (e) => {
-    if (e.target.files.length) onBrowse(e.target.files);
-    // Reset, so picking the same folder twice fires `change` again.
-    e.target.value = "";
-  });
+  $("frame").oninput = onFrameChange;
   $("files-tree").addEventListener("click", onFilesClick);
-  $("file-modal-close").onclick = closeFileModal;
-  $("json-modal-close").onclick = closeJsonModal;
-  $("json-modal").addEventListener("click", (e) => {
-    if (e.target === $("json-modal")) closeJsonModal();
-  });
-  levelMain = createLevelControl("mlevel");
-  $("file-modal").addEventListener("click", (e) => {
-    if (e.target === $("file-modal")) closeFileModal();
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    if (!$("file-modal").hidden) closeFileModal();
-    if (!$("json-modal").hidden) closeJsonModal();
-  });
-  $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
-  $("cal-reset").onclick = resetCalRange;
-  $("roi-toggle").onclick = toggleRoi;
-  $("roi-clear").onclick = clearRoi;
-  // Recompute after each stroke, so the numbers track the region as it is drawn.
-  nvOut.onDrawingChanged = renderRoiStats;
-  nvOut.canvas.addEventListener("mousemove", onMapHover);
-  nvOut.canvas.addEventListener("mouseleave", clearMapHover);
 
-  // Wheel-to-scrub, alongside the existing slider: a reader hovering the
-  // inputs viewer steps through frames without reaching for the slider,
-  // useful once a model ships several volumes. Captured (not bubble-phase)
-  // and stopped here, ahead of NiiVue's own wheel-to-zoom handler on the
-  // canvas — this viewer's wheel gesture means "step frames", not "zoom the
-  // slice" (the vendored build's own wheel handling is for slice zoom/scroll
-  // and click-to-segment, not 4D frame stepping, so there is no built-in
-  // gesture to opt into for this instead).
+  // Wheel-to-scrub, alongside the slider: a reader hovering the inputs viewer
+  // steps through frames without reaching for it. Captured (not bubble-phase)
+  // and stopped here, ahead of NiiVue's own wheel-to-zoom handler on the canvas
+  // — this viewer's wheel gesture means "step frames", not "zoom the slice".
   //
-  // A single mouse-wheel notch and a single trackpad two-finger gesture both
-  // arrive as a *stream* of wheel events (a trackpad especially fires many
-  // small ones), so stepping on every event blows through several frames per
-  // gesture. Accumulate `deltaY` and only step once it crosses a threshold —
-  // tuned to the ~100-120 one Chrome/Firefox mouse-wheel notch reports, and
-  // large enough that one full trackpad swipe is one frame, not several.
+  // A single mouse-wheel notch and a single trackpad swipe both arrive as a
+  // *stream* of wheel events, so stepping on every event blows through several
+  // frames per gesture. Accumulate `deltaY` and step only once it crosses a
+  // threshold — tuned to the ~100-120 one wheel notch reports, and large enough
+  // that one full trackpad swipe is one frame rather than several.
   $("viewer-in").addEventListener(
     "wheel",
     (e) => {
@@ -2623,10 +2596,110 @@ async function main() {
     },
     { passive: false, capture: true },
   );
+}
 
-  if (select.options.length) {
-    await loadModel(select.value);
+// The fitted map: output and colormap pickers, slice/planes, window/level, ROI.
+function wireMapControls() {
+  $("output").onchange = (e) => showOutput(e.target.value);
+  $("colormap").onchange = onColormapChange;
+  $("tab-slice").onclick = () => showMapView("slice");
+  $("tab-planes").onclick = () => showMapView("planes");
+  $("open-map-modal").onclick = openMapModal;
+  $("cal-reset").onclick = resetCalRange;
+  $("roi-toggle").onclick = toggleRoi;
+  $("roi-clear").onclick = clearRoi;
+  levelMain = createLevelControl("mlevel");
+  // Recompute after each stroke, so the numbers track the region as it is drawn.
+  nvOut.onDrawingChanged = renderRoiStats;
+  nvOut.canvas.addEventListener("mousemove", onMapHover);
+  nvOut.canvas.addEventListener("mouseleave", clearMapHover);
+}
+
+// Dropping or browsing to a reader's own dataset.
+function wireDataDrop() {
+  // `dragover` must be prevented for a drop to fire at all; `dragleave` is
+  // filtered to the panel itself, since it also fires when the cursor crosses
+  // onto a child.
+  const dropZone = $("drop-wrap");
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropZone.classList.add("drop-over");
+  });
+  dropZone.addEventListener("dragleave", (e) => {
+    if (e.target === dropZone) dropZone.classList.remove("drop-over");
+  });
+  dropZone.addEventListener("drop", onDrop);
+  $("browse-folder").onclick = () => $("folder-input").click();
+  $("folder-input").addEventListener("change", (e) => {
+    if (e.target.files.length) onBrowse(e.target.files);
+    // Reset, so picking the same folder twice fires `change` again.
+    e.target.value = "";
+  });
+}
+
+// The two modals, and the one key that closes either.
+function wireModals() {
+  $("file-modal-close").onclick = closeFileModal;
+  $("json-modal-close").onclick = closeJsonModal;
+  for (const [id, close] of [
+    ["file-modal", closeFileModal],
+    ["json-modal", closeJsonModal],
+  ]) {
+    // The backdrop closes; the card inside it does not.
+    $(id).addEventListener("click", (e) => {
+      if (e.target === $(id)) close();
+    });
   }
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (!$("file-modal").hidden) closeFileModal();
+    if (!$("json-modal").hidden) closeJsonModal();
+  });
+}
+
+// Fill the model picker from the payload index. False means there is nothing to
+// show, which is a hard stop rather than an empty page.
+async function populateModels() {
+  let index;
+  try {
+    index = await (await fetchOrThrow("./data/index.json")).json();
+  } catch (e) {
+    status(`Could not load the model index — ${e.message}`, "error");
+    return false;
+  }
+  modelNames = index.models;
+  const select = $("model");
+  for (const name of index.models) {
+    let meta;
+    try {
+      meta = await loadBundle(name);
+    } catch (e) {
+      // One unreadable payload should not cost the reader every other model.
+      status(`Could not load ${name} — ${e.message}`, "error");
+      continue;
+    }
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = meta.title;
+    select.append(opt);
+  }
+  return select.options.length > 0;
+}
+
+async function main() {
+  await nvIn.attachTo("gl-in");
+  await nvOut.attachTo("gl-out");
+  setUpViewers();
+  wireTips();
+  wireRecipeCollapse();
+  wireRecipeControls();
+  wireInputsControls();
+  wireMapControls();
+  wireDataDrop();
+  wireModals();
+
+  wasm = await loadWasm();
+  if (await populateModels()) await loadModel($("model").value);
 }
 
 main();
