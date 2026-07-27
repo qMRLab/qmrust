@@ -142,14 +142,25 @@
      different heights, since the cards carry different controls — so the box is
      sized here instead, once, and any leftover card height falls below it. */
   .viewer-in-wrap, .viewer-out-wrap { justify-content: flex-start; }
-  /* One height for both black boxes, so the two panels' image areas match
-     however much chrome each card carries below them. */
-  :root { --viewer-h: min(52vh, 560px); }
+  /* Drop your own BIDS folder here. Outlined only while a drag is over it, so
+     the affordance never competes with the data for attention. */
+  .viewer-in-wrap.drop-over {
+    outline: 2px dashed var(--accent); outline-offset: -4px;
+  }
+  .drop-hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  /* The two cards are the same height, so matching the chrome below each viewer
+     is what makes the two black boxes match. Sizing the viewers directly does
+     not work: a fixed height cannot shrink, and overflows the card. */
+  :root { --foot-h: 148px; }
+  /* A fixed box, not a minimum: the per-model summary it holds varies in length,
+     and a foot that grows with its text would put the two viewers back at
+     different heights. Sized to fit two wrapped lines of each note. */
+  .viewer-foot { height: var(--foot-h); flex: 0 0 auto; overflow: hidden; }
   .curve-wrap { grid-column: 2 / span 2; grid-row: 2; }
   @media (max-width: 900px) {
     .layout { grid-template-columns: 1fr; grid-template-rows: none; }
     .recipe-card, .viewer-in-wrap, .viewer-out-wrap, .curve-wrap { grid-column: 1; grid-row: auto; }
-    :root { --viewer-h: min(46vh, 420px); }
+    .viewer-in-wrap, .viewer-out-wrap { height: 62vh; min-height: 320px; }
   }
 
   /* recipe editor */
@@ -251,9 +262,7 @@
   .viewer {
     position: relative; border-radius: 12px; overflow: hidden;
     background: #010409; margin: 0; width: 100%;
-    /* Fixed rather than flex-grown: letting each viewer fill its own card made
-       the two image areas different heights (see `--viewer-h`). */
-    flex: 0 0 auto; height: var(--viewer-h); min-height: 0;
+    flex: 1 1 auto; min-height: 0;
   }
   .viewer canvas { width: 100%; height: 100%; display: block; }
 
@@ -370,13 +379,8 @@
      `isColorbar` only draws horizontally along the canvas's bottom edge in
      this vendored build, with no vertical/right-side placement, so this is a
      plain HTML/CSS bar built from the same LUT `nv.colormap()` returns. */
-  .viewer-row {
-    display: flex; flex-direction: row; gap: 8px; min-height: 0;
-    flex: 0 0 auto; height: var(--viewer-h);
-  }
-  /* Inside the row the viewer shares width with the colour bar and takes the
-     row's full height, which is already `--viewer-h`. */
-  .viewer-row .viewer { flex: 1 1 auto; height: 100%; }
+  .viewer-row { display: flex; flex-direction: row; gap: 8px; flex: 1 1 auto; min-height: 0; }
+  .viewer-row .viewer { flex: 1 1 auto; }
   .map-colorbar { display: flex; flex-direction: row; gap: 6px; flex-shrink: 0; width: 58px; }
   .map-colorbar-gradient {
     width: 16px; border-radius: 6px; border: 1px solid var(--line);
@@ -440,7 +444,7 @@
     </div>
   </div>
 
-  <div class="viewer-in-wrap card">
+  <div class="viewer-in-wrap card" id="viewer-in-wrap">
     <div class="viewer-head">
       <h2 class="section-h" style="margin:0">Inputs</h2>
       <div class="seg" role="tablist" aria-label="Inputs view">
@@ -456,15 +460,21 @@
       <div class="files-summary" id="files-summary"></div>
       <div class="files-tree" id="files-tree"></div>
     </div>
-    <div class="frame-row">
-      <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
-      <span class="frame-label" id="frame-label">—</span>
+    <div class="viewer-foot">
+      <div class="frame-row">
+        <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
+        <span class="frame-label" id="frame-label">—</span>
+      </div>
+      <p class="local-note">
+        Scroll over the viewer to step frames.
+        <span id="model-info"></span>
+        <span id="fit-timing"></span>
+      </p>
+      <p class="drop-hint">
+        Drop your own BIDS folder (or a zipped one) here to fit it — read in your
+        browser, never uploaded.
+      </p>
     </div>
-    <p class="local-note">
-      Scroll over the viewer to step frames.
-      <span id="model-info"></span>
-      <span id="fit-timing"></span>
-    </p>
   </div>
 
   <div class="viewer-out-wrap card">
@@ -491,17 +501,19 @@
         <div class="map-colorbar-labels" id="map-colorbar-labels"></div>
       </div>
     </div>
-    <div class="out-controls">
-      <select id="output" hidden></select>
-      <select id="colormap"></select>
-      <button id="open-map-modal" class="ghost-btn" type="button" disabled>
-        ⤢ planes
-      </button>
-    </div>
-    <div class="range-controls">
-      <label>min <input type="number" id="cal-min" step="any"></label>
-      <label>max <input type="number" id="cal-max" step="any"></label>
-      <button id="cal-reset" type="button">reset range</button>
+    <div class="viewer-foot">
+      <div class="out-controls">
+        <select id="output" hidden></select>
+        <select id="colormap"></select>
+        <button id="open-map-modal" class="ghost-btn" type="button" disabled>
+          ⤢ planes
+        </button>
+      </div>
+      <div class="range-controls">
+        <label>min <input type="number" id="cal-min" step="any"></label>
+        <label>max <input type="number" id="cal-max" step="any"></label>
+        <button id="cal-reset" type="button">reset range</button>
+      </div>
     </div>
   </div>
 

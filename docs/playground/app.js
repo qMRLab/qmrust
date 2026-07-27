@@ -36,6 +36,13 @@ let dataset = null;
 // True while a dataset is being fetched/extracted/resolved, so the tab switcher
 // leaves the skeletons in place instead of revealing a half-built view.
 let loading = false;
+// A reader's own dropped dataset, waiting for the next `loadModel` to consume
+// instead of fetching. Cleared once taken, so switching models afterwards goes
+// back to the hosted datasets.
+let droppedFiles = null;
+// Every model the payload index lists, for asking which of them can fit a
+// dropped dataset.
+let modelNames = [];
 let lastMaps = null; // { [outputName]: Float64Array }, C-order [nx,ny,nz] — every
 // entry fit_volume returns, i.e. the model's full output_names(), not just the
 // quantitative maps in meta.outputs.
@@ -208,6 +215,18 @@ function identityLabel(id) {
 }
 
 async function fetchDataset(name, meta) {
+  // A dataset the reader dropped takes precedence over the hosted one, and is
+  // consumed once: from here on it is indistinguishable from a fetched dataset.
+  if (droppedFiles) {
+    const files = droppedFiles;
+    droppedFiles = null;
+    stage(`resolving ${files.size} files as BIDS…`);
+    return {
+      archive: "your dataset",
+      files,
+      collections: wasm.resolve_bids(files, meta.config_bids, ""),
+    };
+  }
   if (datasetCache[name]) return datasetCache[name];
   const src = await loadSources();
   const url = `${src.base}/${meta.archive}${src.suffix}`;
@@ -684,6 +703,141 @@ function setFrameUi(nt, labels) {
   slider.value = "0";
   slider.disabled = nt <= 1;
   $("frame-label").textContent = labels[0] ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// A reader's own BIDS data, dropped onto the page. Everything past "turn this
+// into a path -> bytes map" is the fetched path's code, unchanged: the same
+// `resolve_bids`, the same loading, the same fit. That identity is the point —
+// there is no separate code path for "our demo data" and "your data".
+
+// Walk a dropped directory entry into `[path, File]` pairs. The File System
+// Entry API is callback-based and its `readEntries` returns at most 100 entries
+// per call, so it must be drained in a loop.
+async function walkEntry(entry, prefix = "") {
+  const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+  if (entry.isFile) {
+    const file = await new Promise((res, rej) => entry.file(res, rej));
+    return [[path, file]];
+  }
+  const reader = entry.createReader();
+  const children = [];
+  for (;;) {
+    const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+    if (batch.length === 0) break;
+    children.push(...batch);
+  }
+  const nested = await Promise.all(children.map((c) => walkEntry(c, path)));
+  return nested.flat();
+}
+
+// The dataset root is wherever `dataset_description.json` sits — the file BIDS
+// defines the root by. Paths are rewritten relative to it, so a folder dropped
+// from anywhere resolves the same as an unzipped archive.
+function rootRelative(pairs) {
+  const marker = pairs
+    .map(([p]) => p)
+    .filter((p) => p.endsWith("dataset_description.json"))
+    .sort((a, b) => a.length - b.length)[0];
+  if (!marker) {
+    throw new Error(
+      "no dataset_description.json found — a BIDS dataset root must contain one",
+    );
+  }
+  const root = marker.slice(0, marker.length - "dataset_description.json".length);
+  return pairs
+    .filter(([p]) => p.startsWith(root))
+    .map(([p, f]) => [p.slice(root.length), f]);
+}
+
+// `entries` must be captured synchronously from the drop event: a
+// `DataTransfer`'s items are neutered once the handler returns.
+async function filesFromDrop(entries) {
+  // A single dropped archive is the fetched path's own input, so reuse it.
+  if (entries.length === 1 && entries[0].isFile && /\.zip$/i.test(entries[0].name)) {
+    const file = await new Promise((res, rej) => entries[0].file(res, rej));
+    return unzipDataset(new Uint8Array(await file.arrayBuffer()));
+  }
+
+  const pairs = (await Promise.all(entries.map((e) => walkEntry(e)))).flat();
+  if (pairs.length === 0) throw new Error("nothing readable in that drop");
+  const files = new Map();
+  for (const [path, file] of rootRelative(pairs)) {
+    files.set(path, new Uint8Array(await file.arrayBuffer()));
+  }
+  return files;
+}
+
+// Which registered models can fit this dataset. Asking every model, rather than
+// assuming the selected one, is what lets a reader drop a folder and be told
+// what it is — including when it is nothing this playground knows.
+async function modelsMatching(files) {
+  const matches = [];
+  for (const name of modelNames) {
+    const meta = await loadBundle(name);
+    try {
+      if (wasm.resolve_bids(files, meta.config_bids, "").length > 0) matches.push(name);
+    } catch {
+      // A model whose resolution throws simply does not match this dataset.
+    }
+  }
+  return matches;
+}
+
+async function loadDropped(entries) {
+  showLoading("reading your dataset…", 16);
+  try {
+    const files = await filesFromDrop(entries);
+    stage(`resolving ${files.size} dropped files…`);
+    const matches = await modelsMatching(files);
+    if (matches.length === 0) {
+      const meta = await loadBundle($("model").value);
+      const verdicts = wasm.annotate_non_matching(files, meta.config_bids);
+      dataset = { archive: "your dataset", files, resolved: { files: verdicts } };
+      endLoading();
+      renderFiles();
+      $("files-summary").textContent =
+        `your dataset · ${verdicts.length} files · no registered model can fit this`;
+      showInputsTab("files");
+      status("no registered model matches that dataset — see Files for why", true);
+      return;
+    }
+
+    // Switching the select re-enters the normal load path, so pin the dropped
+    // dataset for it to pick up instead of fetching.
+    const pick = matches.includes($("model").value) ? $("model").value : matches[0];
+    droppedFiles = files;
+    $("model").value = pick;
+    endLoading();
+    await loadModel(pick);
+    const others = matches.filter((m) => m !== pick);
+    if (others.length) {
+      status(`fitted as ${pick}; this dataset also matches ${others.join(", ")}`);
+    }
+  } catch (e) {
+    endLoading();
+    renderFilesError(`could not read that drop: ${e.message}`);
+    status(`could not read that drop: ${e.message}`, true);
+  }
+}
+
+function onDrop(event) {
+  event.preventDefault();
+  $("viewer-in-wrap").classList.remove("drop-over");
+  if (!wasm) {
+    status("wasm unavailable — cannot resolve a dropped dataset", true);
+    return;
+  }
+  // Capture the entries here, synchronously: the DataTransfer is neutered as
+  // soon as this handler returns, so nothing async may touch it.
+  const entries = [...event.dataTransfer.items]
+    .map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null))
+    .filter(Boolean);
+  if (entries.length === 0) {
+    status("that drop carried no files", true);
+    return;
+  }
+  loadDropped(entries);
 }
 
 // ---------------------------------------------------------------------------
@@ -1668,6 +1822,7 @@ async function main() {
     return;
   }
 
+  modelNames = index.models;
   const select = $("model");
   for (const name of index.models) {
     let meta;
@@ -1696,6 +1851,18 @@ async function main() {
   $("tab-planes").onclick = () => showMapView("planes");
   $("open-map-modal").onclick = openMapModal;
   $("cfg-yaml").addEventListener("scroll", syncYamlScroll);
+
+  // Drop a BIDS folder on the inputs card. `dragover` must be prevented for a
+  // drop to fire at all.
+  const dropZone = $("viewer-in-wrap");
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropZone.classList.add("drop-over");
+  });
+  dropZone.addEventListener("dragleave", (e) => {
+    if (e.target === dropZone) dropZone.classList.remove("drop-over");
+  });
+  dropZone.addEventListener("drop", onDrop);
   $("files-tree").addEventListener("click", onFilesClick);
   $("file-modal-close").onclick = closeFileModal;
   $("file-modal").addEventListener("click", (e) => {
