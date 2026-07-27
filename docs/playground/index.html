@@ -426,6 +426,52 @@
   .modal-head button {
     background: none; border: 0; color: var(--ink); cursor: pointer; font-size: 16px;
   }
+  .modal-body { display: flex; gap: 12px; flex: 1 1 auto; min-height: 0; }
+  .modal-body .viewer { flex: 1 1 auto; height: auto; }
+
+  /* Window/level control: the map's own value histogram beside a colour bar
+     whose two handles are the display window. Reading the histogram is how you
+     see *why* a window is wrong — where the tissue actually sits versus where
+     the scale currently ends. */
+  .level { display: flex; gap: 6px; flex: 0 0 auto; padding: 2px 0; }
+  .level[hidden] { display: none; }
+  .level-hist {
+    width: 52px; height: 100%; border-radius: 6px; background: var(--panel-2);
+  }
+  .level-bar {
+    position: relative; width: 22px; border-radius: 999px;
+    background: var(--panel-2); touch-action: none;
+  }
+  .level-grad { position: absolute; inset: 0; border-radius: 999px; }
+  /* A handle is a rounded cap straddling its edge of the window, like a slider
+     thumb on the bar itself. */
+  .level-handle {
+    position: absolute; left: -3px; right: -3px; height: 14px; cursor: ns-resize;
+    border-radius: 999px; background: var(--panel);
+    border: 2px solid var(--ink-2); box-shadow: var(--shadow);
+    transform: translateY(-50%);
+  }
+  .level-handle:hover, .level-handle:focus-visible {
+    border-color: var(--accent); outline: none;
+  }
+  .level-handle.dragging { border-color: var(--accent); }
+  /* The value that a handle currently sits at, shown while it is touched. */
+  .level-handle > span {
+    position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%);
+    font: 700 11px var(--mono); color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px;
+    white-space: nowrap; opacity: 0; transition: opacity 0.12s ease;
+  }
+  .level-handle:hover > span, .level-handle:focus-visible > span,
+  .level-handle.dragging > span { opacity: 1; }
+  /* Value under the pointer as it moves over the bar. */
+  .level-readout {
+    position: absolute; right: calc(100% + 8px); transform: translateY(-50%);
+    font: 11px var(--mono); color: var(--muted); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px;
+    white-space: nowrap; pointer-events: none;
+  }
+  .level-readout[hidden] { display: none; }
 
   /* Fitted-map viewer + its colour-scale legend, side by side. NiiVue's own
      `isColorbar` only draws horizontally along the canvas's bottom edge in
@@ -594,7 +640,20 @@
       <span id="file-modal-title" class="files-name"></span>
       <button id="file-modal-close" aria-label="Close">✕</button>
     </div>
-    <div class="viewer" id="viewer-modal"><canvas id="gl-modal"></canvas></div>
+    <div class="modal-body">
+      <div class="level" id="level" hidden>
+        <canvas class="level-hist" id="level-hist" width="52" height="300"></canvas>
+        <div class="level-bar" id="level-bar">
+          <div class="level-grad" id="level-grad"></div>
+          <div class="level-handle" id="level-hi" role="slider" tabindex="0"
+               aria-label="Display maximum"><span></span></div>
+          <div class="level-handle" id="level-lo" role="slider" tabindex="0"
+               aria-label="Display minimum"><span></span></div>
+          <div class="level-readout" id="level-readout" hidden></div>
+        </div>
+      </div>
+      <div class="viewer" id="viewer-modal"><canvas id="gl-modal"></canvas></div>
+    </div>
   </div>
 </div>
 <script type="module" src="./app.js"></script>
