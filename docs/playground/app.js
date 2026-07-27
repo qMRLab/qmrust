@@ -1367,17 +1367,24 @@ function createLevelControl(prefix) {
     // The histogram spans the *data's* extent, wider than the display window, so
     // a window can be widened as well as narrowed.
     open(entry, values) {
-      const finite = [];
+      // One pass, no intermediate array and no spread: a whole-brain map runs to
+      // millions of voxels, and `Math.min(...values)` on that many arguments
+      // overflows the call stack.
+      let dataMin = Infinity;
+      let dataMax = -Infinity;
+      let n = 0;
       for (let i = 0; i < values.length; i++) {
-        if (Number.isFinite(values[i])) finite.push(values[i]);
+        const v = values[i];
+        if (!Number.isFinite(v)) continue;
+        if (v < dataMin) dataMin = v;
+        if (v > dataMax) dataMax = v;
+        n += 1;
       }
-      if (finite.length === 0) {
+      if (n === 0) {
         data = null;
         drawHistogram();
         return;
       }
-      let dataMin = Math.min(...finite);
-      let dataMax = Math.max(...finite);
       // Include the current window, so both handles are always reachable.
       dataMin = Math.min(dataMin, entry.volume.cal_min);
       dataMax = Math.max(dataMax, entry.volume.cal_max);
@@ -1905,17 +1912,26 @@ async function fitSlice() {
     select.append(opt);
   }
   select.hidden = outputVolumes.length <= 1;
-  showOutput(outputVolumes[0]?.name);
 
-  // The top status line is prime real estate for every reader, but neither
-  // the model summary nor "Fitted in Xs" matter there — both live beside the
-  // frame-scrubbing note under the inputs viewer instead.
-  status("Fitted", "ok");
-  $("fit-timing").textContent = `Fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
-  hideProgress();
-  $("fit").disabled = false;
-  syncMapViewControls();
-  if (current.lastVox) plotVoxel(current.lastVox.x, current.lastVox.y, current.lastVox.z);
+  // The fit itself is done; everything from here is display. A failure while
+  // drawing must not leave the page reading "Fitting…" forever with its controls
+  // disabled — the maps exist either way, so report the display fault and
+  // release the UI.
+  try {
+    showOutput(outputVolumes[0]?.name);
+    if (current.lastVox) plotVoxel(current.lastVox.x, current.lastVox.y, current.lastVox.z);
+    // The top status line is prime real estate for every reader, but neither
+    // the model summary nor "Fitted in Xs" matter there — both live beside the
+    // frame-scrubbing note under the inputs viewer instead.
+    status("Fitted", "ok");
+  } catch (e) {
+    status(`Fitted, but could not display it — ${e?.message ?? e}`, "error");
+  } finally {
+    $("fit-timing").textContent = `Fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+    hideProgress();
+    $("fit").disabled = false;
+    syncMapViewControls();
+  }
 }
 
 
