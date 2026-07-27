@@ -333,7 +333,8 @@
     padding: 2px 4px; border-radius: 4px;
   }
   .files-name { overflow-wrap: anywhere; flex: 1 1 auto; }
-  .files-row.is-clickable-json .files-name { cursor: pointer; text-decoration: underline dotted; }
+  /* Both kinds of file open from their name, so both get the same hint. */
+  .files-row.is-openable .files-name { cursor: pointer; text-decoration: underline dotted; }
   .files-role { color: var(--muted); text-align: right; flex: 0 0 auto; }
   .files-row.clickable { cursor: pointer; }
   .files-row.clickable:hover { background: var(--panel-2); }
@@ -344,11 +345,6 @@
      the same specificity, so a metadata or unused file still shows its kind. */
   .files-row .files-name.is-nii { color: var(--rust); }
   .files-row .files-name.is-json { color: var(--accent-ink); }
-  .files-open {
-    background: none; border: 0; color: var(--muted); cursor: pointer;
-    padding: 0 2px; font-size: 13px; line-height: 1; flex: 0 0 auto;
-  }
-  .files-open:hover { color: var(--ink); }
 
   /* Skeleton placeholders, shown while a dataset is being fetched, extracted
      and resolved: the panel keeps the shape of what is coming instead of

@@ -1149,41 +1149,33 @@ function fileRow({ path, name, role }) {
   row.className = `files-row ${role.kind}`;
   row.dataset.path = path;
   const isJson = name.endsWith(".json");
-  const isNii = name.endsWith(".nii") || name.endsWith(".nii.gz");
+  const isImage = VIEWABLE.includes(role.kind) && !isJson;
+  const held = dataset?.files?.has(path);
   if (role.kind === "volume") {
     row.dataset.frame = String(role.index);
     row.classList.add("clickable");
-    row.title = "Click to show this volume";
+    row.title = "Click to show this volume in the viewer";
   }
   const label = document.createElement("span");
-  label.className = `files-name${isNii ? " is-nii" : ""}${isJson ? " is-json" : ""}`;
+  label.className = `files-name${isImage ? " is-nii" : ""}${isJson ? " is-json" : ""}`;
   label.textContent = name;
   const kind = document.createElement("span");
   kind.className = "files-role";
   kind.textContent = roleLabel(role);
   row.append(label, kind);
 
-  // Any JSON in the dataset can be read — a sidecar is where a volume's
-  // acquisition actually comes from, so being able to look is the point.
-  if (isJson && dataset?.files?.has(path)) {
-    row.classList.add("is-clickable-json");
-    label.title = "Show this file's contents";
+  // The filename is the "open this file" affordance for both kinds: a sidecar
+  // opens as text, an image in a viewer. One click either way — the row's own
+  // click still steps the inputs viewer to that volume, so both actions are
+  // reachable without a modifier or a second click.
+  if (held && (isJson || isImage)) {
+    row.classList.add("is-openable");
+    label.title = isJson ? "Show this file's contents" : "Open this image in a viewer";
     label.addEventListener("click", (e) => {
       e.stopPropagation();
-      openJsonModal(path);
+      if (isJson) openJsonModal(path);
+      else openFileModal(path);
     });
-  }
-  if (VIEWABLE.includes(role.kind) && dataset?.files?.has(path) && !isJson) {
-    const open = document.createElement("button");
-    open.className = "files-open";
-    open.textContent = "⤢";
-    open.title = "Open this file in a viewer";
-    open.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openFileModal(path);
-    });
-    row.append(open);
-    row.addEventListener("dblclick", () => openFileModal(path));
   }
   return row;
 }
