@@ -412,34 +412,47 @@ function clearTrail(nv) {
 // nothing downstream — the mirror to the other viewers, the history, the
 // statistics — hears about a grown region unless we watch for it ourselves.
 //
-// Watched on a frame boundary, after NiiVue's own handler has run, and committed
-// to history once the gesture settles rather than on every wheel tick: a scroll
-// that breathes a region in and out is one edit, not forty.
+// *When* we look matters as much as that we look. NiiVue also runs the segmenter
+// on hover, to preview what a click would take, and that preview is written
+// straight into `drawBitmap`. Mirroring at an arbitrary later moment therefore
+// copies whatever the pointer happens to be hovering over — and the receiving
+// viewer, which never previews, has no reason to ever clear it. So the mirror
+// runs only at moments the region is confirmed: the release of a click, and each
+// wheel tick of a deliberate grow.
 let wandSettle = 0;
 
-function wandChanged(nv) {
+function commitWand(nv) {
   mirrorDrawing(nv);
   syncWandTolerance(nv);
+  pushHistory();
   onStroke?.();
-  clearTimeout(wandSettle);
-  wandSettle = setTimeout(() => {
-    // By now NiiVue has committed the grown region into `drawBitmap`, so this
-    // mirrors the settled result and records one undo step for the whole gesture.
-    mirrorDrawing(nv);
-    pushHistory();
-    onStroke?.();
-  }, 400);
 }
 
 function wireWand(nv) {
-  const watch = () => {
-    if (!app.roiDrawing || !tool.wand) return;
-    requestAnimationFrame(() => wandChanged(nv));
-  };
-  for (const event of ["pointerdown", "pointerup"]) {
-    nv.canvas.addEventListener(event, watch);
-  }
-  nv.canvas.addEventListener("wheel", watch, { passive: true });
+  const armed = () => app.roiDrawing && tool.wand;
+  // Released, not pressed: the press only seeds the region, and the value under
+  // the pointer can still change before it is let go.
+  nv.canvas.addEventListener("pointerup", () => {
+    if (!armed()) return;
+    clearTimeout(wandSettle);
+    requestAnimationFrame(() => commitWand(nv));
+  });
+  // A scroll grows the region live, so it is mirrored on every tick — but recorded
+  // as one undo step once the gesture stops, not forty.
+  nv.canvas.addEventListener(
+    "wheel",
+    () => {
+      if (!armed()) return;
+      requestAnimationFrame(() => {
+        mirrorDrawing(nv);
+        syncWandTolerance(nv);
+        onStroke?.();
+      });
+      clearTimeout(wandSettle);
+      wandSettle = setTimeout(() => pushHistory(), 400);
+    },
+    { passive: true },
+  );
 }
 
 function wireEraseTrail(nv) {
