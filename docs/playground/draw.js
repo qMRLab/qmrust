@@ -164,6 +164,9 @@ function drawables() {
 }
 
 function applyMode() {
+  // Before any stroke, so a mark made in one viewer has somewhere to land in the
+  // others.
+  if (app.roiDrawing) ensureDrawing();
   for (const nv of drawables()) {
     nv.setDrawingEnabled(app.roiDrawing && !tool.stamp && !tool.fill && !tool.whole);
     nv.opts.dragMode = app.roiDrawing ? DRAG_MODE.none : DRAG_MODE.contrast;
@@ -200,6 +203,12 @@ function mirrorDrawing(from) {
   try {
     for (const to of drawables()) {
       if (to === from) continue;
+      // A viewer with no drawing of its own has no texture to render one, so it
+      // must be given both before a bitmap means anything to it.
+      if (!to.drawBitmap) to.createEmptyDrawing();
+      // The file previewer shares this instance and shows a volume of its own
+      // shape; a bitmap sized for the map does not belong to it.
+      if (to.drawBitmap?.length !== from.drawBitmap?.length) continue;
       to.drawBitmap = from.drawBitmap;
       to.refreshDrawing();
     }
@@ -253,7 +262,12 @@ function makeDraggable(box, handle) {
 // the footprint is walked voxel by voxel.
 // NiiVue allocates the drawing bitmap on its first freehand stroke, so every tool
 // that writes without one — a stamp, a fill, grow-cut — would otherwise throw on a
-// fresh session. `drawPt` and `drawGrowCut` both error outright with no bitmap.
+// fresh session: `drawPt` and `drawGrowCut` both error outright with no bitmap.
+//
+// It matters for a second reason. `createEmptyDrawing` is also what creates the GL
+// texture a drawing is rendered through, so a viewer that never had one cannot
+// display a mirrored bitmap at all — the strokes arrive and paint nothing. Every
+// viewer therefore gets its drawing up front, not on first use.
 function ensureDrawing() {
   for (const nv of drawables()) {
     if (!nv.drawBitmap) nv.createEmptyDrawing();
