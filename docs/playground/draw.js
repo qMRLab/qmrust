@@ -67,7 +67,7 @@ function activeColor() {
 // depends on the current zoom, which the cursor cannot know. Browsers also cap
 // cursor images, so the box stays small.
 function cursorFor(t, size) {
-  const box = Math.min(64, 16 + size * 3);
+  const box = Math.min(64, (t.erase ? 22 : 16) + size * 3);
   const c = box / 2;
   const r = Math.max(3, (box - 6) / 2);
   const arm = Math.max(4, r);
@@ -81,7 +81,10 @@ function cursorFor(t, size) {
     shapes =
       `<line x1="${c - arm}" y1="${c}" x2="${c + arm}" y2="${c}"/>` +
       `<line x1="${c}" y1="${c - arm}" x2="${c}" y2="${c + arm}"/>` +
-      (t.erase ? `<circle cx="${c}" cy="${c}" r="${r}" stroke-dasharray="2 2"/>` : "");
+      // The eraser gets a dashed square around its footprint — the conventional
+      // mark for "removes", and the only way to see what a stroke will take when
+      // what it leaves behind is nothing.
+      (t.erase ? `<rect x="${c - r}" y="${c - r}" width="${r * 2}" height="${r * 2}" stroke-dasharray="3 2.5"/>` : "");
   }
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${box}" height="${box}" ` +
@@ -139,16 +142,13 @@ function mirrorDrawing(from) {
 }
 
 function clearDrawing() {
+  const bitmap = nvOut.drawBitmap;
   for (const nv of drawables()) {
-    nv.drawBitmap = null;
+    if (bitmap) nv.drawBitmap = new Uint8Array(bitmap.length);
     nv.updateGLVolume();
     nv.drawScene();
   }
-}
-
-function undoDrawing() {
-  nvOut.drawUndo();
-  mirrorDrawing(nvOut);
+  if (bitmap) pushHistory();
 }
 
 // The label colours NiiVue paints with. Index 0 is the background: transparent,
@@ -316,27 +316,59 @@ function paintPalette() {
   tools.className = "draw-tools";
   for (const t of TOOLS) tools.append(toolButton(t));
 
-  tools.append(actionButton("undo-2", "Undo", undoDrawing));
-  tools.append(actionButton("trash-2", "Clear all", clearDrawing));
+  const undo = actionButton("undo-2", `Undo (up to ${HISTORY_STEPS - 1} steps)`, undoDrawing);
+  undo.id = "draw-undo";
+  const redo = actionButton("redo-2", "Redo", redoDrawing);
+  redo.id = "draw-redo";
+  tools.append(undo, redo);
 
-  // Brush size, in voxels — NiiVue reads `opts.penSize` on every stroke.
+  // Two steps, because one click used to throw away every region with no warning
+  // and no hint of what it did. The first click says what is about to happen.
+  const wipe = actionButton("trash-2", "Erase every region", () => {
+    if (wipe.classList.contains("armed")) {
+      clearDrawing();
+      paintPalette();
+      return;
+    }
+    wipe.classList.add("armed");
+    wipe.title = "Click again to erase every region";
+    setTimeout(() => {
+      wipe.classList.remove("armed");
+      wipe.title = "Erase every region";
+    }, 2500);
+  });
+  wipe.classList.add("draw-wipe");
+  tools.append(wipe);
+
+  // Brush size in voxels, as a stepper. A range input this narrow cannot be
+  // styled to sit with the app's other controls, and the number is what a reader
+  // actually wants to know.
   const size = document.createElement("div");
   size.className = "draw-size";
-  const slider = document.createElement("input");
-  slider.type = "range";
-  slider.min = "1";
-  slider.max = "15";
-  slider.step = "1";
-  slider.value = String(penSize);
-  slider.title = "Brush size";
-  const readout = document.createElement("span");
-  readout.textContent = String(penSize);
-  slider.oninput = () => {
-    penSize = Number(slider.value);
-    readout.textContent = String(penSize);
+  const step = (delta) => {
+    penSize = Math.max(1, Math.min(15, penSize + delta));
     applyTool();
+    paintPalette();
   };
-  size.append(slider, readout);
+  const minus = document.createElement("button");
+  minus.type = "button";
+  minus.className = "draw-step";
+  minus.textContent = "−";
+  minus.title = "Smaller brush";
+  minus.disabled = penSize <= 1;
+  minus.onclick = () => step(-1);
+  const value = document.createElement("span");
+  value.className = "draw-size-value";
+  value.textContent = String(penSize);
+  value.title = `Brush is ${penSize} voxel${penSize === 1 ? "" : "s"} across`;
+  const plus = document.createElement("button");
+  plus.type = "button";
+  plus.className = "draw-step";
+  plus.textContent = "+";
+  plus.title = "Larger brush";
+  plus.disabled = penSize >= 15;
+  plus.onclick = () => step(1);
+  size.append(minus, value, plus);
 
   const swatches = document.createElement("div");
   swatches.className = "draw-labels";
@@ -374,6 +406,63 @@ function paintPalette() {
   };
 
   box.append(head, tools, size, swatches, picker);
+}
+
+// NiiVue keeps 8 undo bitmaps and offers no redo, so the history is kept here
+// instead: a bounded stack of bitmap snapshots with a cursor into it. That gives
+// a depth we can state, and a redo.
+//
+// Bounded twice over — by steps and by bytes — because a snapshot is one byte per
+// voxel: trivial for a 128x128 slice, but a volumetric dataset would otherwise
+// hold hundreds of megabytes of undo.
+const HISTORY_STEPS = 24;
+const HISTORY_BYTES = 48 * 1024 * 1024;
+let history = [];
+let historyAt = -1;
+
+function historyBytes() {
+  return history.reduce((n, b) => n + b.length, 0);
+}
+
+// Record the state *after* a stroke. Anything undone is discarded first: a new
+// stroke is a new branch, and keeping the old future would let redo resurrect
+// something the reader has painted over.
+function pushHistory() {
+  const bitmap = nvOut.drawBitmap;
+  if (!bitmap) return;
+  // The first entry is the blank canvas, so the first undo returns to empty.
+  if (history.length === 0) history.push(new Uint8Array(bitmap.length));
+  history = history.slice(0, historyAt + 1 || 1);
+  history.push(bitmap.slice());
+  while (history.length > HISTORY_STEPS || historyBytes() > HISTORY_BYTES) history.shift();
+  historyAt = history.length - 1;
+  syncHistoryButtons();
+}
+
+function restoreHistory(at) {
+  historyAt = at;
+  const snapshot = history[at];
+  for (const nv of drawables()) {
+    nv.drawBitmap = snapshot.slice();
+    nv.refreshDrawing();
+  }
+  onStroke?.();
+  syncHistoryButtons();
+}
+
+function undoDrawing() {
+  if (historyAt > 0) restoreHistory(historyAt - 1);
+}
+
+function redoDrawing() {
+  if (historyAt < history.length - 1) restoreHistory(historyAt + 1);
+}
+
+function syncHistoryButtons() {
+  const undo = $("draw-undo");
+  const redo = $("draw-redo");
+  if (undo) undo.disabled = historyAt <= 0;
+  if (redo) redo.disabled = historyAt >= history.length - 1;
 }
 
 let placed = false;
@@ -417,6 +506,7 @@ export function attachModalDrawing() {
   if (nvOut.drawBitmap) mirrorDrawing(nvOut);
   app.nvModal.onDrawingChanged = () => {
     mirrorDrawing(app.nvModal);
+    pushHistory();
     onStroke?.();
   };
 }
@@ -447,6 +537,7 @@ export function wireDrawing() {
     wireStamp(nv);
     nv.onDrawingChanged = () => {
       mirrorDrawing(nv);
+      pushHistory();
       onStroke?.();
     };
   }

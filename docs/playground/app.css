@@ -656,33 +656,24 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   background: var(--field); border: var(--border-w) solid var(--line);
   color: var(--ink-2); font-size: 11px;
 }
-.draw-tool:hover { color: var(--ink); }
+.draw-tool:hover:not(:disabled) { color: var(--ink); }
+.draw-tool:disabled { opacity: .4; }
+/* Clearing everything is destructive, so it reads as such once armed. */
+.draw-wipe:hover { color: var(--bad); border-color: var(--bad); }
+.draw-wipe.armed { background: var(--bad); border-color: var(--bad); color: #fff; }
 /* Brass marks the active tool — the third metal, whose whole job this is. */
 .draw-tool.active {
   background: var(--brass); border-color: var(--brass); color: #241c0c;
 }
-.draw-size { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.draw-size input[type=range] {
-  width: 36px; padding: 0; margin: 0; accent-color: var(--accent);
-  /* A full-size thumb on a 36px track leaves almost no track to see. */
-  height: 10px;
+/* Brush size as a stepper, in the same shape as the tool buttons above it. */
+.draw-size { display: flex; align-items: center; justify-content: space-between; }
+.draw-step {
+  width: 11px; height: 18px; padding: 0; border: 0; border-radius: 3px;
+  background: none; color: var(--muted); font: 600 12px var(--font-ui); line-height: 1;
 }
-.draw-size input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none;
-  width: 9px; height: 9px; border-radius: 50%;
-  background: var(--accent); border: 0;
-}
-.draw-size input[type=range]::-webkit-slider-runnable-track {
-  height: 3px; border-radius: 2px; background: var(--line);
-}
-.draw-size input[type=range]::-moz-range-thumb {
-  width: 9px; height: 9px; border: 0; border-radius: 50%; background: var(--accent);
-}
-.draw-size input[type=range]::-moz-range-track {
-  height: 3px; border-radius: 2px; background: var(--line);
-}
-.draw-size span { font: 10px var(--font-mono); color: var(--muted); }
-/* Two per row: six labels in three rows keeps the column narrow. */
+.draw-step:hover:not(:disabled) { color: var(--ink); }
+.draw-step:disabled { opacity: .35; }
+.draw-size-value { font: 10px var(--font-mono); color: var(--ink-2); min-width: 12px; text-align: center; }
 .draw-labels { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
 .draw-swatch {
   width: 16px; height: 16px; padding: 0; border-radius: 3px;
