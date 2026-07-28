@@ -53,3 +53,37 @@ export function describeValues(values) {
     iqr: q3 - q1,
   };
 }
+
+// Statistics per drawn label, for one map.
+//
+// Two index orders meet here and must not be confused: NiiVue's drawing bitmap
+// is x-fastest (`x + y*nx + z*nx*ny`), while a fitted map is C-order
+// (`(x*ny + y)*nz + z`, see `readVolumeSeries`). Reading one with the other's
+// index silently measures the wrong voxels, which is why the bitmap and the map
+// arrive as separate arguments here — where it can be tested.
+//
+// Voxels the fit produced no value for (NaN — outside the mask, or a failed fit)
+// are excluded rather than counted, so `n` is the number of voxels actually
+// measured. A label whose voxels are all unfitted is absent from the result:
+// reporting it with n=0 would put a NaN mean in the table.
+export function labelStats(bitmap, flat, dims) {
+  const out = new Map();
+  if (!bitmap || !flat) return out;
+  const [nx, ny, nz] = dims;
+  const byLabel = new Map();
+  for (let z = 0; z < nz; z++) {
+    for (let y = 0; y < ny; y++) {
+      for (let x = 0; x < nx; x++) {
+        const label = bitmap[x + y * nx + z * nx * ny];
+        if (label === 0) continue;
+        const v = flat[(x * ny + y) * nz + z];
+        if (!Number.isFinite(v)) continue;
+        let values = byLabel.get(label);
+        if (!values) byLabel.set(label, (values = []));
+        values.push(v);
+      }
+    }
+  }
+  for (const [label, values] of byLabel) out.set(label, describeValues(values));
+  return out;
+}
