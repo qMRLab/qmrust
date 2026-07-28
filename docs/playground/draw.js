@@ -208,8 +208,10 @@ function mirrorDrawing(from) {
       if (!to.drawBitmap) to.createEmptyDrawing();
       // The file previewer shares this instance and shows a volume of its own
       // shape; a bitmap sized for the map does not belong to it.
-      if (to.drawBitmap?.length !== from.drawBitmap?.length) continue;
-      to.drawBitmap = from.drawBitmap;
+      if (to.drawBitmap?.length !== live.length) continue;
+      // A copy, not the same array: the source's growing buffer is rewritten on
+      // every wheel tick, and the receivers must not alias it.
+      to.drawBitmap = live.slice();
       to.refreshDrawing();
     }
   } finally {
