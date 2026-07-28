@@ -267,6 +267,10 @@ export function clearMapHover() {
 
 export function onLocation(loc) {
   if (!app.current || !loc?.vox) return;
+  // While the pen is out a click is a stroke, not a probe: re-running the voxel
+  // fit on every dab would replace the curve a reader is working against, and
+  // burn a `forward()` call per stroke.
+  if (app.roiDrawing) return;
   const [x, y, z] = loc.vox.map((v) => Math.round(v));
   const [nx, ny, nz] = app.current.meta.dims;
   if (x < 0 || y < 0 || z < 0 || x >= nx || y >= ny || z >= nz) return;

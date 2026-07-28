@@ -631,8 +631,8 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    A narrow vertical column, draggable by its header. */
 .draw-palette {
   position: fixed; top: 96px; left: 12px; z-index: 60;
-  display: flex; flex-direction: column; gap: 5px; width: 40px;
-  padding: 5px; border-radius: var(--radius);
+  display: flex; flex-direction: column; gap: 6px; width: 50px;
+  padding: 7px; border-radius: var(--radius);
   background: color-mix(in srgb, var(--panel) 90%, transparent);
   border: var(--border-w) solid var(--line); box-shadow: var(--shadow);
 }
@@ -651,7 +651,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* One tool per row: a vertical stack reads as a toolbox rather than a toolbar. */
 .draw-tools { display: flex; flex-direction: column; gap: 3px; }
 .draw-tool {
-  width: 28px; height: 26px; padding: 0; border-radius: 4px;
+  width: 36px; height: 32px; padding: 0; border-radius: 4px;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--field); border: var(--border-w) solid var(--line);
   color: var(--ink-2); font-size: 11px;
@@ -663,20 +663,36 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .draw-size { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .draw-size input[type=range] {
-  width: 28px; padding: 0; margin: 0; accent-color: var(--accent);
+  width: 36px; padding: 0; margin: 0; accent-color: var(--accent);
+  /* A full-size thumb on a 36px track leaves almost no track to see. */
+  height: 10px;
 }
-.draw-size span { font: 9px var(--font-mono); color: var(--muted); }
+.draw-size input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); border: 0;
+}
+.draw-size input[type=range]::-webkit-slider-runnable-track {
+  height: 3px; border-radius: 2px; background: var(--line);
+}
+.draw-size input[type=range]::-moz-range-thumb {
+  width: 9px; height: 9px; border: 0; border-radius: 50%; background: var(--accent);
+}
+.draw-size input[type=range]::-moz-range-track {
+  height: 3px; border-radius: 2px; background: var(--line);
+}
+.draw-size span { font: 10px var(--font-mono); color: var(--muted); }
 /* Two per row: six labels in three rows keeps the column narrow. */
 .draw-labels { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
 .draw-swatch {
-  width: 13px; height: 13px; padding: 0; border-radius: 3px;
+  width: 16px; height: 16px; padding: 0; border-radius: 3px;
   border: 2px solid transparent; box-shadow: 0 0 0 1px var(--line);
 }
 .draw-swatch.active { border-color: var(--ink); }
 /* The active label's colour is editable, so a reader is not stuck with six
    choices. The drawing stores label values; this only changes how they paint. */
 .draw-picker {
-  width: 28px; height: 20px; padding: 0; border-radius: 4px;
+  width: 36px; height: 22px; padding: 0; border-radius: 4px;
   border: var(--border-w) solid var(--line); background: none;
 }
 /* Overlays its viewer rather than replacing it, so the card keeps its exact

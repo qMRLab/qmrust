@@ -10,10 +10,15 @@ import { icon } from "./vendor/icons.js";
 import { $ } from "./dom.js";
 import { app, nvIn, nvOut } from "./state.js";
 
-// Six labels. The first three are the brand metals — verdigris, brass, copper —
-// so a row in the measurements table and a region on the map are obviously the
-// same object. Each is recolourable; the *value* is what the drawing stores, and
-// the colour is only how NiiVue paints that value.
+// The labels available to paint with. The first three are the brand metals —
+// verdigris, brass, copper — so a row in the measurements table and a region on
+// the map are obviously the same object.
+//
+// A label is one *value* with one colour: the drawing stores the value, and the
+// colour is only how NiiVue paints it. So a colour cannot be edited without
+// repainting every voxel already drawn with that label — which is why choosing a
+// fresh colour allocates a label rather than recolouring one. The list grows on
+// demand; NiiVue's draw LUT holds 255.
 const LABELS = [
   { value: 1, color: "#7cc3b5" },
   { value: 2, color: "#c9a86a" },
@@ -34,7 +39,7 @@ const TOOLS = [
 
 let tool = TOOLS[0];
 let label = 1;
-let penSize = 3;
+let penSize = 1;
 // Assigning `drawBitmap` fires `onDrawingChanged` on the receiving instance,
 // which would mirror straight back; this flag is what stops the ping-pong.
 let mirroring = false;
@@ -262,6 +267,30 @@ function actionButton(name, title, fn) {
   return b;
 }
 
+// Which label values the drawing actually contains. A label nobody has drawn
+// with is free to be recoloured; one with voxels in it is not.
+function usedLabels() {
+  const used = new Set();
+  const bitmap = nvOut.drawBitmap;
+  if (bitmap) for (const v of bitmap) if (v !== 0) used.add(v);
+  return used;
+}
+
+// Give `color` a label to paint as. An untouched label is reused — six swatches
+// that each spawned a new one would fill up in a minute — and otherwise the
+// palette grows, so no existing region is ever repainted.
+function allocateLabel(color) {
+  const used = usedLabels();
+  const free = LABELS.find((l) => !used.has(l.value));
+  if (free) {
+    free.color = color;
+    return free.value;
+  }
+  const value = Math.max(...LABELS.map((l) => l.value)) + 1;
+  LABELS.push({ value, color });
+  return value;
+}
+
 function paintPalette() {
   const box = $("draw-palette");
   box.replaceChildren();
@@ -327,16 +356,20 @@ function paintPalette() {
     swatches.append(b);
   }
 
-  // Recolour the active label. The drawing stores label *values*, so this edits
-  // the palette NiiVue paints them with and leaves every drawn voxel where it is.
+  // A fresh colour means a fresh label, so nothing already drawn changes colour.
+  // `change` rather than `input`: the native picker streams `input` while the
+  // pointer moves through the gradient, which would allocate a label per pixel
+  // travelled — `change` fires once, when the choice is confirmed.
   const picker = document.createElement("input");
   picker.type = "color";
   picker.className = "draw-picker";
   picker.value = activeColor();
-  picker.title = `Colour of label ${label}`;
-  picker.oninput = () => {
-    LABELS.find((l) => l.value === label).color = picker.value;
+  picker.title = "New colour — paints as a new label";
+  picker.onchange = () => {
+    label = allocateLabel(picker.value);
+    if (tool.erase) tool = TOOLS[0];
     applyLabelColours();
+    applyTool();
     paintPalette();
   };
 
