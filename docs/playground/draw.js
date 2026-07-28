@@ -407,18 +407,39 @@ function clearTrail(nv) {
   trail.layer.getContext("2d").clearRect(0, 0, trail.layer.width, trail.layer.height);
 }
 
-// NiiVue adjusts the tolerance on each wheel tick and regrows the region. Reading
-// the value back on the next frame — after its own handler has run — is what keeps
-// the number in the palette honest.
-function wireWandWheel(nv) {
-  nv.canvas.addEventListener(
-    "wheel",
-    () => {
-      if (!wandOwnsWheel()) return;
-      requestAnimationFrame(() => syncWandTolerance(nv));
-    },
-    { passive: true },
-  );
+// The wand is the one tool NiiVue does not announce: `doClickToSegment` never
+// calls `onDrawingChanged`, unlike every other path (draw, undo, load, close). So
+// nothing downstream — the mirror to the other viewers, the history, the
+// statistics — hears about a grown region unless we watch for it ourselves.
+//
+// Watched on a frame boundary, after NiiVue's own handler has run, and committed
+// to history once the gesture settles rather than on every wheel tick: a scroll
+// that breathes a region in and out is one edit, not forty.
+let wandSettle = 0;
+
+function wandChanged(nv) {
+  mirrorDrawing(nv);
+  syncWandTolerance(nv);
+  onStroke?.();
+  clearTimeout(wandSettle);
+  wandSettle = setTimeout(() => {
+    // By now NiiVue has committed the grown region into `drawBitmap`, so this
+    // mirrors the settled result and records one undo step for the whole gesture.
+    mirrorDrawing(nv);
+    pushHistory();
+    onStroke?.();
+  }, 400);
+}
+
+function wireWand(nv) {
+  const watch = () => {
+    if (!app.roiDrawing || !tool.wand) return;
+    requestAnimationFrame(() => wandChanged(nv));
+  };
+  for (const event of ["pointerdown", "pointerup"]) {
+    nv.canvas.addEventListener(event, watch);
+  }
+  nv.canvas.addEventListener("wheel", watch, { passive: true });
 }
 
 function wireEraseTrail(nv) {
@@ -770,7 +791,7 @@ export function attachModalDrawing() {
   applyLabelColours();
   wireStamp(app.nvModal);
   wireEraseTrail(app.nvModal);
-  wireWandWheel(app.nvModal);
+  wireWand(app.nvModal);
   applyMode();
   app.nvModal.setDrawOpacity(labelsVisible ? DRAW_OPACITY : 0);
   if (nvOut.drawBitmap) mirrorDrawing(nvOut);
@@ -808,7 +829,7 @@ export function wireDrawing() {
   for (const nv of [nvIn, nvOut]) {
     wireStamp(nv);
     wireEraseTrail(nv);
-    wireWandWheel(nv);
+    wireWand(nv);
     nv.onDrawingChanged = () => {
       mirrorDrawing(nv);
       pushHistory();
