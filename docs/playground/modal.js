@@ -29,13 +29,6 @@ async function ensureModalViewer() {
   app.nvModal.canvas.addEventListener("mouseleave", clearMapHover);
 }
 
-// The modal viewer is created on first open, so it misses the wiring the two
-// permanent viewers get at startup; this hands it the pen, the labels and the
-// drawing in progress.
-async function ensureModalDrawing() {
-  await ensureModalViewer();
-  attachModalDrawing();
-}
 
 // The fitted map in a modal, at a size the side-by-side layout cannot give it.
 export async function openMapModal() {
@@ -46,12 +39,17 @@ export async function openMapModal() {
   if (!shown) return;
   $("file-modal").hidden = false;
   $("file-modal-title").textContent = `${shown.name}${shown.unit ? ` [${shown.unit}]` : ""}`;
-  await ensureModalDrawing();
+  await ensureModalViewer();
   clearVolumes(app.nvModal);
   app.nvModal.addVolume(shown.volume);
   // Multiplanar whatever the data is: a single-slice fit still shows its one
   // plane, and the control that opens this is labelled Multiplanar.
   app.nvModal.setSliceType(app.nvModal.sliceTypeMultiplanar);
+  // Only now: a drawing is bound to the background volume, so handing over the
+  // pen and the strokes has to follow the volume they belong to. Doing it before
+  // `addVolume` leaves the mirrored bitmap attached to a volume that has just
+  // been replaced, and the strokes vanish.
+  attachModalDrawing();
   app.nvModal.resizeListener();
   app.nvModal.drawScene();
   // A quantitative map is unreadable without a scale, so the modal always shows

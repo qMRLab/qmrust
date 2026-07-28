@@ -227,6 +227,14 @@ function drawCurve(measured, predicted, labels = []) {
 
 export function onMapHover(event) {
   if (!app.shownOutput || !app.current) return;
+  // While the pen is out, the pointer is painting rather than inspecting: a dot
+  // chasing the cursor up and down the colour bar is noise, and the marker sits
+  // exactly where a reader is watching their stroke land.
+  if (app.roiDrawing) {
+    app.levelMain?.mark(null);
+    app.levelModal?.mark(null);
+    return;
+  }
   const nv = event.currentTarget === app.nvModal?.canvas ? app.nvModal : nvOut;
   // `canvasPos2frac` works in the canvas's backing-store pixels, which differ
   // from CSS pixels whenever the canvas is high-resolution. Deriving the ratio
@@ -265,7 +273,7 @@ export function onLocation(loc) {
   plotVoxel(x, y, z);
   // Mark the crosshair's own value too. These voxel indices are NiiVue's, so
   // this path needs no coordinate conversion of ours.
-  if (app.shownOutput) {
+  if (app.shownOutput && !app.roiDrawing) {
     const v = app.shownOutput.volume.getValue(x, y, z, 0);
     app.levelMain?.mark(Number.isFinite(v) ? v : null);
     app.levelModal?.mark(Number.isFinite(v) ? v : null);
