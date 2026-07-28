@@ -45,7 +45,7 @@ const TOOLS = [
   { id: "ellipse", icon: "circle", title: "Ellipse", stamp: "ellipse", setting: "size",
     hint: "Click to stamp a circle, centred on the cursor." },
   { id: "wand", icon: "wand", title: "Magic wand", wand: true, setting: "tolerance",
-    hint: "Click a voxel to grow a region of similar value." },
+    hint: "Click a voxel to grow a region of similar value. Scroll to widen or narrow it." },
   { id: "fill", icon: "cloud-rain", title: "Flood fill", fill: true,
     hint: "Click inside an outline you have drawn to fill it." },
   { id: "erase", icon: "eraser", title: "Erase", erase: true, setting: "size",
@@ -64,7 +64,11 @@ let label = 1;
 // hand — rather than hiding options behind a gesture nobody would find.
 const SETTINGS = {
   size: { value: 1, min: 1, max: 15, unit: "", title: "Brush size, in voxels" },
-  tolerance: { value: 5, min: 1, max: 40, unit: "%", title: "How far from the clicked value the wand may grow" },
+  // NiiVue's `clickToSegmentPercent` is a fraction of the display range, clamped
+  // to [0, 1] — so the stored percentage is divided by 100 on the way in. Feeding
+  // it 5 rather than 0.05 puts it far past the top of its range, where every
+  // setting behaves the same and the wand grows without bound.
+  tolerance: { value: 5, min: 1, max: 100, unit: "%", title: "How far from the clicked value the wand may grow" },
   levels: { value: 2, min: 2, max: 5, unit: " classes", title: "How many classes to split the map into" },
 };
 
@@ -169,7 +173,7 @@ function applyTool() {
     nv.opts.penType = 0;
     nv.opts.penSize = penSize();
     nv.opts.clickToSegment = Boolean(app.roiDrawing && tool.wand);
-    nv.opts.clickToSegmentPercent = SETTINGS.tolerance.value;
+    nv.opts.clickToSegmentPercent = SETTINGS.tolerance.value / 100;
     // Grow within the slice being looked at, not through the volume.
     nv.opts.clickToSegmentIs2D = true;
     nv.setPenValue(tool.erase ? 0 : label, true);
@@ -317,6 +321,18 @@ function segmentGrowCut() {
   mirrorDrawing(nvOut);
   pushHistory();
   onStroke?.();
+}
+
+// NiiVue adjusts `clickToSegmentPercent` itself when the wheel turns with the wand
+// armed — a genuinely good gesture, since it grows and shrinks the region live. It
+// does mean the option can change without the palette knowing, so the palette
+// reads it back rather than assuming it still owns the value.
+function syncWandTolerance(nv) {
+  if (!tool.wand) return;
+  const pct = Math.round((nv.opts.clickToSegmentPercent ?? 0) * 100);
+  if (pct === SETTINGS.tolerance.value) return;
+  SETTINGS.tolerance.value = Math.max(SETTINGS.tolerance.min, Math.min(SETTINGS.tolerance.max, pct));
+  paintPalette();
 }
 
 // Where the eraser has been, drawn as a dashed path over the image.
@@ -709,6 +725,7 @@ export function wireDrawing() {
     nv.onDrawingChanged = () => {
       mirrorDrawing(nv);
       pushHistory();
+      syncWandTolerance(nv);
       onStroke?.();
     };
   }
