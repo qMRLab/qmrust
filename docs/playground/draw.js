@@ -199,6 +199,16 @@ function applyTool() {
 // this is bookkeeping — no resampling and no geometry of ours.
 function mirrorDrawing(from) {
   if (mirroring) return;
+  // The wand grows into a buffer of its own, and NiiVue only commits that into
+  // `drawBitmap` when the interaction ends — so mid-grow the committed bitmap is
+  // still the old region. Mirroring whatever the source is *rendering* keeps the
+  // other viewers in step, and leaves NiiVue's own commit alone: forcing it early
+  // would make scroll-to-shrink accumulate instead of shrink, since each grow
+  // re-seeds from the committed state.
+  const live = from.clickToSegmentIsGrowing
+    ? from.clickToSegmentGrowingBitmap ?? from.drawBitmap
+    : from.drawBitmap;
+  if (!live) return;
   mirroring = true;
   try {
     for (const to of drawables()) {
