@@ -48,6 +48,26 @@ let penSize = 1;
 // which would mirror straight back; this flag is what stops the ping-pong.
 let mirroring = false;
 
+// NiiVue's own default; restored when labels are shown again.
+const DRAW_OPACITY = 0.8;
+let labelsVisible = true;
+
+// Hiding is opacity, not deletion: a reader needs to see the map under a region
+// they have just drawn, and must not have to erase it to do so.
+export function toggleLabels() {
+  labelsVisible = !labelsVisible;
+  for (const nv of drawables()) nv.setDrawOpacity(labelsVisible ? DRAW_OPACITY : 0);
+  syncLabelToggle();
+}
+
+function syncLabelToggle() {
+  const btn = $("labels-toggle");
+  if (!btn) return;
+  btn.innerHTML = icon(labelsVisible ? "eye" : "eye-off", 16);
+  btn.title = labelsVisible ? "Hide labels" : "Show labels";
+  btn.classList.toggle("active", !labelsVisible);
+}
+
 export function isDrawing() {
   return app.roiDrawing;
 }
@@ -143,16 +163,6 @@ function mirrorDrawing(from) {
   } finally {
     mirroring = false;
   }
-}
-
-function clearDrawing() {
-  const bitmap = nvOut.drawBitmap;
-  for (const nv of drawables()) {
-    if (bitmap) nv.drawBitmap = new Uint8Array(bitmap.length);
-    nv.updateGLVolume();
-    nv.drawScene();
-  }
-  if (bitmap) pushHistory();
 }
 
 // The label colours NiiVue paints with. Index 0 is the background: transparent,
@@ -394,23 +404,6 @@ function paintPalette() {
   redo.id = "draw-redo";
   tools.append(undo, redo);
 
-  // Two steps, because one click used to throw away every region with no warning
-  // and no hint of what it did. The first click says what is about to happen.
-  const wipe = actionButton("trash-2", "Erase every region", () => {
-    if (wipe.classList.contains("armed")) {
-      clearDrawing();
-      paintPalette();
-      return;
-    }
-    wipe.classList.add("armed");
-    wipe.title = "Click again to erase every region";
-    setTimeout(() => {
-      wipe.classList.remove("armed");
-      wipe.title = "Erase every region";
-    }, 2500);
-  });
-  wipe.classList.add("draw-wipe");
-  tools.append(wipe);
 
   // Brush size in voxels, as a stepper. A range input this narrow cannot be
   // styled to sit with the app's other controls, and the number is what a reader
@@ -576,6 +569,7 @@ export function attachModalDrawing() {
   wireStamp(app.nvModal);
   wireEraseTrail(app.nvModal);
   applyMode();
+  app.nvModal.setDrawOpacity(labelsVisible ? DRAW_OPACITY : 0);
   if (nvOut.drawBitmap) mirrorDrawing(nvOut);
   app.nvModal.onDrawingChanged = () => {
     mirrorDrawing(app.nvModal);
@@ -606,6 +600,8 @@ export function detachModalDrawing() {
 export function wireDrawing() {
   applyLabelColours();
   $("roi-toggle").onclick = toggleDrawing;
+  $("labels-toggle").onclick = toggleLabels;
+  syncLabelToggle();
   for (const nv of [nvIn, nvOut]) {
     wireStamp(nv);
     wireEraseTrail(nv);

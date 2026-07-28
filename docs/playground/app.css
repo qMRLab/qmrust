@@ -664,9 +664,10 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .draw-tool:hover:not(:disabled) { color: var(--ink); }
 .draw-tool:disabled { opacity: .4; }
-/* Clearing everything is destructive, so it reads as such once armed. */
-.draw-wipe:hover { color: var(--bad); border-color: var(--bad); }
-.draw-wipe.armed { background: var(--bad); border-color: var(--bad); color: #fff; }
+/* An icon-only control in the map's button row: square, so it reads as a state
+   toggle rather than a truncated labelled button. */
+#labels-toggle { padding: 4px 7px; }
+#labels-toggle.active { color: var(--brass); border-color: var(--brass); }
 /* Brass marks the active tool — the third metal, whose whole job this is. */
 .draw-tool.active {
   background: var(--brass); border-color: var(--brass); color: #241c0c;
