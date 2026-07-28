@@ -6,7 +6,7 @@
 // silently includes or drops voxels, which biases a mean that then gets quoted.
 // Every region here is traceable to a deliberate gesture.
 import { DRAG_MODE } from "./vendor/niivue.js";
-import { icon, ICON_SHAPES } from "./vendor/icons.js";
+import { icon } from "./vendor/icons.js";
 import { $ } from "./dom.js";
 import { app, nvIn, nvOut } from "./state.js";
 
@@ -14,7 +14,7 @@ import { app, nvIn, nvOut } from "./state.js";
 // so a row in the measurements table and a region on the map are obviously the
 // same object. Each is recolourable; the *value* is what the drawing stores, and
 // the colour is only how NiiVue paints that value.
-export const LABELS = [
+const LABELS = [
   { value: 1, color: "#7cc3b5" },
   { value: 2, color: "#c9a86a" },
   { value: 3, color: "#cf8a5f" },
@@ -24,8 +24,7 @@ export const LABELS = [
 ];
 
 // `penType`: 0 freehand, 1 rectangle, 2 ellipse — the values the vendored build
-// compares against. `filled` is `setPenValue`'s second argument, which decides
-// whether a shape lands solid or as an outline.
+// compares against. Shapes are always solid.
 const TOOLS = [
   { id: "pen", icon: "pencil", title: "Freehand", penType: 0 },
   { id: "rect", icon: "square", title: "Rectangle", penType: 1 },
@@ -35,7 +34,6 @@ const TOOLS = [
 
 let tool = TOOLS[0];
 let label = 1;
-let filled = true;
 let penSize = 3;
 // Assigning `drawBitmap` fires `onDrawingChanged` on the receiving instance,
 // which would mirror straight back; this flag is what stops the ping-pong.
@@ -45,7 +43,7 @@ export function isDrawing() {
   return app.roiDrawing;
 }
 
-export function currentLabel() {
+function currentLabel() {
   return label;
 }
 
@@ -53,20 +51,40 @@ function activeColor() {
   return LABELS.find((l) => l.value === label).color;
 }
 
-// The pointer carries the tool's own glyph, so which tool is armed is visible
-// where the work happens rather than only in the palette. `currentColor` cannot
-// resolve inside a cursor image, so the shape is stroked explicitly: white over a
-// dark halo, which stays legible on both bright tissue and black background.
-function cursorFor(t) {
-  const shapes = ICON_SHAPES[t.icon];
-  if (!shapes) return "crosshair";
+// The pointer shows where paint will land, and how much of it.
+//
+// The freehand pen gets a plain cross centred on the painted voxel: a pencil
+// glyph would have to trace from its tip, and a tip hotspot is far harder to aim
+// than a centre. The stamps get their own outline instead, so the shape and its
+// size are visible before committing. Both scale with the brush.
+//
+// The scale is proportional, not a true footprint: a voxel's size on screen
+// depends on the current zoom, which the cursor cannot know. Browsers also cap
+// cursor images, so the box stays small.
+function cursorFor(t, size) {
+  const box = Math.min(64, 16 + size * 3);
+  const c = box / 2;
+  const r = Math.max(3, (box - 6) / 2);
+  const arm = Math.max(4, r);
+  let shapes;
+  if (t.penType === 1) {
+    shapes = `<rect x="${c - r}" y="${c - r}" width="${r * 2}" height="${r * 2}"/>`;
+  } else if (t.penType === 2) {
+    shapes = `<circle cx="${c}" cy="${c}" r="${r}"/>`;
+  } else {
+    // Freehand and erase: a cross, with erase ringed so the two are not confused.
+    shapes =
+      `<line x1="${c - arm}" y1="${c}" x2="${c + arm}" y2="${c}"/>` +
+      `<line x1="${c}" y1="${c - arm}" x2="${c}" y2="${c + arm}"/>` +
+      (t.erase ? `<circle cx="${c}" cy="${c}" r="${r}" stroke-dasharray="2 2"/>` : "");
+  }
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" ` +
-    `fill="none" stroke-linecap="round" stroke-linejoin="round">` +
-    `<g stroke="#000" stroke-opacity=".55" stroke-width="3.4">${shapes}</g>` +
-    `<g stroke="#fff" stroke-width="1.8">${shapes}</g></svg>`;
-  // The hotspot sits at the glyph's centre; a keyword fallback is required.
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 11 11, crosshair`;
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${box}" height="${box}" ` +
+    `viewBox="0 0 ${box} ${box}" fill="none" stroke-linecap="round">` +
+    `<g stroke="#000" stroke-opacity=".6" stroke-width="3">${shapes}</g>` +
+    `<g stroke="#fff" stroke-width="1.3">${shapes}</g></svg>`;
+  // Hotspot at the centre, which is the voxel that gets painted.
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${Math.round(c)} ${Math.round(c)}, crosshair`;
 }
 
 // Both viewers accept the pen, so the same gesture works wherever the structure
@@ -83,11 +101,11 @@ function applyMode() {
 }
 
 function applyTool() {
-  const cursor = app.roiDrawing ? cursorFor(tool) : "";
+  const cursor = app.roiDrawing ? cursorFor(tool, penSize) : "";
   for (const nv of [nvIn, nvOut]) {
     nv.opts.penType = tool.penType;
     nv.opts.penSize = penSize;
-    nv.setPenValue(tool.erase ? 0 : label, filled);
+    nv.setPenValue(tool.erase ? 0 : label, true);
     nv.canvas.style.cursor = cursor;
   }
 }
@@ -107,7 +125,7 @@ export function mirrorDrawing(from) {
   }
 }
 
-export function clearDrawing() {
+function clearDrawing() {
   for (const nv of [nvIn, nvOut]) {
     nv.drawBitmap = null;
     nv.updateGLVolume();
@@ -115,7 +133,7 @@ export function clearDrawing() {
   }
 }
 
-export function undoDrawing() {
+function undoDrawing() {
   nvOut.drawUndo();
   mirrorDrawing(nvOut);
 }
@@ -187,13 +205,6 @@ function stampAt(nv, event) {
     for (let x = cx - r; x <= cx + r; x++) {
       if (x < 0 || y < 0 || x >= nx || y >= ny) continue;
       if (round && (x - cx) ** 2 + (y - cy) ** 2 > r * r) continue;
-      // Outline rather than solid: keep only the shape's border ring.
-      if (!filled) {
-        const edge = round
-          ? (x - cx) ** 2 + (y - cy) ** 2 > (r - 1) * (r - 1)
-          : Math.abs(x - cx) === r || Math.abs(y - cy) === r;
-        if (!edge) continue;
-      }
       nv.drawPt(x, y, cz, value);
     }
   }
@@ -268,17 +279,6 @@ function paintPalette() {
   tools.className = "draw-tools";
   for (const t of TOOLS) tools.append(toolButton(t));
 
-  const shape = document.createElement("button");
-  shape.type = "button";
-  shape.className = `draw-tool draw-filled${filled ? " active" : ""}`;
-  shape.title = filled ? "Shapes are solid" : "Shapes are outlines";
-  shape.textContent = filled ? "◼" : "◻";
-  shape.onclick = () => {
-    filled = !filled;
-    applyTool();
-    paintPalette();
-  };
-  tools.append(shape);
   tools.append(actionButton("undo-2", "Undo", undoDrawing));
   tools.append(actionButton("trash-2", "Clear all", clearDrawing));
 

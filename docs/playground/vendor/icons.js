@@ -15,7 +15,7 @@
 // whatever theme token its context sets. To add one, copy the shape elements
 // out of the upstream SVG — see docs/README.md for the recipe.
 
-export const ICON_SHAPES = {
+const SHAPES = {
   "circle":
     '<circle cx="12" cy="12" r="10" />',
   "eraser":
@@ -48,7 +48,7 @@ function strokeFor(size) {
 
 // One icon as markup. `size` is in CSS pixels.
 export function icon(name, size = 16) {
-  const shapes = ICON_SHAPES[name];
+  const shapes = SHAPES[name];
   if (!shapes) throw new Error(`no such icon: ${name}`);
   return (
     `<svg class="icon" viewBox="0 0 24 24" width="${size}" height="${size}" ` +
