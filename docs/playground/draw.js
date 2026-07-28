@@ -98,6 +98,13 @@ function syncLabelToggle() {
   btn.classList.toggle("active", !labelsVisible);
 }
 
+// True while the wheel belongs to the wand rather than to frame stepping. The
+// inputs viewer intercepts the wheel in capture phase to scrub frames, which
+// would otherwise stop the gesture ever reaching NiiVue there.
+export function wandOwnsWheel() {
+  return Boolean(app.roiDrawing && tool.wand);
+}
+
 export function isDrawing() {
   return app.roiDrawing;
 }
@@ -332,6 +339,7 @@ function segmentGrowCut() {
 // reads it back rather than assuming it still owns the value.
 function syncWandTolerance(nv) {
   if (!tool.wand) return;
+  // Every viewer shares the setting, so one changing it means all of them did.
   const pct = Math.round((nv.opts.clickToSegmentPercent ?? 0) * 100);
   if (pct === SETTINGS.tolerance.value) return;
   SETTINGS.tolerance.value = Math.max(SETTINGS.tolerance.min, Math.min(SETTINGS.tolerance.max, pct));
@@ -371,6 +379,20 @@ function clearTrail(nv) {
   const trail = trails.get(nv);
   if (!trail) return;
   trail.layer.getContext("2d").clearRect(0, 0, trail.layer.width, trail.layer.height);
+}
+
+// NiiVue adjusts the tolerance on each wheel tick and regrows the region. Reading
+// the value back on the next frame — after its own handler has run — is what keeps
+// the number in the palette honest.
+function wireWandWheel(nv) {
+  nv.canvas.addEventListener(
+    "wheel",
+    () => {
+      if (!wandOwnsWheel()) return;
+      requestAnimationFrame(() => syncWandTolerance(nv));
+    },
+    { passive: true },
+  );
 }
 
 function wireEraseTrail(nv) {
@@ -722,6 +744,7 @@ export function attachModalDrawing() {
   applyLabelColours();
   wireStamp(app.nvModal);
   wireEraseTrail(app.nvModal);
+  wireWandWheel(app.nvModal);
   applyMode();
   app.nvModal.setDrawOpacity(labelsVisible ? DRAW_OPACITY : 0);
   if (nvOut.drawBitmap) mirrorDrawing(nvOut);
@@ -759,6 +782,7 @@ export function wireDrawing() {
   for (const nv of [nvIn, nvOut]) {
     wireStamp(nv);
     wireEraseTrail(nv);
+    wireWandWheel(nv);
     nv.onDrawingChanged = () => {
       mirrorDrawing(nv);
       pushHistory();

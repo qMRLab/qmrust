@@ -30,7 +30,7 @@ import {
   sizeViewers,
 } from "./viewers.js";
 import { renderRoiStats } from "./roi.js";
-import { onDrawingStroke, wireDrawing } from "./draw.js";
+import { onDrawingStroke, wandOwnsWheel, wireDrawing } from "./draw.js";
 import { clearMapHover, onLocation, onMapHover, redrawCurve, resizeCurve } from "./curve.js";
 import { closeFileModal, closeJsonModal, closeNotice, openMapModal } from "./modal.js";
 import { onBrowse, onDrop } from "./drop.js";
@@ -235,6 +235,10 @@ function wireInputsControls() {
     "wheel",
     (e) => {
       if (!app.current) return;
+      // The wand regrows its region on the wheel, and it is the more specific
+      // gesture: while it is armed the event is left alone so NiiVue receives it
+      // here too, rather than only on the fitted map.
+      if (wandOwnsWheel()) return;
       const [, , , nt] = app.current.meta.dims;
       if (nt <= 1) return;
       e.preventDefault();
