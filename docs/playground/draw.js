@@ -45,7 +45,7 @@ const TOOLS = [
   { id: "ellipse", icon: "circle", title: "Ellipse", stamp: "ellipse", setting: "size",
     hint: "Click to stamp a circle, centred on the cursor." },
   { id: "wand", icon: "wand", title: "Magic wand", wand: true, setting: "tolerance",
-    hint: "Click a voxel to grow a region of similar value. Scroll to widen or narrow it." },
+    hint: "Click a voxel to take everything within ±tolerance of its value. Mouse-wheel over the map regrows it live." },
   { id: "fill", icon: "cloud-rain", title: "Flood fill", fill: true,
     hint: "Click inside an outline you have drawn to fill it." },
   { id: "erase", icon: "eraser", title: "Erase", erase: true, setting: "size",
@@ -64,10 +64,11 @@ let label = 1;
 // hand — rather than hiding options behind a gesture nobody would find.
 const SETTINGS = {
   size: { value: 1, min: 1, max: 15, unit: "", title: "Brush size, in voxels" },
-  // NiiVue's `clickToSegmentPercent` is a fraction of the display range, clamped
-  // to [0, 1] — so the stored percentage is divided by 100 on the way in. Feeding
-  // it 5 rather than 0.05 puts it far past the top of its range, where every
-  // setting behaves the same and the wand grows without bound.
+  // NiiVue grows the region to voxels within ±p of the clicked voxel's own value,
+  // where p is `clickToSegmentPercent` — a fraction clamped to [0, 1], so the
+  // stored percentage is divided by 100 on the way in. It is read *only* when
+  // `clickToSegmentAutoIntensity` is on; with that off, NiiVue uses the fixed
+  // `clickToSegmentIntensityMin/Max` instead and the tolerance does nothing.
   tolerance: { value: 5, min: 1, max: 100, unit: "%", title: "How far from the clicked value the wand may grow" },
   levels: { value: 2, min: 2, max: 5, unit: " classes", title: "How many classes to split the map into" },
 };
@@ -174,6 +175,8 @@ function applyTool() {
     nv.opts.penSize = penSize();
     nv.opts.clickToSegment = Boolean(app.roiDrawing && tool.wand);
     nv.opts.clickToSegmentPercent = SETTINGS.tolerance.value / 100;
+    // Without this the tolerance above is never consulted.
+    nv.opts.clickToSegmentAutoIntensity = true;
     // Grow within the slice being looked at, not through the volume.
     nv.opts.clickToSegmentIs2D = true;
     nv.setPenValue(tool.erase ? 0 : label, true);
@@ -518,29 +521,63 @@ function paintPalette() {
   size.className = "draw-size";
   const knob = tool.setting ? SETTINGS[tool.setting] : null;
   if (knob) {
-    const step = (delta) => {
-      knob.value = Math.max(knob.min, Math.min(knob.max, knob.value + delta));
-      applyTool();
-      paintPalette();
+    const value = document.createElement("span");
+    value.className = "draw-size-value";
+    value.title = knob.title;
+
+    // Updated in place rather than by repainting the palette: a repaint would
+    // replace the button being held and the repeat would die on the first tick.
+    const refresh = () => {
+      value.textContent = `${knob.value}${knob.unit}`;
+      minus.disabled = knob.value <= knob.min;
+      plus.disabled = knob.value >= knob.max;
     };
+    const step = (delta) => {
+      const next = Math.max(knob.min, Math.min(knob.max, knob.value + delta));
+      if (next === knob.value) return false;
+      knob.value = next;
+      applyTool();
+      refresh();
+      return true;
+    };
+
+    // Press and hold to run: a pause first, so a single click stays a single
+    // step, then accelerating, because these ranges reach 100.
+    const held = (delta) => (down) => {
+      down.preventDefault();
+      if (!step(delta)) return;
+      let timer = 0;
+      let ticks = 0;
+      const tick = () => {
+        if (!step(delta)) return stop();
+        ticks += 1;
+        timer = setTimeout(tick, ticks > 12 ? 25 : ticks > 5 ? 55 : 90);
+      };
+      const stop = () => {
+        clearTimeout(timer);
+        for (const e of ["pointerup", "pointercancel", "pointerleave"]) {
+          window.removeEventListener(e, stop);
+        }
+      };
+      timer = setTimeout(tick, 330);
+      for (const e of ["pointerup", "pointercancel", "pointerleave"]) {
+        window.addEventListener(e, stop);
+      }
+    };
+
     const minus = document.createElement("button");
     minus.type = "button";
     minus.className = "draw-step";
     minus.textContent = "−";
     minus.title = knob.title;
-    minus.disabled = knob.value <= knob.min;
-    minus.onclick = () => step(-1);
-    const value = document.createElement("span");
-    value.className = "draw-size-value";
-    value.textContent = `${knob.value}${knob.unit}`;
-    value.title = knob.title;
+    minus.addEventListener("pointerdown", held(-1));
     const plus = document.createElement("button");
     plus.type = "button";
     plus.className = "draw-step";
     plus.textContent = "+";
     plus.title = knob.title;
-    plus.disabled = knob.value >= knob.max;
-    plus.onclick = () => step(1);
+    plus.addEventListener("pointerdown", held(1));
+    refresh();
     size.append(minus, value, plus);
   }
 
