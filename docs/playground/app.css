@@ -210,24 +210,56 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    `#status` here is left for transient app state only (loading, wasm
    unavailable, fit errors), right-aligned so the title always reads first. */
 .navbar {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  position: relative;
+  display: flex; align-items: center; gap: 10px;
   margin: -14px -14px 12px; padding: 8px 14px;
   border-bottom: 1px solid var(--line); background: var(--panel-2);
 }
-.navbar-title {
-  font: 700 12px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: .08em;
-  color: var(--ink);
+.navbar-status { font-size: 13.5px; }
+/* Indeterminate loading, along the navbar's lower edge: a gradient segment
+   sweeping on a loop. It says "still working" without claiming progress, which
+   is the honest signal while a stage has no total to measure against — the ring
+   beside the status takes over whenever a percentage actually exists.
+   Animating `background-position` rather than a child's transform keeps it to
+   one pseudo-element with nothing to clip. */
+.navbar.loading::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background-image: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 38% 100%; background-repeat: no-repeat;
+  animation: navbar-sweep 1.9s linear infinite;
 }
-.navbar-status { font-size: 12px; }
-/* Sized and placed for the logo artwork; empty until those files land, and
-   nothing in the theme depends on it. */
-.navbar-logo { width: 22px; height: 22px; flex: none; border-radius: 4px; }
-.theme-family {
-  background: var(--field); color: var(--ink-2);
-  border: var(--border-w) solid var(--line); border-radius: 4px;
-  font: 11px var(--font-ui); padding: 2px 6px;
+@keyframes navbar-sweep {
+  from { background-position: -38% 0; }
+  to { background-position: 138% 0; }
 }
-.theme-family:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Everything that is not the status line sits at the right end, reading as one
+   cluster of controls. */
+.navbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* The logo sits in the recipe panel's head, opposite its view toggle. An <img>
+   rather than a background: only a real image element carries an intrinsic
+   aspect ratio, which is what lets the width follow from the height. */
+.panel-logo { height: 80px; width: auto; flex: none; display: block; }
+.theme-pick {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; align-self: stretch; padding: 2px;
+  background: var(--panel-2); border: var(--border-w) solid var(--line);
+  border-radius: 999px;
+}
+.theme-pick select {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; border: 0; padding: 0; margin: 0;
+  -webkit-appearance: none; appearance: none;
+}
+.theme-pick-icon { display: flex; color: var(--muted); pointer-events: none; }
+/* Icons inherit the text colour of whatever they sit in, so they follow the
+   theme with no rule of their own. */
+.icon { display: block; }
+/* A button that is an icon beside a word, rather than one or the other. */
+.icon-btn { display: inline-flex; align-items: center; gap: 5px; }
+.seg-compact button { display: inline-flex; align-items: center; justify-content: center; }
+.theme-pick:hover .theme-pick-icon { color: var(--ink); }
+/* The select carries focus, so the ring has to be drawn by its wrapper. */
+.theme-pick:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The navbar's segmented pair, at navbar scale rather than panel scale. */
 .seg-compact { padding: 2px; }
 .seg-compact button { padding: 1px 7px; font-size: 11px; line-height: 1.4; }
@@ -294,14 +326,21 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* Only the editor scrolls, so the model picker stays put at the top and Fit
    stays put at the bottom however deeply nested a recipe is. */
 .recipe-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-/* Collapsing keeps the header and the model picker — the parts you still need
-   to switch models — and hides only the fields. */
-.recipe-card.collapsed .recipe-scroll,
-.recipe-card.collapsed .local-note { display: none; }
+/* Collapsing keeps the header, the heading and the model picker — the parts you
+   still need to switch models — and hides only the fields. */
+.recipe-card.collapsed .recipe-scroll { display: none; }
 .recipe-card.collapsed { flex: 0 0 auto; }
-.recipe-head { display: flex; align-items: center; }
+/* Just the logo and the view toggle, so it needs less room beneath it than a
+   heading row would. */
+.recipe-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+/* `.section-h` uppercases and tracks its text, which is right for the heading
+   and wrong for the toggle's labels — the pill reads as Form/YAML everywhere
+   else in the app, so it must not become FORM/YAML only here. */
+.recipe-seg { margin-left: auto; text-transform: none; letter-spacing: normal; }
+/* The heading sits with the picker it labels, not with the logo. */
+.recipe-title { display: flex; align-items: center; margin: 0 0 4px; }
 .collapse-btn {
-  display: none; margin-left: auto; padding: 2px 8px; border-radius: 999px;
+  display: none; padding: 2px 8px; border-radius: 999px;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
   font: 600 10px var(--font-mono); text-transform: uppercase; letter-spacing: .06em;
 }

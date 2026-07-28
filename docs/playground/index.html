@@ -1,15 +1,9 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>qmrust playground</title>
+<title>qMRust</title>
+<link rel="icon" type="image/x-icon" href="./favicon.ico">
 <link rel="stylesheet" href="./app.css">
-<div class="navbar">
-  <span class="navbar-logo" id="navbar-logo" aria-hidden="true"></span>
-  <span class="navbar-title">qMRust Playground</span>
-  <select id="theme-family" class="theme-family" aria-label="Theme"></select>
-  <div class="seg seg-compact" role="group" aria-label="Light or dark">
-    <button id="mode-light" type="button" title="Light">☀</button>
-    <button id="mode-dark" type="button" title="Dark">☾</button>
-  </div>
+<div class="navbar" id="navbar">
   <span class="navbar-dl" id="navbar-dl" hidden>
     <svg class="dl-ring" viewBox="0 0 84 84" aria-hidden="true">
       <circle class="dl-track" cx="42" cy="42" r="36"></circle>
@@ -18,6 +12,20 @@
     <span class="dl-pct" id="dl-pct"></span>
   </span>
   <span id="status" class="navbar-status busy">Starting…</span>
+  <div class="navbar-right">
+    <!-- The select stays a real select — native keyboard, native mobile picker —
+         and only its appearance is replaced: it sits transparent over the glyph,
+         which is the only way an icon-sized control can also be a <select>,
+         since a closed select always renders the chosen option's text. -->
+    <span class="theme-pick" id="theme-pick">
+      <span class="theme-pick-icon" data-icon="palette" data-icon-size="15"></span>
+      <select id="theme-family" aria-label="Theme"></select>
+    </span>
+    <div class="seg seg-compact" role="group" aria-label="Light or dark">
+      <button id="mode-light" type="button" title="Light" data-icon="sun" data-icon-size="14"></button>
+      <button id="mode-dark" type="button" title="Dark" data-icon="moon" data-icon-size="14"></button>
+    </div>
+  </div>
 </div>
 <div id="fallback" hidden>
   <p><strong>The WebAssembly build is not present.</strong> The viewers below still work —
@@ -27,11 +35,15 @@
 <div class="layout">
   <div class="left-col">
   <div class="recipe-card card">
-    <div class="section-h recipe-head">Recipe<button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." data-tip="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit.">i</button><button id="recipe-collapse" class="collapse-btn" type="button" aria-expanded="true">Hide</button></div>
-    <div class="seg" role="tablist" aria-label="Recipe editor view">
-      <button id="tab-form" class="active" role="tab" aria-selected="true">Form</button>
-      <button id="tab-yaml" role="tab" aria-selected="false">YAML</button>
+    <div class="section-h recipe-head">
+      <img class="panel-logo" src="./logo.png" alt="qMRust">
+      <div class="seg recipe-seg" role="tablist" aria-label="Recipe editor view">
+        <button id="tab-form" class="active" role="tab" aria-selected="true">Form</button>
+        <button id="tab-yaml" role="tab" aria-selected="false">YAML</button>
+      </div>
+      <button id="recipe-collapse" class="collapse-btn" type="button" aria-expanded="true">Hide</button>
     </div>
+    <div class="section-h recipe-title"><span class="panel-title">Recipe</span><button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." data-tip="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit.">i</button></div>
     <div class="model-line">model: <select id="model"></select></div>
     <div class="recipe-scroll">
     <div id="form-view"><div id="form-fields" class="form-fields"></div></div>

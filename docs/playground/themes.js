@@ -68,7 +68,7 @@ export function onThemeChange(fn) {
   listeners.push(fn);
 }
 
-export function applyTheme({ family, mode }) {
+function applyTheme({ family, mode }) {
   const root = document.documentElement;
   root.dataset.theme = family;
   root.dataset.mode = mode;

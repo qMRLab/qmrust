@@ -184,6 +184,7 @@ function wireTheme() {
   // page's own toggle can change it later with no click here.
   onThemeChange(() => {
     select.value = document.documentElement.dataset.theme;
+    $("theme-pick").title = `Theme: ${THEMES.find((t) => t.id === select.value)?.label ?? ""}`;
     const dark = document.documentElement.dataset.mode === "dark";
     $("mode-dark").classList.toggle("active", dark);
     $("mode-light").classList.toggle("active", !dark);
@@ -251,20 +252,15 @@ function wireInputsControls() {
   );
 }
 
-// The fitted map: output and colormap pickers, slice/planes, window/level, ROI.
+// The fitted map: output and colormap pickers, slice/multiplanar, window/level, ROI.
 function wireMapControls() {
   $("output").onchange = (e) => showOutput(e.target.value);
   $("colormap").onchange = onColormapChange;
-  // Planes is disabled on a single-slice fit, so the pair stops being a toggle:
-  // there is no second state to reach.
-  const toggleMapView = () => {
-    if ($("tab-planes").disabled) return;
+  const toggleMapView = () =>
     showMapView($("tab-slice").classList.contains("active") ? "planes" : "slice");
-  };
   $("tab-slice").onclick = toggleMapView;
   $("tab-planes").onclick = toggleMapView;
   $("open-map-modal").onclick = openMapModal;
-  $("cal-reset").onclick = resetCalRange;
   $("roi-toggle").onclick = toggleRoi;
   $("roi-clear").onclick = clearRoi;
   app.levelMain = createLevelControl("mlevel");
