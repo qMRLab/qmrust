@@ -184,6 +184,11 @@ function wireTheme() {
   // page's own toggle can change it later with no click here.
   onThemeChange(() => {
     select.value = document.documentElement.dataset.theme;
+    // Two marks, one per mode. Swapped here rather than by a `<picture>` media
+    // query: the mode is this app's own attribute, and a reader on a light OS can
+    // be looking at a dark theme — a media query would pick the wrong one.
+    $("panel-logo").src =
+      document.documentElement.dataset.mode === "light" ? "./logo_light.png" : "./logo_dark.png";
     $("theme-pick").title = `Theme: ${THEMES.find((t) => t.id === select.value)?.label ?? ""}`;
     const dark = document.documentElement.dataset.mode === "dark";
     $("mode-dark").classList.toggle("active", dark);
