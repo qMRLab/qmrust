@@ -797,7 +797,10 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* A notice, as opposed to the two viewer modals: this one carries a sentence the
    reader has to act on, so it is narrow, centred and has a single way out. */
 .notice-card {
-  max-width: 46ch; padding: 20px 22px 18px; text-align: center;
+  /* `.modal-card` is sized for an image viewer (a fixed 86vh), which leaves a
+     sentence floating in an empty column — this one is as tall as its text. */
+  height: auto; max-width: 46ch;
+  padding: 20px 22px 18px; text-align: center;
   display: flex; flex-direction: column; align-items: center; gap: 10px;
 }
 .notice-icon { color: var(--bad); display: flex; }
