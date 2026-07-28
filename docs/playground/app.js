@@ -29,7 +29,8 @@ import {
   showOutput,
   sizeViewers,
 } from "./viewers.js";
-import { clearRoi, renderRoiStats, toggleRoi } from "./roi.js";
+import { renderRoiStats } from "./roi.js";
+import { mirrorDrawing, wireDrawing } from "./draw.js";
 import { clearMapHover, onLocation, onMapHover, redrawCurve, resizeCurve } from "./curve.js";
 import { closeFileModal, closeJsonModal, openMapModal } from "./modal.js";
 import { onBrowse, onDrop } from "./drop.js";
@@ -260,11 +261,17 @@ function wireMapControls() {
   $("tab-slice").onclick = toggleMapView;
   $("tab-planes").onclick = toggleMapView;
   $("open-map-modal").onclick = openMapModal;
-  $("roi-toggle").onclick = toggleRoi;
-  $("roi-clear").onclick = clearRoi;
+  wireDrawing();
   app.levelMain = createLevelControl("mlevel");
   // Recompute after each stroke, so the numbers track the region as it is drawn.
-  nvOut.onDrawingChanged = renderRoiStats;
+  // Either viewer can be drawn on; each stroke mirrors to the other and the
+  // statistics recompute from whichever bitmap changed.
+  for (const nv of [nvIn, nvOut]) {
+    nv.onDrawingChanged = () => {
+      mirrorDrawing(nv);
+      renderRoiStats();
+    };
+  }
   nvOut.canvas.addEventListener("mousemove", onMapHover);
   nvOut.canvas.addEventListener("mouseleave", clearMapHover);
 }

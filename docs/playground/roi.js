@@ -1,7 +1,7 @@
-// ROI statistics. NiiVue's own pen writes into a drawing bitmap the same shape
-// as the volume, so "the voxels beneath the ROI" is just the fitted map sampled
-// where that bitmap is non-zero — no geometry of our own to get wrong.
-import { DRAG_MODE } from "./vendor/niivue.js";
+// ROI statistics. NiiVue's pen writes into a drawing bitmap the same shape as
+// the volume, so "the voxels beneath the ROI" is the fitted map sampled where
+// that bitmap is non-zero — no geometry of our own to get wrong. The pen itself
+// lives in `draw.js`: this half only reports.
 import { $, roundBound } from "./dom.js";
 import { app, nvOut } from "./state.js";
 import { describeValues } from "./stats.js";
@@ -68,24 +68,4 @@ export function renderRoiStats() {
     row.append(k, val);
     box.append(row);
   }
-}
-
-export function toggleRoi() {
-  app.roiDrawing = !app.roiDrawing;
-  nvOut.setDrawingEnabled(app.roiDrawing);
-  if (app.roiDrawing) nvOut.setPenValue(1, true);
-  $("roi-toggle").classList.toggle("active", app.roiDrawing);
-  $("roi-toggle-label").textContent = app.roiDrawing ? "drawing…" : "draw ROI";
-  $("roi-clear").hidden = !app.roiDrawing;
-  // Drawing and drag-to-window are the same gesture, so one must yield while the
-  // pen is active.
-  nvOut.opts.dragMode = app.roiDrawing ? DRAG_MODE.none : DRAG_MODE.contrast;
-  renderRoiStats();
-}
-
-export function clearRoi() {
-  nvOut.drawBitmap = null;
-  nvOut.updateGLVolume();
-  nvOut.drawScene();
-  renderRoiStats();
 }

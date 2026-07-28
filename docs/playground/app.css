@@ -624,6 +624,36 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .skel-name { flex: 1 1 auto; }
 .skel-role { flex: 0 0 auto; width: 96px; }
 .skel-dir { height: 13px; width: 40%; margin: 10px 2px 5px; }
+/* The tool palette floats over the fitted map's own corner rather than taking a
+   row of the card: this layout owns exactly one viewport, and a palette in the
+   flow would cost height the viewers need. Fixed to the corner rather than
+   draggable — on a canvas this small a movable palette mostly obstructs. */
+.draw-palette {
+  position: absolute; top: 8px; left: 8px; z-index: 3;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 5px; border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: var(--border-w) solid var(--line); box-shadow: var(--shadow);
+}
+.draw-palette[hidden] { display: none; }
+.draw-row { display: flex; gap: 3px; }
+.draw-tool {
+  width: 24px; height: 24px; padding: 0; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--field); border: var(--border-w) solid var(--line);
+  color: var(--ink-2); font-size: 11px;
+}
+.draw-tool:hover { color: var(--ink); }
+/* Brass marks the active tool — the third metal, whose whole job this is. */
+.draw-tool.active {
+  background: var(--brass); border-color: var(--brass); color: #241c0c;
+}
+.draw-labels { margin-top: 1px; }
+.draw-swatch {
+  width: 15px; height: 15px; padding: 0; border-radius: 3px;
+  border: 2px solid transparent; box-shadow: 0 0 0 1px var(--line);
+}
+.draw-swatch.active { border-color: var(--ink); }
 /* Overlays its viewer rather than replacing it, so the card keeps its exact
    size while data loads — a viewer that resizes mid-load reflows the page.
    `.viewer` is already `position: relative`. */

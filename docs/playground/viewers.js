@@ -3,7 +3,7 @@
 import { $, cssColorToRgba } from "./dom.js";
 import { app, nvIn, nvOut } from "./state.js";
 import { repaintLevels } from "./level.js";
-import { toggleRoi } from "./roi.js";
+import { isDrawing, toggleDrawing } from "./draw.js";
 import { updateVoxelValue } from "./curve.js";
 
 // Colormap per output unit, never per model/output name — mirrors
@@ -72,7 +72,7 @@ export function syncMapViewControls() {
   $("open-map-modal").disabled = !haveMap;
   // Nothing to measure until a map exists.
   $("roi-toggle").disabled = !haveMap;
-  if (!haveMap && app.roiDrawing) toggleRoi();
+  if (!haveMap && isDrawing()) toggleDrawing();
 }
 
 export function showOutput(name) {
