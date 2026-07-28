@@ -626,19 +626,31 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .skel-dir { height: 13px; width: 40%; margin: 10px 2px 5px; }
 /* The tool palette floats over the fitted map's own corner rather than taking a
    row of the card: this layout owns exactly one viewport, and a palette in the
-   flow would cost height the viewers need. Fixed to the corner rather than
-   draggable — on a canvas this small a movable palette mostly obstructs. */
+   flow would cost height the viewers need. A narrow vertical column, draggable by
+   its header — the tools read as one stack and the image stays uncovered. */
 .draw-palette {
   position: absolute; top: 8px; left: 8px; z-index: 3;
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex; flex-direction: column; gap: 5px; width: 40px;
   padding: 5px; border-radius: var(--radius);
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
   border: var(--border-w) solid var(--line); box-shadow: var(--shadow);
 }
 .draw-palette[hidden] { display: none; }
-.draw-row { display: flex; gap: 3px; }
+.draw-head {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: grab; touch-action: none; margin: -1px 0 1px;
+}
+.draw-head:active { cursor: grabbing; }
+.draw-grip { color: var(--muted); font-size: 11px; line-height: 1; }
+.draw-close {
+  width: 15px; height: 15px; padding: 0; border: 0; border-radius: 3px;
+  background: none; color: var(--muted); font-size: 13px; line-height: 1;
+}
+.draw-close:hover { color: var(--bad); }
+/* One tool per row: a vertical stack reads as a toolbox rather than a toolbar. */
+.draw-tools { display: flex; flex-direction: column; gap: 3px; }
 .draw-tool {
-  width: 24px; height: 24px; padding: 0; border-radius: 4px;
+  width: 28px; height: 26px; padding: 0; border-radius: 4px;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--field); border: var(--border-w) solid var(--line);
   color: var(--ink-2); font-size: 11px;
@@ -648,12 +660,24 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .draw-tool.active {
   background: var(--brass); border-color: var(--brass); color: #241c0c;
 }
-.draw-labels { margin-top: 1px; }
+.draw-size { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.draw-size input[type=range] {
+  width: 28px; padding: 0; margin: 0; accent-color: var(--accent);
+}
+.draw-size span { font: 9px var(--font-mono); color: var(--muted); }
+/* Two per row: six labels in three rows keeps the column narrow. */
+.draw-labels { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
 .draw-swatch {
-  width: 15px; height: 15px; padding: 0; border-radius: 3px;
+  width: 13px; height: 13px; padding: 0; border-radius: 3px;
   border: 2px solid transparent; box-shadow: 0 0 0 1px var(--line);
 }
 .draw-swatch.active { border-color: var(--ink); }
+/* The active label's colour is editable, so a reader is not stuck with six
+   choices. The drawing stores label values; this only changes how they paint. */
+.draw-picker {
+  width: 28px; height: 20px; padding: 0; border-radius: 4px;
+  border: var(--border-w) solid var(--line); background: none;
+}
 /* Overlays its viewer rather than replacing it, so the card keeps its exact
    size while data loads — a viewer that resizes mid-load reflows the page.
    `.viewer` is already `position: relative`. */
