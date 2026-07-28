@@ -134,21 +134,21 @@ function applyLabelColours() {
   for (const nv of [nvIn, nvOut]) nv.setDrawColormap(cmap);
 }
 
-// Drag by the header. Position is left/top in the viewer's own coordinates,
-// clamped so the palette can never be dropped somewhere it cannot be grabbed
-// back from.
+// Drag by the header. The palette is `fixed`, so the coordinates are the
+// viewport's and it can be parked anywhere on the page — over a card, beside the
+// viewers, out of the way of the region being painted. Clamped to the window so
+// it can never be dropped somewhere it cannot be grabbed back from.
 function makeDraggable(box, handle) {
   handle.addEventListener("pointerdown", (down) => {
     down.preventDefault();
-    const area = box.parentElement.getBoundingClientRect();
     const start = box.getBoundingClientRect();
     const dx = down.clientX - start.left;
     const dy = down.clientY - start.top;
     const move = (e) => {
-      const x = e.clientX - area.left - dx;
-      const y = e.clientY - area.top - dy;
-      box.style.left = `${Math.max(0, Math.min(x, area.width - start.width))}px`;
-      box.style.top = `${Math.max(0, Math.min(y, area.height - start.height))}px`;
+      const x = e.clientX - dx;
+      const y = e.clientY - dy;
+      box.style.left = `${Math.max(0, Math.min(x, window.innerWidth - start.width))}px`;
+      box.style.top = `${Math.max(0, Math.min(y, window.innerHeight - start.height))}px`;
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -156,6 +156,66 @@ function makeDraggable(box, handle) {
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+  });
+}
+
+// A click with no drag stamps the shape at the brush size, so a region of known
+// size takes one gesture; dragging still scales it, which is NiiVue's own
+// behaviour and left alone. `drawPt` is the only bitmap-level paint the build
+// exposes (`drawRect` is a WebGL selection box, not a paint), so the footprint is
+// walked voxel by voxel.
+const CLICK_SLOP = 3;
+
+function stampAt(nv, event) {
+  if (!app.current) return false;
+  const rect = nv.canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return false;
+  // `canvasPos2frac` works in backing-store pixels, which differ from CSS pixels
+  // on a high-resolution canvas.
+  const frac = nv.canvasPos2frac([
+    (event.clientX - rect.left) * (nv.canvas.width / rect.width),
+    (event.clientY - rect.top) * (nv.canvas.height / rect.height),
+  ]);
+  // A negative first component means the cursor was not over a slice at all.
+  if (!frac || frac[0] < 0) return false;
+  const [cx, cy, cz] = nv.frac2vox(frac);
+  const [nx, ny] = app.current.meta.dims;
+  const r = Math.max(1, Math.round(penSize));
+  const value = tool.erase ? 0 : label;
+  const round = tool.id === "ellipse";
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      if (x < 0 || y < 0 || x >= nx || y >= ny) continue;
+      if (round && (x - cx) ** 2 + (y - cy) ** 2 > r * r) continue;
+      // Outline rather than solid: keep only the shape's border ring.
+      if (!filled) {
+        const edge = round
+          ? (x - cx) ** 2 + (y - cy) ** 2 > (r - 1) * (r - 1)
+          : Math.abs(x - cx) === r || Math.abs(y - cy) === r;
+        if (!edge) continue;
+      }
+      nv.drawPt(x, y, cz, value);
+    }
+  }
+  nv.refreshDrawing(true);
+  return true;
+}
+
+// Stamping only makes sense for the shape tools: the pen already paints on click.
+function wireStamp(nv) {
+  let down = null;
+  nv.canvas.addEventListener("pointerdown", (e) => {
+    down = app.roiDrawing && tool.penType !== 0 ? { x: e.clientX, y: e.clientY } : null;
+  });
+  nv.canvas.addEventListener("pointerup", (e) => {
+    if (!down) return;
+    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+    down = null;
+    if (moved > CLICK_SLOP) return; // a drag: NiiVue already scaled the shape
+    if (stampAt(nv, e)) {
+      mirrorDrawing(nv);
+      nv.onDrawingChanged?.();
+    }
   });
 }
 
@@ -288,4 +348,5 @@ export function toggleDrawing() {
 export function wireDrawing() {
   applyLabelColours();
   $("roi-toggle").onclick = toggleDrawing;
+  for (const nv of [nvIn, nvOut]) wireStamp(nv);
 }

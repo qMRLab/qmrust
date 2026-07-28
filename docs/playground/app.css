@@ -624,12 +624,13 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .skel-name { flex: 1 1 auto; }
 .skel-role { flex: 0 0 auto; width: 96px; }
 .skel-dir { height: 13px; width: 40%; margin: 10px 2px 5px; }
-/* The tool palette floats over the fitted map's own corner rather than taking a
-   row of the card: this layout owns exactly one viewport, and a palette in the
-   flow would cost height the viewers need. A narrow vertical column, draggable by
-   its header — the tools read as one stack and the image stays uncovered. */
+/* The tool palette floats above the page rather than inside a card: it takes no
+   room in a layout that owns exactly one viewport, and being `fixed` rather than
+   absolutely positioned inside the viewer means it can be dragged anywhere —
+   including off the map it paints, which is the point of moving it at all.
+   A narrow vertical column, draggable by its header. */
 .draw-palette {
-  position: absolute; top: 8px; left: 8px; z-index: 3;
+  position: fixed; top: 96px; left: 12px; z-index: 60;
   display: flex; flex-direction: column; gap: 5px; width: 40px;
   padding: 5px; border-radius: var(--radius);
   background: color-mix(in srgb, var(--panel) 90%, transparent);
