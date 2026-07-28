@@ -30,11 +30,15 @@ const LABELS = [
 
 // `penType`: 0 freehand, 1 rectangle, 2 ellipse — the values the vendored build
 // compares against. Shapes are always solid.
+// The freehand tools hand the stroke to NiiVue. The shapes do not: NiiVue anchors
+// a rectangle at the corner where the drag began, which puts the shape beside the
+// pointer rather than under it. Stamping them ourselves keeps them centred on the
+// cursor, at the size the stepper says, which is also what the cursor previews.
 const TOOLS = [
-  { id: "pen", icon: "pencil", title: "Freehand", penType: 0 },
-  { id: "rect", icon: "square", title: "Rectangle", penType: 1 },
-  { id: "ellipse", icon: "circle", title: "Ellipse", penType: 2 },
-  { id: "erase", icon: "eraser", title: "Erase", penType: 0, erase: true },
+  { id: "pen", icon: "pencil", title: "Freehand" },
+  { id: "rect", icon: "square", title: "Rectangle — click to stamp", stamp: "rect" },
+  { id: "ellipse", icon: "circle", title: "Ellipse — click to stamp", stamp: "ellipse" },
+  { id: "erase", icon: "eraser", title: "Erase", erase: true },
 ];
 
 let tool = TOOLS[0];
@@ -67,24 +71,21 @@ function activeColor() {
 // depends on the current zoom, which the cursor cannot know. Browsers also cap
 // cursor images, so the box stays small.
 function cursorFor(t, size) {
-  const box = Math.min(64, (t.erase ? 22 : 16) + size * 3);
+  const box = Math.min(64, 16 + size * 3);
   const c = box / 2;
   const r = Math.max(3, (box - 6) / 2);
   const arm = Math.max(4, r);
   let shapes;
-  if (t.penType === 1) {
+  if (t.stamp === "rect") {
     shapes = `<rect x="${c - r}" y="${c - r}" width="${r * 2}" height="${r * 2}"/>`;
-  } else if (t.penType === 2) {
+  } else if (t.stamp === "ellipse") {
     shapes = `<circle cx="${c}" cy="${c}" r="${r}"/>`;
   } else {
     // Freehand and erase: a cross, with erase ringed so the two are not confused.
     shapes =
       `<line x1="${c - arm}" y1="${c}" x2="${c + arm}" y2="${c}"/>` +
       `<line x1="${c}" y1="${c - arm}" x2="${c}" y2="${c + arm}"/>` +
-      // The eraser gets a dashed square around its footprint — the conventional
-      // mark for "removes", and the only way to see what a stroke will take when
-      // what it leaves behind is nothing.
-      (t.erase ? `<rect x="${c - r}" y="${c - r}" width="${r * 2}" height="${r * 2}" stroke-dasharray="3 2.5"/>` : "");
+      "";
   }
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${box}" height="${box}" ` +
@@ -107,7 +108,9 @@ function drawables() {
 
 function applyMode() {
   for (const nv of drawables()) {
-    nv.setDrawingEnabled(app.roiDrawing);
+    // A stamping tool must not also let NiiVue paint: its own pen would trail
+    // freehand marks behind every click.
+    nv.setDrawingEnabled(app.roiDrawing && !tool.stamp);
     nv.opts.dragMode = app.roiDrawing ? DRAG_MODE.none : DRAG_MODE.contrast;
     nv.setCrosshairWidth(app.roiDrawing ? 0 : 1);
   }
@@ -117,7 +120,8 @@ function applyMode() {
 function applyTool() {
   const cursor = app.roiDrawing ? cursorFor(tool, penSize) : "";
   for (const nv of drawables()) {
-    nv.opts.penType = tool.penType;
+    nv.setDrawingEnabled(app.roiDrawing && !tool.stamp);
+    nv.opts.penType = 0;
     nv.opts.penSize = penSize;
     nv.setPenValue(tool.erase ? 0 : label, true);
     nv.canvas.style.cursor = cursor;
@@ -190,13 +194,10 @@ function makeDraggable(box, handle) {
   });
 }
 
-// A click with no drag stamps the shape at the brush size, so a region of known
-// size takes one gesture; dragging still scales it, which is NiiVue's own
-// behaviour and left alone. `drawPt` is the only bitmap-level paint the build
-// exposes (`drawRect` is a WebGL selection box, not a paint), so the footprint is
-// walked voxel by voxel.
-const CLICK_SLOP = 3;
-
+// A shape is stamped centred on the pointer at the brush size, so one click
+// gives a region of known size and position. `drawPt` is the only bitmap-level
+// paint the build exposes (`drawRect` is a WebGL selection box, not a paint), so
+// the footprint is walked voxel by voxel.
 function stampAt(nv, event) {
   if (!app.current) return false;
   const rect = nv.canvas.getBoundingClientRect();
@@ -213,7 +214,7 @@ function stampAt(nv, event) {
   const [nx, ny] = app.current.meta.dims;
   const r = Math.max(1, Math.round(penSize));
   const value = tool.erase ? 0 : label;
-  const round = tool.id === "ellipse";
+  const round = tool.stamp === "ellipse";
   for (let y = cy - r; y <= cy + r; y++) {
     for (let x = cx - r; x <= cx + r; x++) {
       if (x < 0 || y < 0 || x >= nx || y >= ny) continue;
@@ -225,17 +226,88 @@ function stampAt(nv, event) {
   return true;
 }
 
+// Where the eraser has been, drawn as a dashed path over the image.
+//
+// Erasing removes colour, so the stroke leaves no mark of its own: without this
+// there is no way to see which perimeter was swept, and a reader is deleting
+// labels blind. The trail is transient — it says "this is what you just took",
+// not "this is a region" — so it fades once the stroke ends.
+//
+// It is drawn in the canvas's own pixels straight from pointer coordinates, so it
+// needs no voxel mapping and cannot disagree with where the pointer actually was.
+const TRAIL_FADE_MS = 900;
+const trails = new WeakMap();
+
+function trailFor(nv) {
+  let trail = trails.get(nv);
+  if (!trail) {
+    const layer = document.createElement("canvas");
+    layer.className = "erase-trail";
+    nv.canvas.parentElement.append(layer);
+    trail = { layer, timer: 0 };
+    trails.set(nv, trail);
+  }
+  const rect = nv.canvas.getBoundingClientRect();
+  if (trail.layer.width !== Math.round(rect.width) || trail.layer.height !== Math.round(rect.height)) {
+    trail.layer.width = Math.round(rect.width);
+    trail.layer.height = Math.round(rect.height);
+  }
+  return trail;
+}
+
+function clearTrail(nv) {
+  const trail = trails.get(nv);
+  if (!trail) return;
+  trail.layer.getContext("2d").clearRect(0, 0, trail.layer.width, trail.layer.height);
+}
+
+function wireEraseTrail(nv) {
+  let last = null;
+  const point = (e) => {
+    const rect = nv.canvas.getBoundingClientRect();
+    return [e.clientX - rect.left, e.clientY - rect.top];
+  };
+  nv.canvas.addEventListener("pointerdown", (e) => {
+    if (!app.roiDrawing || !tool.erase) return;
+    const trail = trailFor(nv);
+    clearTimeout(trail.timer);
+    clearTrail(nv);
+    last = point(e);
+  });
+  nv.canvas.addEventListener("pointermove", (e) => {
+    if (!last) return;
+    const trail = trailFor(nv);
+    const ctx = trail.layer.getContext("2d");
+    const now = point(e);
+    // Two passes so the dashes read on light tissue and on black background.
+    for (const [colour, width, dash] of [["rgba(0,0,0,.6)", 3, []], ["#fff", 1.4, [4, 3]]]) {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(last[0], last[1]);
+      ctx.lineTo(now[0], now[1]);
+      ctx.stroke();
+    }
+    last = now;
+  });
+  for (const end of ["pointerup", "pointerleave", "pointercancel"]) {
+    nv.canvas.addEventListener(end, () => {
+      if (!last) return;
+      last = null;
+      const trail = trailFor(nv);
+      trail.timer = setTimeout(() => clearTrail(nv), TRAIL_FADE_MS);
+    });
+  }
+}
+
 // Stamping only makes sense for the shape tools: the pen already paints on click.
 function wireStamp(nv) {
-  let down = null;
   nv.canvas.addEventListener("pointerdown", (e) => {
-    down = app.roiDrawing && tool.penType !== 0 ? { x: e.clientX, y: e.clientY } : null;
-  });
-  nv.canvas.addEventListener("pointerup", (e) => {
-    if (!down) return;
-    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
-    down = null;
-    if (moved > CLICK_SLOP) return; // a drag: NiiVue already scaled the shape
+    if (!app.roiDrawing || !tool.stamp) return;
+    // Stamped on press, not release: the mark lands where the pointer went down,
+    // so a small drag afterwards cannot move it somewhere unexpected.
     if (stampAt(nv, e)) {
       mirrorDrawing(nv);
       nv.onDrawingChanged?.();
@@ -502,6 +574,7 @@ export function attachModalDrawing() {
   if (!app.nvModal) return;
   applyLabelColours();
   wireStamp(app.nvModal);
+  wireEraseTrail(app.nvModal);
   applyMode();
   if (nvOut.drawBitmap) mirrorDrawing(nvOut);
   app.nvModal.onDrawingChanged = () => {
@@ -535,6 +608,7 @@ export function wireDrawing() {
   $("roi-toggle").onclick = toggleDrawing;
   for (const nv of [nvIn, nvOut]) {
     wireStamp(nv);
+    wireEraseTrail(nv);
     nv.onDrawingChanged = () => {
       mirrorDrawing(nv);
       pushHistory();

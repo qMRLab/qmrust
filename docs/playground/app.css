@@ -629,6 +629,12 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    absolutely positioned inside the viewer means it can be dragged anywhere —
    including off the map it paints, which is the point of moving it at all.
    A narrow vertical column, draggable by its header. */
+/* The eraser's trail, over its viewer's canvas. Never interactive: it exists to
+   be looked at while a stroke is in progress. */
+.erase-trail {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 2;
+}
 .draw-palette {
   position: fixed; top: 96px; left: 12px; z-index: 60;
   display: flex; flex-direction: column; gap: 6px; width: 50px;
