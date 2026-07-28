@@ -122,15 +122,13 @@
       <div class="out-controls">
         <select id="output" hidden></select>
         <select id="colormap"></select>
-        <button id="open-map-modal" class="ghost-btn" type="button" disabled>
-          ⤢ planes
+        <button id="open-map-modal" class="ghost-btn icon-btn" type="button" disabled>
+          <span data-icon="scan-box"></span>Multiplanar
         </button>
       </div>
       <div class="range-controls">
-        <span class="range-hint">Drag or click the scale's end values to window</span>
-        <button id="cal-reset" class="ghost-btn" type="button">reset range</button>
-        <button id="roi-toggle" class="ghost-btn" type="button" disabled>✎ draw ROI</button>
-        <button id="roi-clear" class="ghost-btn" type="button" hidden>clear ROI</button>
+        <button id="roi-toggle" class="ghost-btn icon-btn" type="button" disabled><span data-icon="pencil"></span><span id="roi-toggle-label">draw ROI</span></button>
+        <button id="roi-clear" class="ghost-btn icon-btn" type="button" hidden><span data-icon="trash-2"></span>clear ROI</button>
       </div>
       <div class="roi-stats" id="roi-stats" hidden></div>
     </div>

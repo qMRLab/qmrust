@@ -8,6 +8,7 @@
 // of the page, so a control's wiring sits with the other controls it belongs
 // with. Every behaviour those listeners reach for lives in the module that owns
 // that region.
+import { paintIcons } from "./vendor/icons.js";
 import { $, status } from "./dom.js";
 import { app, editor, nvIn, nvOut } from "./state.js";
 import { loadBundle, fetchOrThrow, loadWasm } from "./bundles.js";
@@ -345,6 +346,9 @@ async function populateModels() {
 }
 
 async function main() {
+  // Icons before anything measures a control: an unfilled placeholder has no
+  // width, so a layout read taken before this would be wrong.
+  paintIcons();
   // Theme first: `wireTheme` registers the repaint callback, and `initTheme`
   // sets the attributes — both before `attachTo`, so the canvases are created
   // against the right background rather than flashing another theme's.

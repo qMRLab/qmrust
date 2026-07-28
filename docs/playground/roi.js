@@ -75,7 +75,7 @@ export function toggleRoi() {
   nvOut.setDrawingEnabled(app.roiDrawing);
   if (app.roiDrawing) nvOut.setPenValue(1, true);
   $("roi-toggle").classList.toggle("active", app.roiDrawing);
-  $("roi-toggle").textContent = app.roiDrawing ? "✎ drawing…" : "✎ draw ROI";
+  $("roi-toggle-label").textContent = app.roiDrawing ? "drawing…" : "draw ROI";
   $("roi-clear").hidden = !app.roiDrawing;
   // Drawing and drag-to-window are the same gesture, so one must yield while the
   // pen is active.

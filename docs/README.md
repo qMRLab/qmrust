@@ -152,6 +152,30 @@ npx esbuild entry.js --bundle --format=esm --minify --outfile=niivue.js
 cp niivue.js <repo>/docs/playground/vendor/niivue.js
 ```
 
+### Vendored icons
+
+`playground/vendor/icons.js` holds a **curated subset** of
+[Lucide](https://lucide.dev) v1.27.0 (ISC) as shape data — not the whole pack,
+and not an SVG sprite. Every glyph strokes in `currentColor`, so an icon takes
+the colour of whichever theme token its context sets.
+
+Only icons actually in use are shipped; `paintIcons` fills `[data-icon]`
+placeholders in the markup, and `icon(name, size)` returns markup for buttons
+built at runtime. To add one:
+
+```bash
+V=1.27.0
+curl -sSL "https://cdn.jsdelivr.net/npm/lucide-static@$V/icons/<name>.svg"
+```
+
+Copy that file's shape elements (`<path>`, `<circle>`, …) into the `SHAPES` map
+under the icon's name, collapsing whitespace. Keep the map alphabetical and drop
+entries that fall out of use, so the file stays a list of what the app draws.
+
+An external `<use href="sprite.svg#id">` was rejected: it costs a fetch and has
+long-standing Safari bugs, and the drawing palette builds its buttons in JS,
+where shape data is the more direct fit.
+
 ### Vendored js-yaml
 
 `playground/vendor/js-yaml.js` is a committed, pre-bundled copy of `js-yaml`,
