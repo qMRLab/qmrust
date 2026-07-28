@@ -53,16 +53,62 @@ export function hideDownloadProgress() {
   setDownloadProgress(null);
 }
 
+// How long a fetch may take before it is called a failure rather than left
+// hanging. Generous, because these archives are tens of megabytes on a slow
+// link — but finite, because an unresponsive host must eventually say so.
+const FETCH_DEADLINE_MS = 60_000;
+
+// What to say while waiting, and when. Silence for the first few seconds (most
+// fetches finish there and a warning would be noise), then progressively more
+// candid — naming the host once it is clearly the host that is slow, since that
+// tells a reader the fault is not theirs and not ours.
+const SLOW_STEPS = [
+  [6_000, (h) => `Still fetching the example dataset from ${h}…`],
+  [15_000, (h) => `${h} is taking longer than usual…`],
+  [30_000, (h) => `${h} is slow to respond — still trying…`],
+];
+
+function watchSlow(host) {
+  const timers = SLOW_STEPS.map(([at, text]) => setTimeout(() => stage(text(host)), at));
+  return () => timers.forEach(clearTimeout);
+}
+
 // Read the body as a stream so progress is real rather than simulated. A
 // server that sends no length (or a browser without streams) still works — it
 // just gets no ring.
+//
+// A failure to reach the host is marked `hostUnreachable`, so the caller can
+// tell "the archive host is down" from "the archive was unreadable" and say the
+// right thing.
 async function fetchWithProgress(url) {
   // Spin from the moment the request goes out: waiting for headers (redirects,
   // time-to-first-byte) is often the longest part, and leaving the ring hidden
   // until the first chunk made the whole transfer look instantaneous.
   showDownloadPending();
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`fetch ${url} failed (HTTP ${res.status})`);
+  const host = new URL(url, location.href).hostname;
+  const stopWatching = watchSlow(host);
+  const abort = new AbortController();
+  const deadline = setTimeout(() => abort.abort(), FETCH_DEADLINE_MS);
+  let res;
+  try {
+    res = await fetch(url, { signal: abort.signal });
+  } catch (e) {
+    const err = new Error(
+      abort.signal.aborted
+        ? `${host} did not respond within ${FETCH_DEADLINE_MS / 1000} s`
+        : `${host} could not be reached (${e.message})`,
+    );
+    err.hostUnreachable = host;
+    throw err;
+  } finally {
+    clearTimeout(deadline);
+    stopWatching();
+  }
+  if (!res.ok) {
+    const err = new Error(`${host} refused the request (HTTP ${res.status})`);
+    err.hostUnreachable = host;
+    throw err;
+  }
   const total = Number(res.headers.get("content-length")) || 0;
   if (!res.body?.getReader || !total) {
     // No length to measure against, so keep spinning rather than inventing one.

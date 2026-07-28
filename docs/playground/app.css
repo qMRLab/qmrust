@@ -794,6 +794,17 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .ghost-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-2); }
 .ghost-btn:disabled { opacity: 0.45; cursor: default; }
 
+/* A notice, as opposed to the two viewer modals: this one carries a sentence the
+   reader has to act on, so it is narrow, centred and has a single way out. */
+.notice-card {
+  max-width: 46ch; padding: 20px 22px 18px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.notice-icon { color: var(--bad); display: flex; }
+.notice-title { font: 600 15px var(--font-h); color: var(--ink); margin: 0; }
+.notice-body { color: var(--ink-2); font-size: 12.5px; line-height: 1.55; margin: 0; }
+.notice-card button { min-width: 84px; }
+
 /* Single-file viewer, so inspecting a path costs neither a tab round-trip
    nor the tree's scroll position. */
 .modal {

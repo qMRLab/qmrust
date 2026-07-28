@@ -25,6 +25,7 @@ import {
 import { clearVolumes, sizeViewers, syncMapViewControls } from "./viewers.js";
 import { repaintLevels } from "./level.js";
 import { clearCurve } from "./curve.js";
+import { showNotice } from "./modal.js";
 
 // Both viewers back to a single axial slice, sized to whatever the new data is.
 // The fitted-map viewer is reset too: its previous model's map is gone, and a
@@ -158,6 +159,19 @@ export async function loadModel(name) {
       endLoading();
       renderFilesError(`${e.message} — showing the pre-baked slice instead`);
       status(`${e.message} — showing the built-in sample instead`, "error");
+      // An unreachable archive host is worth interrupting for: what follows is a
+      // single built-in slice, not the dataset the reader asked for, and the
+      // difference matters for anything they conclude from it.
+      if (e.hostUnreachable) {
+        showNotice(
+          "cloud-off",
+          `${e.hostUnreachable} is not responding`,
+          `The full example datasets are hosted on ${e.hostUnreachable} and could not be `
+            + "fetched, so the playground is showing its built-in single slice instead. "
+            + "Fitting still works; the data is just smaller. Try again later, or drop "
+            + "your own BIDS folder onto the page.",
+        );
+      }
     }
   }
 

@@ -5,6 +5,7 @@
 // Each holds a WebGL context and browsers cap those, so constructing one per
 // open would leak contexts until the other viewers stopped rendering.
 import { Niivue } from "./vendor/niivue.js";
+import { icon } from "./vendor/icons.js";
 import { $, cssColorToRgba, status } from "./dom.js";
 import { app } from "./state.js";
 import { volumeFromDataset } from "./nifti.js";
@@ -103,4 +104,19 @@ export function openJsonModal(path) {
 
 export function closeJsonModal() {
   $("json-modal").hidden = true;
+}
+
+// Something the reader has to be *told*, as opposed to the other two modals,
+// which show them something. Used when a fetch fails in a way that changes what
+// the page can offer — a dead archive host means no full datasets, and silently
+// falling back to a built-in slice would misrepresent what they are looking at.
+export function showNotice(iconName, title, body) {
+  $("notice-icon").innerHTML = icon(iconName, 34);
+  $("notice-title").textContent = title;
+  $("notice-body").textContent = body;
+  $("notice-modal").hidden = false;
+}
+
+export function closeNotice() {
+  $("notice-modal").hidden = true;
 }

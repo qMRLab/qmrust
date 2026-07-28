@@ -32,7 +32,7 @@ import {
 import { renderRoiStats } from "./roi.js";
 import { mirrorDrawing, wireDrawing } from "./draw.js";
 import { clearMapHover, onLocation, onMapHover, redrawCurve, resizeCurve } from "./curve.js";
-import { closeFileModal, closeJsonModal, openMapModal } from "./modal.js";
+import { closeFileModal, closeJsonModal, closeNotice, openMapModal } from "./modal.js";
 import { onBrowse, onDrop } from "./drop.js";
 import { THEMES, initTheme, onThemeChange, setFamily, setMode } from "./themes.js";
 import { createLevelControl, repaintLevels } from "./level.js";
@@ -302,9 +302,11 @@ function wireDataDrop() {
 function wireModals() {
   $("file-modal-close").onclick = closeFileModal;
   $("json-modal-close").onclick = closeJsonModal;
+  $("notice-close").onclick = closeNotice;
   for (const [id, close] of [
     ["file-modal", closeFileModal],
     ["json-modal", closeJsonModal],
+    ["notice-modal", closeNotice],
   ]) {
     // The backdrop closes; the card inside it does not.
     $(id).addEventListener("click", (e) => {
@@ -315,6 +317,7 @@ function wireModals() {
     if (e.key !== "Escape") return;
     if (!$("file-modal").hidden) closeFileModal();
     if (!$("json-modal").hidden) closeJsonModal();
+    if (!$("notice-modal").hidden) closeNotice();
   });
 }
 
