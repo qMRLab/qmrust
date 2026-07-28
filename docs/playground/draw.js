@@ -7,7 +7,7 @@
 // Every region here is traceable to a deliberate gesture.
 import { DRAG_MODE } from "./vendor/niivue.js";
 import { icon } from "./vendor/icons.js";
-import { $ } from "./dom.js";
+import { $, status } from "./dom.js";
 import { app, nvIn, nvOut } from "./state.js";
 
 // The labels available to paint with. The first three are the brand metals —
@@ -28,22 +28,43 @@ const LABELS = [
   { value: 6, color: "#d76a4c" },
 ];
 
-// `penType`: 0 freehand, 1 rectangle, 2 ellipse — the values the vendored build
-// compares against. Shapes are always solid.
 // The freehand tools hand the stroke to NiiVue. The shapes do not: NiiVue anchors
 // a rectangle at the corner where the drag began, which puts the shape beside the
 // pointer rather than under it. Stamping them ourselves keeps them centred on the
 // cursor, at the size the stepper says, which is also what the cursor previews.
+//
+// The wand and the fill are NiiVue's own region growers, seeded from the clicked
+// voxel. Both are bounded to the current slice: everything else here is
+// slice-aware, and a wand that silently ran through the volume would report a
+// region far larger than the one a reader thinks they selected.
 const TOOLS = [
   { id: "pen", icon: "pencil", title: "Freehand" },
   { id: "rect", icon: "square", title: "Rectangle — click to stamp", stamp: "rect" },
   { id: "ellipse", icon: "circle", title: "Ellipse — click to stamp", stamp: "ellipse" },
+  { id: "wand", icon: "wand", title: "Magic wand — grow from similar values", wand: true },
+  { id: "fill", icon: "cloud-rain", title: "Flood fill an enclosed area", fill: true },
   { id: "erase", icon: "eraser", title: "Erase", erase: true },
 ];
 
 let tool = TOOLS[0];
 let label = 1;
 let penSize = 1;
+// How far from the clicked value the wand may grow, as a percentage of the
+// volume's range — NiiVue's own `clickToSegmentPercent`.
+let wandPercent = 5;
+// How many classes Otsu splits the map into.
+const otsuLevels = 2;
+
+// The stepper drives whichever quantity the active tool actually has: a brush has
+// a size, a wand has a tolerance. One control, because the palette is a column
+// forty pixels wide and two would crowd it.
+function stepper() {
+  return tool.wand
+    ? { value: wandPercent, min: 1, max: 40, label: "%", title: "Wand tolerance",
+        set: (v) => { wandPercent = v; } }
+    : { value: penSize, min: 1, max: 15, label: "", title: "Brush size",
+        set: (v) => { penSize = v; } };
+}
 // Assigning `drawBitmap` fires `onDrawingChanged` on the receiving instance,
 // which would mirror straight back; this flag is what stops the ping-pong.
 let mirroring = false;
@@ -128,9 +149,7 @@ function drawables() {
 
 function applyMode() {
   for (const nv of drawables()) {
-    // A stamping tool must not also let NiiVue paint: its own pen would trail
-    // freehand marks behind every click.
-    nv.setDrawingEnabled(app.roiDrawing && !tool.stamp);
+    nv.setDrawingEnabled(app.roiDrawing && !tool.stamp && !tool.fill);
     nv.opts.dragMode = app.roiDrawing ? DRAG_MODE.none : DRAG_MODE.contrast;
     nv.setCrosshairWidth(app.roiDrawing ? 0 : 1);
   }
@@ -140,9 +159,15 @@ function applyMode() {
 function applyTool() {
   const cursor = app.roiDrawing ? cursorFor(tool, penSize) : "";
   for (const nv of drawables()) {
-    nv.setDrawingEnabled(app.roiDrawing && !tool.stamp);
+    // A tool that seeds from a click must not also let NiiVue's pen trail marks
+    // behind it, so those tools take drawing off and handle the click themselves.
+    nv.setDrawingEnabled(app.roiDrawing && !tool.stamp && !tool.fill);
     nv.opts.penType = 0;
     nv.opts.penSize = penSize;
+    nv.opts.clickToSegment = Boolean(app.roiDrawing && tool.wand);
+    nv.opts.clickToSegmentPercent = wandPercent;
+    // Grow within the slice being looked at, not through the volume.
+    nv.opts.clickToSegmentIs2D = true;
     nv.setPenValue(tool.erase ? 0 : label, true);
     nv.canvas.style.cursor = cursor;
   }
@@ -208,19 +233,35 @@ function makeDraggable(box, handle) {
 // gives a region of known size and position. `drawPt` is the only bitmap-level
 // paint the build exposes (`drawRect` is a WebGL selection box, not a paint), so
 // the footprint is walked voxel by voxel.
-function stampAt(nv, event) {
-  if (!app.current) return false;
+// The voxel under the pointer, or null when the pointer is not over a slice.
+// `canvasPos2frac` works in backing-store pixels, which differ from CSS pixels on
+// a high-resolution canvas.
+function voxelAt(nv, event) {
+  if (!app.current) return null;
   const rect = nv.canvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) return false;
-  // `canvasPos2frac` works in backing-store pixels, which differ from CSS pixels
-  // on a high-resolution canvas.
+  if (!rect.width || !rect.height) return null;
   const frac = nv.canvasPos2frac([
     (event.clientX - rect.left) * (nv.canvas.width / rect.width),
     (event.clientY - rect.top) * (nv.canvas.height / rect.height),
   ]);
-  // A negative first component means the cursor was not over a slice at all.
-  if (!frac || frac[0] < 0) return false;
-  const [cx, cy, cz] = nv.frac2vox(frac);
+  // A negative first component means the pointer was not over a slice at all.
+  if (!frac || frac[0] < 0) return null;
+  return nv.frac2vox(frac);
+}
+
+// Fill the enclosed area the click lands in — the companion to drawing an
+// outline. Bounded to the slice, like every other tool here.
+function fillAt(nv, event) {
+  const at = voxelAt(nv, event);
+  if (!at) return false;
+  nv.drawFloodFill(at, tool.erase ? 0 : label, 0, NaN, NaN, 6, Number.POSITIVE_INFINITY, true);
+  return true;
+}
+
+function stampAt(nv, event) {
+  const at = voxelAt(nv, event);
+  if (!at) return false;
+  const [cx, cy, cz] = at;
   const [nx, ny] = app.current.meta.dims;
   const r = Math.max(1, Math.round(penSize));
   const value = tool.erase ? 0 : label;
@@ -234,6 +275,33 @@ function stampAt(nv, event) {
   }
   nv.refreshDrawing(true);
   return true;
+}
+
+// Otsu and grow-cut act on the whole slice at once rather than where a pointer
+// is, so they are actions rather than tools. Both write into the drawing, so both
+// become history steps like any stroke.
+function segmentOtsu() {
+  if (!app.current) return;
+  nvOut.drawOtsu(otsuLevels);
+  nvOut.refreshDrawing(true);
+  mirrorDrawing(nvOut);
+  pushHistory();
+  onStroke?.();
+}
+
+// Grow-cut expands the regions already drawn until they meet, using the image to
+// decide where the boundary falls. It needs at least two labels to grow *between*;
+// with one it has nothing to compete against and would flood the slice.
+function segmentGrowCut() {
+  if (usedLabels().size < 2) {
+    status("Grow-cut needs two labels drawn as seeds — one region, one background", "error");
+    return;
+  }
+  nvOut.drawGrowCut();
+  nvOut.refreshDrawing(true);
+  mirrorDrawing(nvOut);
+  pushHistory();
+  onStroke?.();
 }
 
 // Where the eraser has been, drawn as a dashed path over the image.
@@ -315,13 +383,14 @@ function wireEraseTrail(nv) {
 // Stamping only makes sense for the shape tools: the pen already paints on click.
 function wireStamp(nv) {
   nv.canvas.addEventListener("pointerdown", (e) => {
-    if (!app.roiDrawing || !tool.stamp) return;
-    // Stamped on press, not release: the mark lands where the pointer went down,
-    // so a small drag afterwards cannot move it somewhere unexpected.
-    if (stampAt(nv, e)) {
-      mirrorDrawing(nv);
-      nv.onDrawingChanged?.();
-    }
+    if (!app.roiDrawing) return;
+    // Acted on press, not release: the mark lands where the pointer went down, so
+    // a small drag afterwards cannot move it somewhere unexpected.
+    const did = tool.stamp ? stampAt(nv, e) : tool.fill ? fillAt(nv, e) : false;
+    if (!did) return;
+    nv.refreshDrawing(true);
+    mirrorDrawing(nv);
+    nv.onDrawingChanged?.();
   });
 }
 
@@ -398,20 +467,26 @@ function paintPalette() {
   tools.className = "draw-tools";
   for (const t of TOOLS) tools.append(toolButton(t));
 
+  const actions = document.createElement("div");
+  actions.className = "draw-tools";
   const undo = actionButton("undo-2", `Undo (up to ${HISTORY_STEPS - 1} steps)`, undoDrawing);
   undo.id = "draw-undo";
   const redo = actionButton("redo-2", "Redo", redoDrawing);
   redo.id = "draw-redo";
-  tools.append(undo, redo);
+  actions.append(
+    undo,
+    redo,
+    actionButton("fold-vertical", `Otsu — split the map into ${otsuLevels} classes`, segmentOtsu),
+    actionButton("bean", "Grow-cut — expand the drawn seeds until they meet", segmentGrowCut),
+  );
 
 
-  // Brush size in voxels, as a stepper. A range input this narrow cannot be
-  // styled to sit with the app's other controls, and the number is what a reader
-  // actually wants to know.
+  // Whichever quantity the active tool has — brush size, or wand tolerance.
+  const knob = stepper();
   const size = document.createElement("div");
   size.className = "draw-size";
   const step = (delta) => {
-    penSize = Math.max(1, Math.min(15, penSize + delta));
+    knob.set(Math.max(knob.min, Math.min(knob.max, knob.value + delta)));
     applyTool();
     paintPalette();
   };
@@ -419,19 +494,19 @@ function paintPalette() {
   minus.type = "button";
   minus.className = "draw-step";
   minus.textContent = "−";
-  minus.title = "Smaller brush";
-  minus.disabled = penSize <= 1;
+  minus.title = `${knob.title} down`;
+  minus.disabled = knob.value <= knob.min;
   minus.onclick = () => step(-1);
   const value = document.createElement("span");
   value.className = "draw-size-value";
-  value.textContent = String(penSize);
-  value.title = `Brush is ${penSize} voxel${penSize === 1 ? "" : "s"} across`;
+  value.textContent = `${knob.value}${knob.label}`;
+  value.title = knob.title;
   const plus = document.createElement("button");
   plus.type = "button";
   plus.className = "draw-step";
   plus.textContent = "+";
-  plus.title = "Larger brush";
-  plus.disabled = penSize >= 15;
+  plus.title = `${knob.title} up`;
+  plus.disabled = knob.value >= knob.max;
   plus.onclick = () => step(1);
   size.append(minus, value, plus);
 
@@ -470,7 +545,7 @@ function paintPalette() {
     paintPalette();
   };
 
-  box.append(head, tools, size, swatches, picker);
+  box.append(head, tools, actions, size, swatches, picker);
 }
 
 // NiiVue keeps 8 undo bitmaps and offers no redo, so the history is kept here
