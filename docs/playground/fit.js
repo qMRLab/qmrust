@@ -113,8 +113,6 @@ export async function fitSlice() {
       name: o.name,
       unit: o.unit,
       volume: vol,
-      defaultCalMin: vol.cal_min,
-      defaultCalMax: vol.cal_max,
     });
   }
 

@@ -2,7 +2,7 @@
 // crosshair colour, and which output is on screen.
 import { $, cssColorToRgba } from "./dom.js";
 import { app, nvIn, nvOut } from "./state.js";
-import { repaintLevels, setWindow } from "./level.js";
+import { repaintLevels } from "./level.js";
 import { toggleRoi } from "./roi.js";
 import { updateVoxelValue } from "./curve.js";
 
@@ -54,9 +54,9 @@ export function applyViewerTheme() {
   }
 }
 
-// Slice or multiplanar, for the fitted map. Only meaningful for a volumetric
-// map: a single-slice fit has no second or third plane, so the toggle disables
-// itself rather than offering a view that would show two empty strips.
+// Slice or multiplanar, for the fitted map. Available whatever the data is: a
+// single-slice fit shows its one plane in the multiplanar layout rather than
+// having the view withheld.
 export function showMapView(view) {
   const planes = view === "planes";
   $("tab-slice").classList.toggle("active", !planes);
@@ -67,23 +67,12 @@ export function showMapView(view) {
   nvOut.drawScene();
 }
 
-// True when the fitted map has more than one slice to show.
-export function mapIsVolumetric() {
-  return (app.current?.meta?.dims?.[2] ?? 1) > 1;
-}
-
 export function syncMapViewControls() {
-  const volumetric = mapIsVolumetric();
   const haveMap = app.outputVolumes.length > 0;
-  $("tab-planes").disabled = !volumetric;
-  $("tab-planes").title = volumetric
-    ? "Show all three planes"
-    : "This fit is a single slice — there are no other planes";
   $("open-map-modal").disabled = !haveMap;
   // Nothing to measure until a map exists.
   $("roi-toggle").disabled = !haveMap;
   if (!haveMap && app.roiDrawing) toggleRoi();
-  if (!volumetric) showMapView("slice");
 }
 
 export function showOutput(name) {
@@ -113,14 +102,6 @@ export function onColormapChange() {
   nvOut.setColormap(entry.volume.id, $("colormap").value);
   nvOut.drawScene();
   repaintLevels();
-}
-
-// Reader-adjustable colour scale: min/max feed `volume.cal_min`/`cal_max`
-// directly (the same fields NiiVue's own auto windowing sets), so the
-// colorbar — which reads off the volume — tracks the change for free.
-export function resetCalRange() {
-  if (!app.shownOutput) return;
-  setWindow(app.shownOutput.defaultCalMin, app.shownOutput.defaultCalMax);
 }
 
 export function populateColormaps() {

@@ -48,7 +48,7 @@ export const app = {
   lastMaps: null,
 
   // The fitted maps as viewable volumes:
-  // [{ name, unit, volume, defaultCalMin, defaultCalMax }].
+  // [{ name, unit, volume }].
   outputVolumes: [],
 
   // The `outputVolumes` entry currently drawn in the fitted-map viewer, and the one

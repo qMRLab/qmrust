@@ -808,7 +808,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   width: 8ch; font: 700 11px var(--font-mono); padding: 1px 4px; border-radius: 6px;
   z-index: 2;
 }
-.range-hint { color: var(--muted); font-size: 11px; }
 /* Statistics of the fitted map beneath a drawn ROI. A quantitative map is only
    as useful as the numbers you can get out of a region. */
 .roi-stats {
@@ -869,8 +868,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap;
   color: var(--ink-2); font-size: 12px;
 }
-.range-controls label { display: flex; gap: 5px; align-items: center; }
-.range-controls input[type=number] { width: 8em; font-size: 12px; padding: 4px 7px; }
 .range-controls button { font-size: 12px; padding: 4px 10px; }
 
 .voxel-value { color: var(--ink-2); font: 12px var(--font-mono); margin: 2px 0 8px; }

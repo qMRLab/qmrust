@@ -25,7 +25,6 @@ import {
   applyViewerTheme,
   onColormapChange,
   populateColormaps,
-  resetCalRange,
   showMapView,
   showOutput,
   sizeViewers,

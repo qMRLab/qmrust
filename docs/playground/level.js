@@ -16,9 +16,9 @@ export function repaintLevels() {
 }
 
 // The one place a display window is changed. Every control routes through here —
-// the handles, the arrow keys, the typed bounds and the reset button — so they
-// cannot drift apart in what they update. `null` leaves that bound alone.
-export function setWindow(min, max) {
+// the handles, the arrow keys and the typed bounds — so they cannot drift apart
+// in what they update. `null` leaves that bound alone.
+function setWindow(min, max) {
   if (!app.shownOutput) return;
   const vol = app.shownOutput.volume;
   if (min !== null && Number.isFinite(min)) vol.cal_min = min;

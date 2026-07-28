@@ -11,7 +11,7 @@ import { volumeFromDataset } from "./nifti.js";
 import { createLevelControl } from "./level.js";
 import { clearMapHover, onMapHover } from "./curve.js";
 import { highlightJson } from "./recipe.js";
-import { clearVolumes, mapIsVolumetric } from "./viewers.js";
+import { clearVolumes } from "./viewers.js";
 
 async function ensureModalViewer() {
   if (app.nvModal) return;
@@ -39,9 +39,9 @@ export async function openMapModal() {
   await ensureModalViewer();
   clearVolumes(app.nvModal);
   app.nvModal.addVolume(shown.volume);
-  app.nvModal.setSliceType(
-    mapIsVolumetric() ? app.nvModal.sliceTypeMultiplanar : app.nvModal.sliceTypeAxial,
-  );
+  // Multiplanar whatever the data is: a single-slice fit still shows its one
+  // plane, and the control that opens this is labelled Multiplanar.
+  app.nvModal.setSliceType(app.nvModal.sliceTypeMultiplanar);
   app.nvModal.resizeListener();
   app.nvModal.drawScene();
   // A quantitative map is unreadable without a scale, so the modal always shows
