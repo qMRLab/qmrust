@@ -933,12 +933,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .out-controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
 .out-controls select { font-size: 12px; padding: 4px 8px; }
 
-.range-controls {
-  display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap;
-  color: var(--ink-2); font-size: 12px;
-}
-.range-controls button { font-size: 12px; padding: 4px 10px; }
-
 .voxel-value { color: var(--ink-2); font: 12px var(--font-mono); margin: 2px 0 8px; }
 
 /* ECharts follows this container's size (a ResizeObserver in `curve.js` calls

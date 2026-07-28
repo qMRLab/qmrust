@@ -91,8 +91,14 @@ function cursorFor(t, size) {
 // is easier to see. Drawing and drag-to-window are the same gesture, so one must
 // yield while the pen is active — and the crosshair goes away, because it sits
 // exactly where you are trying to draw.
+// Every viewer that currently exists. The modal's instance is created on first
+// open, so this has to be asked for each time rather than captured once.
+function drawables() {
+  return [nvIn, nvOut, app.nvModal].filter(Boolean);
+}
+
 function applyMode() {
-  for (const nv of [nvIn, nvOut]) {
+  for (const nv of drawables()) {
     nv.setDrawingEnabled(app.roiDrawing);
     nv.opts.dragMode = app.roiDrawing ? DRAG_MODE.none : DRAG_MODE.contrast;
     nv.setCrosshairWidth(app.roiDrawing ? 0 : 1);
@@ -102,7 +108,7 @@ function applyMode() {
 
 function applyTool() {
   const cursor = app.roiDrawing ? cursorFor(tool, penSize) : "";
-  for (const nv of [nvIn, nvOut]) {
+  for (const nv of drawables()) {
     nv.opts.penType = tool.penType;
     nv.opts.penSize = penSize;
     nv.setPenValue(tool.erase ? 0 : label, true);
@@ -113,20 +119,22 @@ function applyTool() {
 // One logical drawing, visible in both viewers: draw on anatomy where structure
 // is clearer, measure on the map. Both render the same `current.meta.dims`, so
 // this is bookkeeping — no resampling and no geometry of ours.
-export function mirrorDrawing(from) {
+function mirrorDrawing(from) {
   if (mirroring) return;
-  const to = from === nvOut ? nvIn : nvOut;
   mirroring = true;
   try {
-    to.drawBitmap = from.drawBitmap;
-    to.refreshDrawing();
+    for (const to of drawables()) {
+      if (to === from) continue;
+      to.drawBitmap = from.drawBitmap;
+      to.refreshDrawing();
+    }
   } finally {
     mirroring = false;
   }
 }
 
 function clearDrawing() {
-  for (const nv of [nvIn, nvOut]) {
+  for (const nv of drawables()) {
     nv.drawBitmap = null;
     nv.updateGLVolume();
     nv.drawScene();
@@ -149,7 +157,7 @@ function applyLabelColours() {
     A: [0, ...LABELS.map(() => 255)],
     labels: ["", ...LABELS.map((l) => `label ${l.value}`)],
   };
-  for (const nv of [nvIn, nvOut]) nv.setDrawColormap(cmap);
+  for (const nv of drawables()) nv.setDrawColormap(cmap);
 }
 
 // Drag by the header. The palette is `fixed`, so the coordinates are the
@@ -335,18 +343,78 @@ function paintPalette() {
   box.append(head, tools, size, swatches, picker);
 }
 
+let placed = false;
+
+// Park the palette in the gutter between the inputs and the fitted map: near both
+// viewers, over neither. Only until the reader drags it somewhere they prefer.
+function placePalette(box) {
+  if (placed) return;
+  const inputs = $("viewer-in-wrap")?.getBoundingClientRect();
+  const map = $("viewer-out-wrap")?.getBoundingClientRect();
+  if (!inputs || !map) return;
+  const width = box.offsetWidth || 40;
+  const mid = (inputs.right + map.left) / 2 - width / 2;
+  box.style.left = `${Math.max(4, Math.min(mid, window.innerWidth - width - 4))}px`;
+  box.style.top = `${Math.round(map.top + 6)}px`;
+  placed = true;
+}
+
 export function toggleDrawing() {
   app.roiDrawing = !app.roiDrawing;
   $("roi-toggle").classList.toggle("active", app.roiDrawing);
-  $("roi-toggle-label").textContent = app.roiDrawing ? "drawing…" : "draw ROI";
+  $("roi-toggle-label").textContent = app.roiDrawing ? "Drawing…" : "Draw ROI";
   const box = $("draw-palette");
   box.hidden = !app.roiDrawing;
-  if (app.roiDrawing) paintPalette();
+  if (app.roiDrawing) {
+    paintPalette();
+    placePalette(box);
+  }
   applyMode();
+}
+
+// Called when the modal shows the fitted map, so a reader can keep drawing in the
+// larger multiplanar view rather than having to close it first.
+// The modal is the only viewer that comes and goes, so it is the only one that
+// needs catching up.
+export function attachModalDrawing() {
+  if (!app.nvModal) return;
+  applyLabelColours();
+  wireStamp(app.nvModal);
+  applyMode();
+  if (nvOut.drawBitmap) mirrorDrawing(nvOut);
+  app.nvModal.onDrawingChanged = () => {
+    mirrorDrawing(app.nvModal);
+    onStroke?.();
+  };
+}
+
+// What to run after a stroke, whoever drew it. Registered by the wiring module,
+// which is where the knowledge of "recompute the statistics" belongs.
+let onStroke = null;
+export function onDrawingStroke(fn) {
+  onStroke = fn;
+}
+
+// The modal viewer is shared with the file previewer, which shows an acquired
+// image that need not share the fitted map's shape. Painting there would write
+// through a bitmap sized for a different volume, so the pen is taken away and the
+// stale drawing dropped whenever the modal is used for something else.
+export function detachModalDrawing() {
+  if (!app.nvModal) return;
+  app.nvModal.onDrawingChanged = () => {};
+  app.nvModal.setDrawingEnabled(false);
+  app.nvModal.drawBitmap = null;
+  app.nvModal.canvas.style.cursor = "";
 }
 
 export function wireDrawing() {
   applyLabelColours();
   $("roi-toggle").onclick = toggleDrawing;
-  for (const nv of [nvIn, nvOut]) wireStamp(nv);
+  for (const nv of [nvIn, nvOut]) {
+    wireStamp(nv);
+    nv.onDrawingChanged = () => {
+      mirrorDrawing(nv);
+      onStroke?.();
+    };
+  }
 }

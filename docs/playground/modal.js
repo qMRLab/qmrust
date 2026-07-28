@@ -13,6 +13,7 @@ import { createLevelControl } from "./level.js";
 import { clearMapHover, onMapHover } from "./curve.js";
 import { highlightJson } from "./recipe.js";
 import { clearVolumes } from "./viewers.js";
+import { attachModalDrawing, detachModalDrawing } from "./draw.js";
 
 async function ensureModalViewer() {
   if (app.nvModal) return;
@@ -28,6 +29,14 @@ async function ensureModalViewer() {
   app.nvModal.canvas.addEventListener("mouseleave", clearMapHover);
 }
 
+// The modal viewer is created on first open, so it misses the wiring the two
+// permanent viewers get at startup; this hands it the pen, the labels and the
+// drawing in progress.
+async function ensureModalDrawing() {
+  await ensureModalViewer();
+  attachModalDrawing();
+}
+
 // The fitted map in a modal, at a size the side-by-side layout cannot give it.
 export async function openMapModal() {
   // `shownOutput` is an `outputVolumes` entry, not a name — so the modal opens
@@ -37,7 +46,7 @@ export async function openMapModal() {
   if (!shown) return;
   $("file-modal").hidden = false;
   $("file-modal-title").textContent = `${shown.name}${shown.unit ? ` [${shown.unit}]` : ""}`;
-  await ensureModalViewer();
+  await ensureModalDrawing();
   clearVolumes(app.nvModal);
   app.nvModal.addVolume(shown.volume);
   // Multiplanar whatever the data is: a single-slice fit still shows its one
@@ -64,6 +73,7 @@ export async function openFileModal(path) {
   // An acquired image has no quantitative scale to level, unlike a fitted map.
   $("level").hidden = true;
   await ensureModalViewer();
+  detachModalDrawing();
   clearVolumes(app.nvModal);
   const volume = await volumeFromDataset(app.dataset.files, path, { colormap: "gray" });
   app.nvModal.addVolume(volume);

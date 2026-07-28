@@ -105,7 +105,7 @@
     </div>
   </div>
 
-  <div class="viewer-out-wrap card">
+  <div class="viewer-out-wrap card" id="viewer-out-wrap">
     <div class="viewer-head">
       <h2 class="section-h" style="margin:0">Fitted map<button class="info" type="button" aria-label="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region." data-tip="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region.">i</button></h2>
       <div class="seg" role="tablist" aria-label="Fitted map view">
@@ -138,9 +138,7 @@
         <button id="open-map-modal" class="ghost-btn icon-btn" type="button" disabled>
           <span data-icon="scan-box"></span>Multiplanar
         </button>
-      </div>
-      <div class="range-controls">
-        <button id="roi-toggle" class="ghost-btn icon-btn" type="button" disabled><span data-icon="pencil"></span><span id="roi-toggle-label">draw ROI</span></button>
+        <button id="roi-toggle" class="ghost-btn icon-btn" type="button" disabled><span data-icon="pencil"></span><span id="roi-toggle-label">Draw ROI</span></button>
       </div>
       <div class="roi-stats" id="roi-stats" hidden></div>
     </div>
