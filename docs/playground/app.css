@@ -672,6 +672,19 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .draw-tool.active {
   background: var(--brass); border-color: var(--brass); color: #241c0c;
 }
+/* What the tool in hand expects. Small, but present: the alternative is a reader
+   clicking a bean-shaped button and hoping. */
+.draw-hint {
+  margin: 0; font: 9.5px/1.35 var(--font-ui); color: var(--muted);
+}
+.draw-apply {
+  width: 100%; padding: 4px 0; border-radius: 4px;
+  background-color: var(--rust); background-image: var(--grad-action);
+  color: var(--on-action); border: var(--border-w) solid var(--line);
+  font: 600 10px var(--font-ui); letter-spacing: .04em; text-transform: uppercase;
+}
+.draw-apply[hidden] { display: none; }
+
 /* Brush size as a stepper, in the same shape as the tool buttons above it. */
 .draw-size { display: flex; align-items: center; justify-content: space-between; }
 .draw-step {
