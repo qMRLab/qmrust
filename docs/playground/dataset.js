@@ -25,6 +25,10 @@ function showDownloadPending() {
   const box = $("navbar-dl");
   box.hidden = false;
   box.classList.add("pending");
+  // The indeterminate half of the pair: the ring reports a percentage when there
+  // is one to report, while the navbar's sweep says "still working" through the
+  // phases that have no measurable total — extracting an archive, resolving it.
+  $("navbar").classList.add("loading");
   $("dl-pct").hidden = true;
   $("dl-arc").style.strokeDashoffset = "";
 }
@@ -34,6 +38,7 @@ function setDownloadProgress(fraction) {
   if (fraction === null) {
     box.hidden = true;
     box.classList.remove("pending");
+    $("navbar").classList.remove("loading");
     return;
   }
   box.hidden = false;

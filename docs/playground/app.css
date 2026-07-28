@@ -289,6 +289,10 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 @media (prefers-reduced-motion: reduce) {
   .fit-progress-bar.active { animation: none; }
+  /* Still visibly "loading", just not moving. */
+  .navbar.loading::after {
+    animation: none; background-image: none; background-color: var(--accent); opacity: .45;
+  }
 }
 
 .layout {
@@ -591,17 +595,35 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* Skeleton placeholders, shown while a dataset is being fetched, extracted
    and resolved: the panel keeps the shape of what is coming instead of
    briefly showing a stale or half-built list. */
+/* A placeholder has to be clearly *not* content, which means real contrast
+   against the panel it sits on — `--panel-2` sits a couple of units from
+   `--panel` and read as nothing (1.10:1). The ink colour at low alpha lightens
+   the bar on a dark theme and darkens it on a light one, which is the direction
+   a placeholder wants either way; 26 % lands around 1.7–2.2:1 across the six
+   themes: clearly present, still obviously not text. A band travelling across
+   says "coming" in a way a pulse alone does not. */
 @keyframes shimmer { 0% { opacity: 0.35; } 50% { opacity: 0.75; } 100% { opacity: 0.35; } }
-.skel {
-  background: var(--panel-2); border-radius: 4px;
-  animation: shimmer 1.4s ease-in-out infinite;
+@keyframes skel-sweep {
+  from { background-position: -60% 0; }
+  to { background-position: 160% 0; }
 }
-@media (prefers-reduced-motion: reduce) { .skel { animation: none; opacity: 0.5; } }
+.skel {
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--ink) 26%, transparent);
+  background-image: linear-gradient(
+    90deg, transparent, color-mix(in srgb, var(--ink) 20%, transparent), transparent
+  );
+  background-size: 55% 100%; background-repeat: no-repeat;
+  animation: skel-sweep 1.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel { animation: none; background-image: none; }
+}
 .skel-row { display: flex; gap: 8px; align-items: center; padding: 3px 4px; }
-.skel-row .skel { height: 11px; }
+.skel-row .skel { height: 13px; }
 .skel-name { flex: 1 1 auto; }
 .skel-role { flex: 0 0 auto; width: 96px; }
-.skel-dir { height: 11px; width: 40%; margin: 10px 2px 4px; }
+.skel-dir { height: 13px; width: 40%; margin: 10px 2px 5px; }
 /* Overlays its viewer rather than replacing it, so the card keeps its exact
    size while data loads — a viewer that resizes mid-load reflows the page.
    `.viewer` is already `position: relative`. */
