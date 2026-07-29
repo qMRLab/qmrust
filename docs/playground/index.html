@@ -166,6 +166,7 @@
       <div class="measure-head">
         <span id="measure-summary" class="measure-summary"></span>
         <button id="measure-scope" class="ghost-btn" type="button" title="Show every fitted map instead of the one on screen">All maps</button>
+        <button id="measure-chart" class="ghost-btn icon-btn" type="button" title="Show the distributions as boxplots"><span data-icon="chart-spline" data-icon-size="13"></span>Distributions</button>
         <button id="measure-csv" class="ghost-btn" type="button" title="Copy the table as CSV">Copy CSV</button>
       </div>
       <div id="measure-table" class="measure-table"></div>
@@ -174,6 +175,15 @@
 
 </div>
 
+<div class="modal" id="chart-modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="chart-modal-title" class="files-name"></span>
+      <button id="chart-modal-close" class="ghost-btn" type="button">Close</button>
+    </div>
+    <div id="chart-body" class="chart-body"></div>
+  </div>
+</div>
 <div class="modal" id="notice-modal" hidden>
   <div class="modal-card notice-card" role="alertdialog" aria-labelledby="notice-title">
     <span class="notice-icon" id="notice-icon"></span>

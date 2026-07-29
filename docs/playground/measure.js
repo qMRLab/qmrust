@@ -5,6 +5,7 @@
 // only decides how to show it. Statistics always come from the fitted maps
 // (`app.lastMaps`) rather than from whichever volume was drawn on — drawing on
 // anatomy and measuring T1 is the intended workflow.
+import * as echarts from "./vendor/echarts.js";
 import { $, roundBound } from "./dom.js";
 import { app, nvOut } from "./state.js";
 import { labelStats } from "./stats.js";
@@ -212,4 +213,95 @@ export function copyCsv() {
     )
     .join("\n");
   navigator.clipboard?.writeText(csv);
+}
+
+
+// The same regions as boxplots, in a modal — a distribution needs room the card
+// does not have, and the shape of a region's values says things a mean and an SD
+// cannot: skew, a second mode, a tail into a failed-fit boundary.
+//
+// `describeValues` already computes min/Q1/median/Q3/max, which *is* a box plot,
+// so the chart adds no arithmetic of its own.
+let chart = null;
+
+// ECharts caches its option, and the modal has no size until it is shown, so the
+// option is rebuilt and the instance resized on every open. That also means the
+// chart picks up the current theme's tokens for free.
+function chartOption(all, present) {
+  const style = getComputedStyle(document.documentElement);
+  const ink = style.getPropertyValue("--ink").trim();
+  const muted = style.getPropertyValue("--muted").trim();
+  const line = style.getPropertyValue("--line").trim();
+  const panel = style.getPropertyValue("--panel").trim();
+  const names = present.map((r) => r.name);
+
+  // One panel per map, each with its own y axis: T1 in seconds and T2 at ~0.08 s
+  // cannot share a scale, and forcing them onto one would flatten the smaller.
+  const cols = all.length;
+  const grid = all.map((_, i) => ({
+    left: `${4 + (i * 96) / cols}%`,
+    width: `${96 / cols - 6}%`,
+    top: 46,
+    bottom: 60,
+  }));
+  const axisText = { color: muted, fontSize: 10 };
+  return {
+    animation: false,
+    backgroundColor: "transparent",
+    tooltip: { trigger: "item", backgroundColor: panel, borderColor: line,
+               textStyle: { color: ink, fontSize: 11 } },
+    toolbox: { right: 10, top: 6, iconStyle: { borderColor: muted },
+               feature: { saveAsImage: { title: "Save", pixelRatio: 2, backgroundColor: panel } } },
+    grid,
+    xAxis: all.map((_, i) => ({
+      gridIndex: i, type: "category", data: names,
+      axisLine: { lineStyle: { color: line } },
+      axisTick: { lineStyle: { color: line } },
+      axisLabel: { ...axisText, rotate: names.length > 3 ? 30 : 0 },
+    })),
+    yAxis: all.map((m, i) => ({
+      gridIndex: i, type: "value", scale: true,
+      name: `${m.name}${m.unit ? ` [${m.unit}]` : ""}`,
+      nameTextStyle: { ...axisText, align: "left" },
+      axisLine: { lineStyle: { color: line } },
+      axisLabel: axisText,
+      splitLine: { lineStyle: { color: line, opacity: 0.4 } },
+    })),
+    series: all.map((m, i) => ({
+      type: "boxplot",
+      xAxisIndex: i,
+      yAxisIndex: i,
+      // Each box wears its label's own drawing colour, so a box, a table row and a
+      // region on the map are one object seen three ways.
+      data: present.map((r) => {
+        const s = statsFor(r.value, m);
+        return {
+          value: s ? [s.min, s.q1, s.median, s.q3, s.max] : [],
+          itemStyle: { color: `${r.colour}55`, borderColor: r.colour, borderWidth: 1.4 },
+        };
+      }),
+      boxWidth: [12, 44],
+    })),
+  };
+}
+
+function statsFor(value, map) {
+  return labelStats(bitmap(), map.flat, app.current.meta.dims).get(value);
+}
+
+export function openDistributions() {
+  const all = allMaps ? maps() : [shownMap()].filter(Boolean);
+  const present = rows(shownMap());
+  if (!all.length || !present.length) return;
+  $("chart-modal-title").textContent = allMaps
+    ? `Distributions · ${present.length} regions · every map`
+    : `Distributions · ${present.length} regions · ${all[0].name}`;
+  $("chart-modal").hidden = false;
+  chart ??= echarts.init($("chart-body"), null, { renderer: "canvas" });
+  chart.resize();
+  chart.setOption(chartOption(all, present), { notMerge: true });
+}
+
+export function closeDistributions() {
+  $("chart-modal").hidden = true;
 }

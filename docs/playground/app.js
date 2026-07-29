@@ -29,7 +29,14 @@ import {
   showOutput,
   sizeViewers,
 } from "./viewers.js";
-import { copyCsv, renderMeasurements, showMeasureView, toggleMeasureScope } from "./measure.js";
+import {
+  closeDistributions,
+  copyCsv,
+  openDistributions,
+  renderMeasurements,
+  showMeasureView,
+  toggleMeasureScope,
+} from "./measure.js";
 import { onDrawingStroke, wandOwnsWheel, wireDrawing } from "./draw.js";
 import { clearMapHover, onLocation, onMapHover, redrawCurve, resizeCurve } from "./curve.js";
 import { closeFileModal, closeJsonModal, closeNotice, openMapModal } from "./modal.js";
@@ -269,6 +276,8 @@ function wireMeasurements() {
   $("tab-measure").onclick = toggle;
   $("measure-scope").onclick = toggleMeasureScope;
   $("measure-csv").onclick = copyCsv;
+  $("measure-chart").onclick = openDistributions;
+  $("chart-modal-close").onclick = closeDistributions;
 }
 
 // The fitted map: output and colormap pickers, slice/multiplanar, window/level, ROI.
@@ -325,6 +334,7 @@ function wireModals() {
     ["file-modal", closeFileModal],
     ["json-modal", closeJsonModal],
     ["notice-modal", closeNotice],
+    ["chart-modal", closeDistributions],
   ]) {
     // The backdrop closes; the card inside it does not.
     $(id).addEventListener("click", (e) => {
@@ -336,6 +346,7 @@ function wireModals() {
     if (!$("file-modal").hidden) closeFileModal();
     if (!$("json-modal").hidden) closeJsonModal();
     if (!$("notice-modal").hidden) closeNotice();
+    if (!$("chart-modal").hidden) closeDistributions();
   });
 }
 
