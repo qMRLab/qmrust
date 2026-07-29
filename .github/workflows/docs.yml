@@ -54,6 +54,12 @@ jobs:
           ./target/release/qmrust catalog > catalog.json
           python3 scripts/gen_model_docs.py --catalog catalog.json --check
 
+      # The generator's tests reach the figure pipeline, which needs these. The
+      # figures themselves are generated locally and committed, so this job only
+      # ever checks them — nothing else here imports any of it.
+      - name: Install the figure pipeline's dependencies
+        run: python3 -m pip install --quiet numpy pyyaml matplotlib pillow
+
       - name: Generator unit tests
         run: python3 -m unittest discover -s scripts/tests -v
 
