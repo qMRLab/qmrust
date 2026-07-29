@@ -6,6 +6,7 @@
 // Every verdict in the file list arrives as data from `resolve_bids`; this only
 // chooses how to draw it, and branches on the verdict's shape alone — never on a
 // model, suffix, or parameter name.
+import { icon } from "./vendor/icons.js";
 import { $ } from "./dom.js";
 import { app, nvIn } from "./state.js";
 import { hideDownloadProgress, identityLabel } from "./dataset.js";
@@ -149,6 +150,17 @@ function buildTree(files) {
 
 const VIEWABLE = ["volume", "mask", "aux"];
 
+// An icon per file kind, chosen from the name rather than from the resolved role:
+// what a reader recognises in a listing is the extension, and an unrecognised file
+// still deserves a mark so the rows line up.
+function fileIcon(name) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".json")) return "file-braces-corner";
+  if (lower.endsWith(".tsv") || lower.endsWith(".csv")) return "file-spreadsheet";
+  if (lower.endsWith(".nii") || lower.endsWith(".nii.gz")) return "file-box";
+  return "file";
+}
+
 // One file's row. `kind` colouring distinguishes image data from its metadata,
 // the two roles the BIDS layout is built around.
 function fileRow({ path, name, role }) {
@@ -163,13 +175,16 @@ function fileRow({ path, name, role }) {
     row.classList.add("clickable");
     row.title = "Click to show this volume in the viewer";
   }
+  const glyph = document.createElement("span");
+  glyph.className = "files-icon";
+  glyph.innerHTML = icon(fileIcon(name), 13);
   const label = document.createElement("span");
   label.className = `files-name${isImage ? " is-nii" : ""}${isJson ? " is-json" : ""}`;
   label.textContent = name;
   const kind = document.createElement("span");
   kind.className = "files-role";
   kind.textContent = roleLabel(role);
-  row.append(label, kind);
+  row.append(glyph, label, kind);
 
   // The filename is the "open this file" affordance for both kinds: a sidecar
   // opens as text, an image in a viewer. One click either way — the row's own

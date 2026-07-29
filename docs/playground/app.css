@@ -149,14 +149,15 @@ code, pre, textarea, input, select, .mono { font-family: var(--font-mono); }
 /* A hoverable explanation beside a panel's heading. `title` carries the text,
    so it needs no scripting and stays available to assistive tech through
    `aria-label`. */
+/* The badge glyph carries its own outline, so the button adds none. */
 .info {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 14px; height: 14px; margin-left: 6px; padding: 0; flex: 0 0 auto;
-  border: 1px solid var(--line); border-radius: 50%; background: none;
-  color: var(--muted); font: 600 9px var(--font-ui); line-height: 1; cursor: help;
-  vertical-align: middle; text-transform: none; letter-spacing: 0;
+  width: 16px; height: 16px; margin-left: 6px; padding: 0; flex: 0 0 auto;
+  border: 0; border-radius: 50%; background: none;
+  color: var(--muted); line-height: 1; cursor: help;
+  vertical-align: middle;
 }
-.info:hover, .info:focus-visible { color: var(--ink); border-color: var(--accent); }
+.info:hover, .info:focus-visible { color: var(--accent); }
 /* Our own tooltip, so it appears immediately — a native `title` cannot be
    shown without the browser's delay. Fixed-position and appended to the body,
    so no ancestor's overflow can clip it. */
@@ -233,18 +234,33 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   to { background-position: 138% 0; }
 }
 /* Everything that is not the status line sits at the right end, reading as one
-   cluster of controls. */
+   cluster of controls: where to go (docs, source), then a rule, then how it looks. */
 .navbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.navbar-link {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 22px; border-radius: 4px;
+  color: var(--muted); text-decoration: none;
+}
+.navbar-link:hover { color: var(--ink); background: var(--field); }
+.navbar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Separates leaving the page from restyling it — two unrelated kinds of control
+   that would otherwise read as one row of six. */
+.navbar-rule {
+  width: 1px; height: 18px; margin: 0 2px;
+  background: var(--line);
+}
 /* The logo sits in the recipe panel's head, opposite its view toggle. An <img>
    rather than a background: only a real image element carries an intrinsic
    aspect ratio, which is what lets the width follow from the height. */
 .panel-logo { height: 80px; width: auto; flex: none; display: block; }
+/* Shaped like the docs and source links beside it: these are all "chrome" rather
+   than actions, and a bordered pill among borderless glyphs reads as the odd one. */
 .theme-pick {
   position: relative; display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; align-self: stretch; padding: 2px;
-  background: var(--panel-2); border: var(--border-w) solid var(--line);
-  border-radius: 999px;
+  width: 24px; height: 22px; padding: 0;
+  background: none; border: 0; border-radius: 4px;
 }
+.theme-pick:hover { background: var(--field); }
 .theme-pick select {
   position: absolute; inset: 0; width: 100%; height: 100%;
   opacity: 0; cursor: pointer; border: 0; padding: 0; margin: 0;
@@ -260,9 +276,15 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .theme-pick:hover .theme-pick-icon { color: var(--ink); }
 /* The select carries focus, so the ring has to be drawn by its wrapper. */
 .theme-pick:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* The navbar's segmented pair, at navbar scale rather than panel scale. */
-.seg-compact { padding: 2px; }
-.seg-compact button { padding: 1px 7px; font-size: 11px; line-height: 1.4; }
+/* The mode pair, borderless like its neighbours: still a pair, but drawn as two
+   glyphs rather than a segmented control. */
+.seg-compact { padding: 0; background: none; border: 0; gap: 0; }
+.seg-compact button {
+  width: 24px; height: 22px; padding: 0; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.seg-compact button:hover { background: var(--field); color: var(--ink); }
+.seg-compact button.active { background: none; color: var(--accent); box-shadow: none; }
 
 /* Fitting progress: a permanent fixture above the Fit button (idle = empty
    track), not a topbar element that appears/disappears and shifts the rest
@@ -336,7 +358,14 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .recipe-card.collapsed { flex: 0 0 auto; }
 /* Just the logo and the view toggle, so it needs less room beneath it than a
    heading row would. */
-.recipe-head { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+/* Wraps, because the logo is as wide as it is tall is large: at 80px it leaves
+   too little room for the toggle beside it in a 380px column, and a toggle that
+   overflows its card is worse than one on its own line. `min-width: 0` lets the
+   logo yield first when there *is* room. */
+.recipe-head {
+  display: flex; align-items: center; gap: 7px; margin-bottom: 6px; flex-wrap: wrap;
+}
+.recipe-head .panel-logo { min-width: 0; }
 /* `.section-h` uppercases and tracks its text, which is right for the heading
    and wrong for the toggle's labels — the pill reads as Form/YAML everywhere
    else in the app, so it must not become FORM/YAML only here. */
@@ -417,8 +446,9 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   align-self: flex-start;
 }
 .seg button {
-  border: none; background: transparent; border-radius: 999px; padding: 5px 14px;
+  border: none; background: transparent; border-radius: 999px; padding: 5px 12px;
   font: 600 12px var(--font-ui); color: var(--muted);
+  display: inline-flex; align-items: center; gap: 5px;
 }
 .seg button.active {
   background-color: var(--panel); background-image: var(--grad-soft);
@@ -578,6 +608,8 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   display: flex; gap: 8px; align-items: baseline;
   padding: 2px 4px; border-radius: 4px;
 }
+.files-icon { display: inline-flex; flex: 0 0 auto; color: var(--muted); }
+.files-row.unused .files-icon { opacity: .55; }
 .files-name { overflow-wrap: anywhere; flex: 1 1 auto; }
 /* Both kinds of file open from their name, so both get the same hint. */
 .files-row.is-openable .files-name { cursor: pointer; text-decoration: underline dotted; }

@@ -13,6 +13,11 @@
   </span>
   <span id="status" class="navbar-status busy">Starting…</span>
   <div class="navbar-right">
+    <a class="navbar-link" href="https://qmrlab.org/qmrust" target="_blank" rel="noopener"
+       title="Documentation"><span data-icon="book-text" data-icon-size="25"></span></a>
+    <a class="navbar-link" href="https://github.com/qmrlab/qmrust" target="_blank" rel="noopener"
+       title="Source on GitHub"><span data-icon="git-compare-arrows" data-icon-size="25"></span></a>
+    <span class="navbar-rule" aria-hidden="true"></span>
     <!-- The select stays a real select — native keyboard, native mobile picker —
          and only its appearance is replaced: it sits transparent over the glyph,
          which is the only way an icon-sized control can also be a <select>,
@@ -39,12 +44,12 @@
     <div class="section-h recipe-head">
       <img class="panel-logo" id="panel-logo" src="./logo_dark.png" alt="qMRust">
       <div class="seg recipe-seg" role="tablist" aria-label="Recipe editor view">
-        <button id="tab-form" class="active" role="tab" aria-selected="true">Form</button>
-        <button id="tab-yaml" role="tab" aria-selected="false">YAML</button>
+        <button id="tab-form" class="active" role="tab" aria-selected="true"><span data-icon="form" data-icon-size="13"></span>Form</button>
+        <button id="tab-yaml" role="tab" aria-selected="false"><span data-icon="code-xml" data-icon-size="13"></span>YAML</button>
       </div>
       <button id="recipe-collapse" class="collapse-btn" type="button" aria-expanded="true">Hide</button>
     </div>
-    <div class="section-h recipe-title"><span class="panel-title">Recipe</span><button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." data-tip="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit.">i</button></div>
+    <div class="section-h recipe-title"><span class="panel-title">Recipe</span><button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." data-tip="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit."><span data-icon="info" data-icon-size="14"></span></button></div>
     <div class="model-line">model: <select id="model"></select></div>
     <div class="recipe-scroll">
     <div id="form-view"><div id="form-fields" class="form-fields"></div></div>
@@ -66,7 +71,7 @@
     </div>
 
     <div class="drop-wrap card" id="drop-wrap">
-      <div class="drop-title">Fit your own data<button class="info" type="button" aria-label="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it." data-tip="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it.">i</button></div>
+      <div class="drop-title">Fit your own data<button class="info" type="button" aria-label="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it." data-tip="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it."><span data-icon="info" data-icon-size="14"></span></button></div>
       <div class="drop-sub">Drop a BIDS folder (or .zip) here.</div>
       <div class="drop-actions">
         <button id="browse-folder" class="accent-btn" type="button">Browse…</button>
@@ -78,10 +83,10 @@
 
   <div class="viewer-in-wrap card" id="viewer-in-wrap">
     <div class="viewer-head">
-      <h2 class="section-h" style="margin:0">Inputs<button class="info" type="button" aria-label="The acquired volumes this model fits, in the order it consumes them. Scroll or drag the slider to step through them. Files shows every file in the dataset and what BIDS resolution decided about each one." data-tip="The acquired volumes this model fits, in the order it consumes them. Scroll or drag the slider to step through them. Files shows every file in the dataset and what BIDS resolution decided about each one.">i</button></h2>
+      <h2 class="section-h" style="margin:0">Inputs<button class="info" type="button" aria-label="The acquired volumes this model fits, in the order it consumes them. Scroll or drag the slider to step through them. Files shows every file in the dataset and what BIDS resolution decided about each one." data-tip="The acquired volumes this model fits, in the order it consumes them. Scroll or drag the slider to step through them. Files shows every file in the dataset and what BIDS resolution decided about each one."><span data-icon="info" data-icon-size="14"></span></button></h2>
       <div class="seg" role="tablist" aria-label="Inputs view">
-        <button id="tab-viewer" class="active" role="tab" aria-selected="true">Viewer</button>
-        <button id="tab-files" role="tab" aria-selected="false">Files</button>
+        <button id="tab-viewer" class="active" role="tab" aria-selected="true"><span data-icon="square-mouse-pointer" data-icon-size="13"></span>Viewer</button>
+        <button id="tab-files" role="tab" aria-selected="false"><span data-icon="folder-tree" data-icon-size="13"></span>Files</button>
       </div>
     </div>
     <div class="viewer" id="viewer-in">
@@ -107,10 +112,10 @@
 
   <div class="viewer-out-wrap card" id="viewer-out-wrap">
     <div class="viewer-head">
-      <h2 class="section-h" style="margin:0">Fitted map<button class="info" type="button" aria-label="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region." data-tip="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region.">i</button></h2>
+      <h2 class="section-h" style="margin:0">Fitted map<button class="info" type="button" aria-label="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region." data-tip="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region."><span data-icon="info" data-icon-size="14"></span></button></h2>
       <div class="seg" role="tablist" aria-label="Fitted map view">
-        <button id="tab-slice" class="active" role="tab" aria-selected="true">Slice</button>
-        <button id="tab-planes" role="tab" aria-selected="false">Multiplanar</button>
+        <button id="tab-slice" class="active" role="tab" aria-selected="true"><span data-icon="slice" data-icon-size="13"></span>Slice</button>
+        <button id="tab-planes" role="tab" aria-selected="false"><span data-icon="rotate-3d" data-icon-size="13"></span>Multiplanar</button>
       </div>
     </div>
     <div class="viewer-row">
@@ -136,7 +141,7 @@
         <select id="output" hidden></select>
         <select id="colormap"></select>
         <button id="open-map-modal" class="ghost-btn icon-btn" type="button" disabled>
-          <span data-icon="scan-box"></span>Multiplanar
+          <span data-icon="picture-in-picture"></span>Multiplanar
         </button>
         <button id="roi-toggle" class="ghost-btn icon-btn" type="button" disabled><span data-icon="pencil"></span><span id="roi-toggle-label">Draw ROI</span></button>
         <button id="labels-toggle" class="ghost-btn icon-btn" type="button" title="Hide labels"></button>
@@ -146,7 +151,7 @@
   </div>
 
   <div class="curve-wrap card">
-    <h2 class="section-h" id="voxel-title">Single Voxel Fit<button class="info" type="button" aria-label="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume." data-tip="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume.">i</button></h2>
+    <h2 class="section-h" id="voxel-title">Single Voxel Fit<button class="info" type="button" aria-label="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume." data-tip="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume."><span data-icon="info" data-icon-size="14"></span></button></h2>
     <div id="voxel-value" class="voxel-value"></div>
     <div id="curve"></div>
     <div id="curve-note"></div>

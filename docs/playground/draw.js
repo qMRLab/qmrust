@@ -93,7 +93,7 @@ export function toggleLabels() {
 function syncLabelToggle() {
   const btn = $("labels-toggle");
   if (!btn) return;
-  btn.innerHTML = icon(labelsVisible ? "eye" : "eye-off", 16);
+  btn.innerHTML = icon(labelsVisible ? "eye" : "eye-closed", 16);
   btn.title = labelsVisible ? "Hide labels" : "Show labels";
   btn.classList.toggle("active", !labelsVisible);
 }
