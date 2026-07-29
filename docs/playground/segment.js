@@ -285,7 +285,7 @@ function buildMenu() {
     clear.innerHTML = `${icon("eraser", 15)}<span>Clear the mask</span>`;
     clear.onclick = () => {
       closeMenu();
-      clearAiMask();
+      clearComputedMask();
       status("Mask cleared — the next fit uses the recipe's own", "ok");
     };
     box.append(clear);
