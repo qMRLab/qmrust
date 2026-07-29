@@ -278,6 +278,26 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* The select carries focus, so the ring has to be drawn by its wrapper. */
 .theme-pick:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* A menu anchored to the control that opens it. Fixed rather than absolute, so it
+   escapes the card's `overflow: hidden` the way the drawing palette does — its
+   position is computed from the button's own rect. */
+.menu {
+  position: fixed; z-index: 60;
+  display: flex; flex-direction: column; gap: 2px; padding: 4px;
+  background-color: var(--panel); background-image: var(--grad-soft);
+  border: var(--border-w) solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+}
+.menu[hidden] { display: none; }
+.menu-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border: 0; border-radius: 6px;
+  background: none; color: var(--ink-2); cursor: pointer;
+  font: 500 12px var(--font-ui); text-align: left; white-space: nowrap;
+}
+.menu-item:hover { background: var(--field); color: var(--ink); }
+.menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.menu-item .icon { color: var(--accent); flex: none; }
+
 /* Fitting progress: a permanent fixture above the Fit button (idle = empty
    track), not a topbar element that appears/disappears and shifts the rest
    of the page. The stripe is a white sheen rather than a token: it reads as a

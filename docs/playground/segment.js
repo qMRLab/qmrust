@@ -31,6 +31,11 @@ const NETWORKS = [
   {
     id: "brain-extract-light",
     label: "brain-extraction",
+    // What the menu says. The expected contrast is part of the name because it is
+    // part of the contract: these weights were trained on T1-weighted anatomy, and
+    // a network handed something else does not fail, it quietly finds less.
+    menu: "Brain Segment T1w (brainchop)",
+    icon: "brain",
     // Everything above 2% of the volume's peak is inside the box handed to the
     // network — background, not anatomy, is what this excludes.
     threshold: 0.02,
@@ -208,33 +213,78 @@ export function clearAiMask() {
 }
 
 function syncButton() {
-  const btn = $("ai-mask");
+  const btn = $("segment");
   if (!btn) return;
-  const have = Boolean(app.aiMask);
-  btn.innerHTML = icon("sparkles", 13) + (have ? "<span>Clear mask</span>" : "<span>AI mask</span>");
-  btn.classList.toggle("active", have);
+  btn.innerHTML = `${icon("sparkles", 13)}<span>Segment</span>`;
+  btn.classList.toggle("active", Boolean(app.aiMask));
   btn.disabled = !app.current;
-  btn.title = have
-    ? "Discard the computed brain mask and go back to the recipe's own"
-    : "Find the brain in the volume on screen, and fit only inside it";
+  btn.title = app.aiMask
+    ? "A computed mask is in use — choose another network, or clear it"
+    : "Find a structure in the volume on screen with a segmentation network";
+}
+
+// The menu is built from the registry rather than written out, so adding a network
+// is one entry in `NETWORKS` and nothing here.
+function buildMenu() {
+  const box = $("segment-menu");
+  box.replaceChildren();
+  for (const network of NETWORKS) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "menu-item";
+    item.setAttribute("role", "menuitem");
+    item.innerHTML = `${icon(network.icon, 15)}<span>${network.menu}</span>`;
+    item.onclick = () => {
+      closeMenu();
+      runNetwork(network);
+    };
+    box.append(item);
+  }
+  if (app.aiMask) {
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "menu-item";
+    clear.setAttribute("role", "menuitem");
+    clear.innerHTML = `${icon("eraser", 15)}<span>Clear the mask</span>`;
+    clear.onclick = () => {
+      closeMenu();
+      clearAiMask();
+      status("Mask cleared — the next fit uses the recipe's own", "ok");
+    };
+    box.append(clear);
+  }
+}
+
+// Anchored above the button, not below it: the button sits at the bottom of its
+// card, and a menu opening downwards would hang off the page.
+function openMenu() {
+  const btn = $("segment");
+  const box = $("segment-menu");
+  buildMenu();
+  box.hidden = false;
+  const anchor = btn.getBoundingClientRect();
+  const width = box.offsetWidth;
+  box.style.left = `${Math.max(6, Math.min(anchor.right - width, window.innerWidth - width - 6))}px`;
+  box.style.top = `${anchor.top - box.offsetHeight - 6}px`;
+  btn.setAttribute("aria-expanded", "true");
+}
+
+function closeMenu() {
+  $("segment-menu").hidden = true;
+  $("segment").setAttribute("aria-expanded", "false");
+}
+
+function toggleMenu() {
+  if ($("segment-menu").hidden) openMenu();
+  else closeMenu();
 }
 
 let running = false;
 
-export async function segmentBrain() {
-  if (running) return;
-  if (!app.current) {
-    status("Load a model first", "info");
-    return;
-  }
-  if (app.aiMask) {
-    clearAiMask();
-    status("Brain mask cleared — the next fit uses the recipe's own mask", "ok");
-    return;
-  }
-  const network = NETWORKS[0];
+async function runNetwork(network) {
+  if (running || !app.current) return;
   running = true;
-  $("ai-mask").disabled = true;
+  $("segment").disabled = true;
   showProgress();
   const started = performance.now();
   try {
@@ -316,10 +366,20 @@ export async function segmentBrain() {
 }
 
 export function wireSegment() {
-  $("ai-mask").onclick = segmentBrain;
+  $("segment").onclick = toggleMenu;
+  // A menu that cannot be dismissed is a trap, and both of these are what a reader
+  // reaches for first.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeMenu();
+  });
+  document.addEventListener("pointerdown", (e) => {
+    if ($("segment-menu").hidden) return;
+    if (e.target.closest("#segment-menu, #segment")) return;
+    closeMenu();
+  });
   syncButton();
 }
 
-// Called whenever a model finishes loading, so the button reflects the new
-// volume: enabled, and with no mask of its own yet.
-export { syncButton as syncAiMaskButton };
+// Called whenever a model finishes loading, so the button reflects the new volume:
+// enabled, and with no mask of its own yet.
+export { syncButton as syncSegmentButton };

@@ -24,7 +24,7 @@ import {
 } from "./inputs.js";
 import { clearVolumes, sizeViewers, syncMapViewControls } from "./viewers.js";
 import { resetDrawing } from "./draw.js";
-import { clearAiMask, syncAiMaskButton } from "./segment.js";
+import { clearAiMask, syncSegmentButton } from "./segment.js";
 import { clearLabelNames } from "./measure.js";
 import { repaintLevels } from "./level.js";
 import { clearCurve } from "./curve.js";
@@ -121,7 +121,7 @@ async function loadModelFromBids(name, meta) {
   };
   renderFiles();
   syncMapViewControls();
-  syncAiMaskButton();
+  syncSegmentButton();
   $("fit").disabled = false;
   for (const w of resolved.warnings) status(w, "error");
   status("Ready", "ok");
@@ -304,7 +304,7 @@ export async function loadModel(name) {
   app.current = { meta, volume, maskU8, auxFlat, auxVolumes, frame: 0 };
   $("fit").disabled = !app.wasm;
   syncMapViewControls();
-  syncAiMaskButton();
+  syncSegmentButton();
   status(
     app.wasm ? "Ready" : "Fitting unavailable — wasm failed to load; viewers still work",
     app.wasm ? "ok" : "error",

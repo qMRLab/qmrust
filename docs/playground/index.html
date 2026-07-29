@@ -38,6 +38,7 @@
   <pre><code>cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg</code></pre>
 </div>
 <div class="draw-palette" id="draw-palette" hidden></div>
+<div class="menu" id="segment-menu" role="menu" hidden></div>
 <div class="layout">
   <div class="left-col">
   <div class="recipe-card card">
@@ -101,7 +102,8 @@
       <div class="frame-row">
         <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
         <span class="frame-label" id="frame-label">—</span>
-        <button id="ai-mask" class="ghost-btn icon-btn" type="button" disabled></button>
+        <button id="segment" class="ghost-btn icon-btn" type="button" disabled
+                aria-haspopup="menu" aria-expanded="false"></button>
       </div>
     </div>
   </div>
