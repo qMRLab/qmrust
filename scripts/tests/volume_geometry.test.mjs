@@ -50,18 +50,43 @@ test("an empty volume yields the whole grid, not a zero-sized box", () => {
   assert.deepEqual(boundingBox(values, dims, 0.5, 3), { lo: [0, 0, 0], size: [7, 5, 4] });
 });
 
-test("cropReversed reverses the axes: element (i,j,k) is the box's (k,j,i)", () => {
+// The load-bearing test. A round-trip through crop and place-back is symmetric
+// under *any* consistent index convention, including a wrong one — so what has to
+// be asserted is the layout itself: the buffer is read by a tensor library as
+// row-major of shape [sz, sy, sx], and its (i, j, k) must be the box's (k, j, i).
+// Deliberately non-cubic extents, since every convention agrees when they match.
+test("cropReversed is a row-major [sz,sy,sx] tensor of the box transposed", () => {
   const values = ramp(dims);
   const lo = [1, 1, 1];
-  const size = [3, 2, 2];
-  const out = cropReversed(values, dims, lo, size);
+  const size = [4, 3, 2]; // sx, sy, sz — all different
   const [sx, sy, sz] = size;
+  const out = cropReversed(values, dims, lo, size);
   assert.equal(out.length, sx * sy * sz);
-  for (let k = 0; k < sx; k++) {
+  for (let i = 0; i < sz; i++) {
     for (let j = 0; j < sy; j++) {
-      for (let i = 0; i < sz; i++) {
+      for (let k = 0; k < sx; k++) {
+        // Row-major flat index for shape [sz, sy, sx]: last axis varies fastest.
+        const flat = (i * sy + j) * sx + k;
         const source = lo[0] + k + (lo[1] + j) * dims[0] + (lo[2] + i) * dims[0] * dims[1];
-        assert.equal(out[i + j * sz + k * sz * sy], values[source]);
+        assert.equal(out[flat], values[source], `at (${i},${j},${k})`);
+      }
+    }
+  }
+});
+
+// The same statement from the other side: whatever the network returns is read
+// back under the same strides it was fed under.
+test("placeReversed reads labels as row-major [sz,sy,sx]", () => {
+  const size = [4, 3, 2];
+  const [sx, sy, sz] = size;
+  const lo = [2, 1, 1];
+  const labels = Uint8Array.from({ length: sx * sy * sz }, (_, i) => i + 1);
+  const placed = placeReversed(labels, dims, lo, size);
+  for (let i = 0; i < sz; i++) {
+    for (let j = 0; j < sy; j++) {
+      for (let k = 0; k < sx; k++) {
+        const at = lo[0] + k + (lo[1] + j) * dims[0] + (lo[2] + i) * dims[0] * dims[1];
+        assert.equal(placed[at], labels[(i * sy + j) * sx + k], `at (${i},${j},${k})`);
       }
     }
   }

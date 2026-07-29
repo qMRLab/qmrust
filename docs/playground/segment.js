@@ -42,8 +42,11 @@ const NETWORKS = [
   },
 ];
 
-// The grid brainchop's weights were trained on.
+// The grid brainchop's weights were trained on, and the axis order `conform` must
+// put a volume into for them to mean anything (NiiVue's `permRAS`: which signed
+// input axis each output axis came from).
 const CONFORMED = [256, 256, 256];
+const ORIENTATION = [-1, 3, -2];
 
 // The runtime is 1.4 MB and most readers never press this button, so it is
 // fetched on first use rather than at load. It is the published UMD bundle,
@@ -243,6 +246,17 @@ export async function segmentBrain() {
     const conformed = await nvIn.conform(
       frameVolume(), false, true, false, false, CONFORMED, 1, true,
     );
+    // The network was trained on volumes in the orientation `conform` produces,
+    // and nothing downstream can tell a wrongly-oriented volume from a correctly
+    // oriented one — it just returns a worse mask. So the orientation is checked
+    // rather than assumed: upstream asserts this exact axis order before feeding
+    // its own network (brainchop's `ensureConformed`).
+    if (String(conformed.permRAS) !== String(ORIENTATION)) {
+      throw new Error(
+        `conforming gave axes [${conformed.permRAS}] where the network expects ` +
+          `[${ORIENTATION}] — the mask would not mean anything`,
+      );
+    }
 
     const values = minMaxNormalize(conformed.img);
     const { lo, size } = boundingBox(values, CONFORMED, network.threshold, network.padding);

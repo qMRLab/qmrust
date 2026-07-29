@@ -57,42 +57,48 @@ export function boundingBox(values, dims, threshold, pad = 0) {
   return { lo: near, size: near.map((v, d) => far[d] - v + 1) };
 }
 
-// The box `lo`/`size` lifted out of `values`, with its axes reversed: element
-// `(i, j, k)` of the result is `(k, j, i)` of the box.
+// The box `lo`/`size` lifted out of `values`, with its axes reversed: a tensor of
+// shape `[sz, sy, sx]` whose element `(i, j, k)` is the box's `(k, j, i)`.
 //
 // The reversal is not cosmetic. A network of dilated convolutions is not
 // symmetric under an axis swap — its weights are not — so a volume has to reach
 // it in the axis order it was trained on, and reversing while cropping avoids
 // materialising the volume twice to do it.
+//
+// The result is laid out **row-major for that shape** — `i` slowest, `k` fastest —
+// because that is the only layout a tensor library will read it as. Writing the
+// box's own storage order (`x` fastest) into a buffer and then declaring the
+// reversed shape over it does not transpose anything: it reinterprets the same
+// bytes under mismatched strides, which shears the volume.
 export function cropReversed(values, dims, lo, size) {
   const [nx, ny] = dims;
   const [sx, sy, sz] = size;
   const out = new Float32Array(sx * sy * sz);
-  for (let k = 0; k < sx; k++) {
+  for (let i = 0; i < sz; i++) {
     for (let j = 0; j < sy; j++) {
-      const src = lo[0] + k + (lo[1] + j) * nx;
-      const dst = j * sz + k * sz * sy;
-      for (let i = 0; i < sz; i++) {
-        out[dst + i] = values[src + (lo[2] + i) * nx * ny];
+      const src = lo[0] + (lo[1] + j) * nx + (lo[2] + i) * nx * ny;
+      const dst = (i * sy + j) * sx;
+      for (let k = 0; k < sx; k++) {
+        out[dst + k] = values[src + k];
       }
     }
   }
   return out;
 }
 
-// The inverse of `cropReversed` for a label volume: axis-reversed labels of shape
+// The inverse of `cropReversed` for a label volume: labels of row-major shape
 // `[sz, sy, sx]` written back into a full-size grid at `lo`, everything outside
 // the box left at zero.
 export function placeReversed(labels, dims, lo, size) {
   const [nx, ny, nz] = dims;
   const [sx, sy, sz] = size;
   const out = new Uint8Array(nx * ny * nz);
-  for (let k = 0; k < sx; k++) {
+  for (let i = 0; i < sz; i++) {
     for (let j = 0; j < sy; j++) {
-      const dst = lo[0] + k + (lo[1] + j) * nx;
-      const src = j * sz + k * sz * sy;
-      for (let i = 0; i < sz; i++) {
-        out[dst + (lo[2] + i) * nx * ny] = labels[src + i];
+      const dst = lo[0] + (lo[1] + j) * nx + (lo[2] + i) * nx * ny;
+      const src = (i * sy + j) * sx;
+      for (let k = 0; k < sx; k++) {
+        out[dst + k] = labels[src + k];
       }
     }
   }
