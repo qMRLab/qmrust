@@ -24,7 +24,7 @@ import {
 } from "./inputs.js";
 import { clearVolumes, sizeViewers, syncMapViewControls } from "./viewers.js";
 import { resetDrawing } from "./draw.js";
-import { clearAiMask, syncSegmentButton } from "./segment.js";
+import { clearComputedMask, syncSegmentButton } from "./segment.js";
 import { clearLabelNames } from "./measure.js";
 import { repaintLevels } from "./level.js";
 import { clearCurve } from "./curve.js";
@@ -177,7 +177,7 @@ export async function reresolveInputs() {
   // they pressed a button for it, and it is kept so clearing it can restore this.
   app.current = {
     ...app.current,
-    maskU8: app.aiMask ?? maskU8,
+    maskU8: app.computedMask ?? maskU8,
     resolvedMask: maskU8,
     auxFlat,
     auxVolumes,
@@ -204,7 +204,7 @@ export async function loadModel(name) {
   // Before the volumes go: both the drawing and any computed mask are indexed
   // into the grid they define.
   resetDrawing();
-  clearAiMask();
+  clearComputedMask();
   clearLabelNames();
   clearVolumes(nvIn);
   clearVolumes(nvOut);

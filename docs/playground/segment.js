@@ -20,28 +20,37 @@ import {
   argmaxChannels,
   boundingBox,
   cropReversed,
+  foregroundMask,
   normalizeToWhiteMatter,
   placeReversed,
 } from "./volume.js";
 
-// One entry per network, in the order the menu offers them. The numbers are
-// upstream's own inference settings for each (`niivue/brainchop-models`,
-// `<model>/settings.json`) — they describe how those weights were trained to be
-// fed, so they belong to the model rather than being ours to tune.
+// One entry per method, in the order the menu offers them. Each carries how it is
+// run, so adding one is an entry here and nothing else — nothing downstream asks
+// what kind of method it is.
 //
-// `threshold`/`padding` size the box handed to the network: everything above that
-// fraction of the volume's peak, grown by that many voxels. `classes` is the final
-// layer's channel count; the label sets name two, background and brain, so any
+// A method's `run` returns `{ mask, overlay }`: the mask on the acquisition's own
+// grid in `fit_volume`'s layout — `(x*ny + y)*nz + z`, the same one `readMask`
+// produces for a mask that came from the dataset — and an NVImage to draw over the
+// image. It throws, with a sentence a reader can act on, when it finds nothing. The
+// shared half owns the provenance, the overlay and the reporting.
+//
+// For the networks, `threshold`/`padding`/`classes` are upstream's own inference
+// settings (`niivue/brainchop-models`, `<model>/settings.json`): they describe how
+// those weights were trained to be fed, not something for us to tune. `threshold`
+// and `padding` size the box handed to the network; `classes` is the final layer's
+// channel count, and since the label sets name only background and brain, any
 // non-zero class is brain.
-const NETWORKS = [
+const METHODS = [
   {
     id: "brain-extract-full",
-    label: "brain-extraction",
     // What the menu says. The expected contrast is part of the name because it is
     // part of the contract: these weights were trained on T1-weighted anatomy, and
     // a network handed something else does not fail, it quietly finds less.
     menu: "Brain Segment T1w (brainchop)",
     icon: "brain",
+    label: "brain",
+    run: runNetwork,
     // 11 channels over the whole resampled field of view, which is the accuracy
     // and the memory both: ~800 MB of GPU, against the light model's ~400.
     threshold: 0,
@@ -50,15 +59,26 @@ const NETWORKS = [
   },
   {
     id: "brain-extract-light",
-    label: "brain-extraction",
     // Kept as the one to fall back to. Nothing here can know how much memory a
     // reader's GPU has, and 5 channels over a tightly cropped box is the version
     // that still runs when the full one cannot.
     menu: "Brain Segment T1w, light (brainchop)",
     icon: "brain",
+    label: "brain",
+    run: runNetwork,
     threshold: 0.02,
     padding: 18,
     classes: 3,
+  },
+  {
+    id: "otsu-largest",
+    // No weights, no runtime, no GPU and no opinion about the contrast — so it is
+    // the only entry that works on a single slice, which is what four of the five
+    // example datasets are.
+    menu: "Head Segment any contrast (Otsu)",
+    icon: "fold-vertical",
+    label: "head",
+    run: runThreshold,
   },
 ];
 
@@ -188,20 +208,31 @@ function maskOnNativeGrid(labels, conformed, native, dims) {
 
 // The mask over the image it was derived from, as a second volume rather than as
 // a drawing: a drawing is the reader's, and this is the machine's.
-const OVERLAY_NAME = "brain mask";
+const OVERLAY_NAME = "computed mask";
 
-function showOverlay(conformed, labels) {
-  hideOverlay();
-  const vol = NVImage.zerosLike(conformed, "uint8");
-  vol.img = labels.slice();
+// `labels` in `template`'s own storage order, as a displayable volume on
+// `template`'s grid — which may be the conformed one or the acquisition's.
+function labelVolume(template, labels) {
+  const vol = NVImage.zerosLike(template, "uint8");
+  vol.hdr.dims = template.hdr.dims.slice();
+  vol.hdr.dims[0] = 3;
+  vol.hdr.dims[4] = 1;
+  vol.nFrame4D = 1;
+  vol.img = Uint8Array.from(labels);
   vol.name = OVERLAY_NAME;
   vol.colorbarVisible = false;
   vol.calculateRAS();
+  // A binary mask, so the window is 0..1 whatever class numbers it holds.
   vol.cal_min = 0;
   vol.cal_max = 1;
   vol.hdr.cal_min = 0;
   vol.hdr.cal_max = 1;
   vol.trustCalMinMax = true;
+  return vol;
+}
+
+function showOverlay(vol) {
+  hideOverlay();
   nvIn.addVolume(vol);
   nvIn.setColormap(vol.id, "red");
   // NiiVue's `red` already carries alpha — 0 at the bottom of the window, 0.5 at
@@ -218,10 +249,10 @@ function hideOverlay() {
 }
 
 // The mask belongs to the grid it was computed on, so a model switch drops it the
-// same way a drawing is dropped. `reresolveInputs` reads `app.aiMask` on every
+// same way a drawing is dropped. `reresolveInputs` reads `app.computedMask` on every
 // fit, so clearing it here is what hands the recipe's own mask back.
-export function clearAiMask() {
-  app.aiMask = null;
+export function clearComputedMask() {
+  app.computedMask = null;
   hideOverlay();
   if (app.current) app.current.maskU8 = app.current.resolvedMask ?? null;
   syncButton();
@@ -231,9 +262,9 @@ function syncButton() {
   const btn = $("segment");
   if (!btn) return;
   btn.innerHTML = `${icon("sparkles", 13)}<span>Segment</span>`;
-  btn.classList.toggle("active", Boolean(app.aiMask));
+  btn.classList.toggle("active", Boolean(app.computedMask));
   btn.disabled = !app.current;
-  btn.title = app.aiMask
+  btn.title = app.computedMask
     ? "A computed mask is in use — choose another network, or clear it"
     : "Find a structure in the volume on screen with a segmentation network";
 }
@@ -243,19 +274,19 @@ function syncButton() {
 function buildMenu() {
   const box = $("segment-menu");
   box.replaceChildren();
-  for (const network of NETWORKS) {
+  for (const method of METHODS) {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "menu-item";
     item.setAttribute("role", "menuitem");
-    item.innerHTML = `${icon(network.icon, 15)}<span>${network.menu}</span>`;
+    item.innerHTML = `${icon(method.icon, 15)}<span>${method.menu}</span>`;
     item.onclick = () => {
       closeMenu();
-      runNetwork(network);
+      choose(method);
     };
     box.append(item);
   }
-  if (app.aiMask) {
+  if (app.computedMask) {
     const clear = document.createElement("button");
     clear.type = "button";
     clear.className = "menu-item";
@@ -297,78 +328,129 @@ function toggleMenu() {
 let running = false;
 
 async function runNetwork(network) {
+  status(`Loading the ${network.label} network…`, "busy");
+  const tf = await loadRuntime();
+
+  status(`Conforming the volume to ${CONFORMED.join("×")} at 1 mm…`, "busy");
+  // `rawFloat32` (the last argument): resampled values are kept as they are rather
+  // than mapped through this volume's display window into 8 bits.
+  // `normalizeToWhiteMatter` sets the intensity scale the network needs, and it
+  // needs real values to find the tissue mode in.
+  const conformed = await nvIn.conform(
+    frameVolume(), false, true, false, false, CONFORMED, 1, true,
+  );
+  // The network was trained on volumes in the orientation `conform` produces, and
+  // nothing downstream can tell a wrongly-oriented volume from a correctly oriented
+  // one — it just returns a worse mask. So the orientation is checked rather than
+  // assumed: upstream asserts this exact axis order before feeding its own network
+  // (brainchop's `ensureConformed`).
+  if (String(conformed.permRAS) !== String(ORIENTATION)) {
+    throw new Error(
+      `conforming gave axes [${conformed.permRAS}] where the network expects ` +
+        `[${ORIENTATION}] — the mask would not mean anything`,
+    );
+  }
+
+  const values = normalizeToWhiteMatter(conformed.img);
+  const { lo, size } = boundingBox(values, CONFORMED, network.threshold, network.padding);
+  const cropped = cropReversed(values, CONFORMED, lo, size);
+
+  status(`Finding the brain (${size.join("×")})…`, "busy");
+  const net = await tf.loadLayersModel(`./models/${network.id}/model.json`);
+  const scores = await inferLabels(tf, net, cropped, size);
+  net.dispose();
+  tf.engine().disposeVariables();
+
+  const labels = placeReversed(argmaxChannels(scores, network.classes), CONFORMED, lo, size);
+  const found = labels.reduce((n, v) => n + (v > 0 ? 1 : 0), 0);
+  const { mask, inside } = maskOnNativeGrid(
+    labels, conformed, app.current.volume, app.current.meta.dims,
+  );
+  // These two failures look identical from the outside and have nothing to do with
+  // each other: one is the network declining, the other is our own coordinate round
+  // trip missing. Reporting them apart is what makes the next one diagnosable.
+  if (found === 0) {
+    const frame = app.current.meta.labels[app.current.frame] ?? "this volume";
+    throw new Error(`the network found no brain in ${frame} — try a frame with more `
+      + "anatomical contrast");
+  }
+  if (inside === 0) {
+    throw new Error(`the network found ${found.toLocaleString()} brain voxels, but none `
+      + "of them landed on this volume's grid — the coordinate mapping is wrong");
+  }
+  return { mask, overlay: labelVolume(conformed, labels) };
+}
+
+// The classical route. It needs no resampling — the mask it finds is already on the
+// grid the fit runs on — and no runtime, no weights and no GPU.
+//
+// It averages *every* acquired volume rather than reading the one on screen. That is
+// not a shortcut: a single frame can be a poor place to look for the subject (an
+// inversion-recovery frame near its null has almost no signal anywhere), while the
+// subject is present in all of them, so the mean has the best contrast available and
+// the answer does not depend on where the reader left the slider.
+async function runThreshold(method) {
+  const [nx, ny, nz, nt] = app.current.meta.dims;
+  const { volume } = app.current;
+  status(`Thresholding ${nx}×${ny}${nz > 1 ? `×${nz}` : ""} over ${nt} volumes…`, "busy");
+  // `volume.js` indexes storage-style throughout, so the read is built that way and
+  // re-indexed into the fit's layout once, at the end.
+  const values = new Float32Array(nx * ny * nz);
+  for (let x = 0; x < nx; x++) {
+    for (let y = 0; y < ny; y++) {
+      for (let z = 0; z < nz; z++) {
+        let sum = 0;
+        for (let t = 0; t < nt; t++) sum += volume.getValue(x, y, z, t);
+        values[x + y * nx + z * nx * ny] = sum / nt;
+      }
+    }
+  }
+  // A frame's worth of work, so let the progress bar and the status line paint.
+  setProgress(50);
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+
+  const found = foregroundMask(values, [nx, ny, nz]);
+  const mask = new Uint8Array(nx * ny * nz);
+  const overlay = new Uint8Array(nx * ny * nz);
+  const at = rasToStorage(volume, nx, ny);
+  let inside = 0;
+  for (let x = 0; x < nx; x++) {
+    for (let y = 0; y < ny; y++) {
+      for (let z = 0; z < nz; z++) {
+        if (!found[x + y * nx + z * nx * ny]) continue;
+        mask[(x * ny + y) * nz + z] = 1;
+        overlay[at(x, y, z)] = 1;
+        inside++;
+      }
+    }
+  }
+  if (inside === 0) {
+    throw new Error("thresholding found nothing above background in this dataset");
+  }
+  return { mask, overlay: labelVolume(volume, overlay) };
+}
+
+// The shared half: the flags, the progress bar, the provenance and the reporting.
+// A method only has to produce a mask and something to show for it.
+async function choose(method) {
   if (running || !app.current) return;
   running = true;
   $("segment").disabled = true;
   showProgress();
   const started = performance.now();
   try {
-    status(`Loading the ${network.label} network…`, "busy");
-    const tf = await loadRuntime();
-
-    status(`Conforming the volume to ${CONFORMED.join("×")} at 1 mm…`, "busy");
-    // `rawFloat32` (the last argument): resampled values are kept as they are
-    // rather than mapped through this volume's display window into 8 bits.
-    // `normalizeToWhiteMatter` sets the intensity scale the network needs, and it
-    // needs real values to find the tissue mode in.
-    const conformed = await nvIn.conform(
-      frameVolume(), false, true, false, false, CONFORMED, 1, true,
-    );
-    // The network was trained on volumes in the orientation `conform` produces,
-    // and nothing downstream can tell a wrongly-oriented volume from a correctly
-    // oriented one — it just returns a worse mask. So the orientation is checked
-    // rather than assumed: upstream asserts this exact axis order before feeding
-    // its own network (brainchop's `ensureConformed`).
-    if (String(conformed.permRAS) !== String(ORIENTATION)) {
-      throw new Error(
-        `conforming gave axes [${conformed.permRAS}] where the network expects ` +
-          `[${ORIENTATION}] — the mask would not mean anything`,
-      );
-    }
-
-    const values = normalizeToWhiteMatter(conformed.img);
-    const { lo, size } = boundingBox(values, CONFORMED, network.threshold, network.padding);
-    const cropped = cropReversed(values, CONFORMED, lo, size);
-
-    status(`Finding the brain (${size.join("×")})…`, "busy");
-    const net = await tf.loadLayersModel(`./models/${network.id}/model.json`);
-    const scores = await inferLabels(tf, net, cropped, size);
-    net.dispose();
-    tf.engine().disposeVariables();
-
-    const labels = placeReversed(
-      argmaxChannels(scores, network.classes), CONFORMED, lo, size,
-    );
-    const found = labels.reduce((n, v) => n + (v > 0 ? 1 : 0), 0);
-    const { mask, inside } = maskOnNativeGrid(
-      labels, conformed, app.current.volume, app.current.meta.dims,
-    );
-    // These two failures look identical from the outside and have nothing to do
-    // with each other: one is the network declining, the other is our own
-    // coordinate round trip missing. Reporting them apart is what makes the next
-    // one diagnosable.
-    if (found === 0) {
-      const frame = app.current.meta.labels[app.current.frame] ?? "this volume";
-      status(`The network found no brain in ${frame} — try a frame with more ` +
-        "anatomical contrast", "error");
-      return;
-    }
-    if (inside === 0) {
-      status(`The network found ${found.toLocaleString()} brain voxels, but none of them ` +
-        "landed on this volume's grid — the coordinate mapping is wrong", "error");
-      return;
-    }
-
+    const { mask, overlay } = await method.run(method);
     // The recipe's own mask is kept, so clearing this one restores it without
     // having to resolve the dataset again.
     app.current.resolvedMask ??= app.current.maskU8;
-    app.aiMask = mask;
+    app.computedMask = mask;
     app.current.maskU8 = mask;
-    showOverlay(conformed, labels);
+    showOverlay(overlay);
+    const inside = mask.reduce((n, v) => n + v, 0);
     const share = ((inside / mask.length) * 100).toFixed(1);
     status(
-      `Brain mask: ${inside.toLocaleString()} voxels (${share}% of the volume) in ` +
-        `${((performance.now() - started) / 1000).toFixed(1)} s — fit to use it`,
+      `${method.label} mask: ${inside.toLocaleString()} voxels (${share}% of the volume) ` +
+        `in ${((performance.now() - started) / 1000).toFixed(1)} s — fit to use it`,
       "ok",
     );
   } catch (e) {
