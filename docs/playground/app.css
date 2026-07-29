@@ -242,6 +242,8 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   color: var(--muted); text-decoration: none;
 }
 .navbar-link:hover { color: var(--ink); background: var(--field); }
+/* At 25px the pack's default 2px stroke reads as heavy beside 14px chrome. */
+.navbar-link .icon { stroke-width: 1; }
 .navbar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Separates leaving the page from restyling it — two unrelated kinds of control
    that would otherwise read as one row of six. */
@@ -252,7 +254,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* The logo sits in the recipe panel's head, opposite its view toggle. An <img>
    rather than a background: only a real image element carries an intrinsic
    aspect ratio, which is what lets the width follow from the height. */
-.panel-logo { height: 80px; width: auto; flex: none; display: block; }
+.panel-logo { height: 56px; width: auto; flex: none; display: block; }
 /* Shaped like the docs and source links beside it: these are all "chrome" rather
    than actions, and a bordered pill among borderless glyphs reads as the odd one. */
 .theme-pick {
@@ -278,13 +280,16 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .theme-pick:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The mode pair, borderless like its neighbours: still a pair, but drawn as two
    glyphs rather than a segmented control. */
-.seg-compact { padding: 0; background: none; border: 0; gap: 0; }
-.seg-compact button {
+/* `.seg.seg-compact` rather than `.seg-compact`: the generic `.seg button` rules
+   are declared later at equal specificity, so a single class here would lose its
+   padding to them and squeeze the icon out of a 24px button. */
+.seg.seg-compact { padding: 0; background: none; border: 0; gap: 0; }
+.seg.seg-compact button {
   width: 24px; height: 22px; padding: 0; border-radius: 4px;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.seg-compact button:hover { background: var(--field); color: var(--ink); }
-.seg-compact button.active { background: none; color: var(--accent); box-shadow: none; }
+.seg.seg-compact button:hover { background: var(--field); color: var(--ink); }
+.seg.seg-compact button.active { background: none; color: var(--accent); box-shadow: none; }
 
 /* Fitting progress: a permanent fixture above the Fit button (idle = empty
    track), not a topbar element that appears/disappears and shifts the rest
@@ -358,14 +363,12 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .recipe-card.collapsed { flex: 0 0 auto; }
 /* Just the logo and the view toggle, so it needs less room beneath it than a
    heading row would. */
-/* Wraps, because the logo is as wide as it is tall is large: at 80px it leaves
-   too little room for the toggle beside it in a 380px column, and a toggle that
-   overflows its card is worse than one on its own line. `min-width: 0` lets the
-   logo yield first when there *is* room. */
+/* One line: logo left, view toggle right. The logo's width follows its height, so
+   it is sized to leave room for the toggle in this column rather than pushing it
+   onto a second line or over the card's edge. */
 .recipe-head {
-  display: flex; align-items: center; gap: 7px; margin-bottom: 6px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 7px; margin-bottom: 6px;
 }
-.recipe-head .panel-logo { min-width: 0; }
 /* `.section-h` uppercases and tracks its text, which is right for the heading
    and wrong for the toggle's labels — the pill reads as Form/YAML everywhere
    else in the app, so it must not become FORM/YAML only here. */
@@ -1022,8 +1025,13 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .measure-name { font: 11px var(--font-ui); color: var(--ink-2); outline: none; }
 .measure-name:focus { color: var(--ink); border-bottom: 1px solid var(--accent); }
-#measure-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-#curve-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+#measure-view, #curve-view {
+  display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+}
+/* `[hidden]` is a UA rule at specificity 0,1,0 and loses to the ID selectors
+   above, which is why both views rendered at once — the curve squeezed into half
+   a card with the table's controls under it. Restated here so hiding wins. */
+#measure-view[hidden], #curve-view[hidden] { display: none; }
 
 /* The chart fills the modal it was given room in. */
 .chart-body { flex: 1 1 auto; min-height: 0; width: 100%; }
