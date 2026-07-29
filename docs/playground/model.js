@@ -68,7 +68,7 @@ async function loadModelFromBids(name, meta) {
     if (!bytes) throw new Error(`resolution named "${path}", which the archive does not hold`);
     return bytes;
   });
-  const { bytes, nx, ny, nz, nt } = buildSeriesNifti(parts);
+  const { bytes, nt } = buildSeriesNifti(parts);
   const volume = await NVImage.loadFromFile({
     file: new File([bytes], `${meta.model}.nii`),
     name: meta.model,
@@ -76,6 +76,11 @@ async function loadModelFromBids(name, meta) {
     colorbarVisible: false,
   });
   nvIn.addVolume(volume);
+  // The grid every voxel index in this app refers to is the RAS one, not the
+  // file's own dim order: reads go through `getValue`, which takes RAS indices,
+  // and NiiVue's crosshair and drawing bitmap speak the same space. The two
+  // differ whenever the affine stores the axes in another order.
+  const [nx, ny, nz] = volume.dimsRAS.slice(1, 4);
 
   let maskU8 = null;
   if (resolved.mask_file) {

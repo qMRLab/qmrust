@@ -41,6 +41,27 @@ export function readMask(volume, nx, ny, nz) {
   return Uint8Array.from(raw, (v) => (v > 0 ? 1 : 0));
 }
 
+// Where RAS voxel `(x, y, z)` lands in `vol`'s own storage buffer.
+//
+// Every coordinate this app handles is a RAS voxel index: `NVImage.getValue`
+// takes RAS and converts, NiiVue's crosshair reports RAS, and its drawing bitmap
+// is RAS (`back.dims` is `dimsRAS`). A volume's *buffer*, though, is in the order
+// the file stored it, which for any dataset whose affine is not already
+// RAS-aligned is a flipped and/or axis-permuted view of that — NiiVue reorders it
+// with `img2RAS` when it uploads the texture.
+//
+// `img2RASstep`/`img2RASstart` are the mapping NiiVue derives from the affine
+// itself, so this reuses its arithmetic rather than forming a second opinion on
+// the header. For an already-RAS volume they are `[1, nx, nx*ny]` and `[0, 0, 0]`,
+// making this the plain `x + y*nx + z*nx*ny`.
+function rasToStorage(vol, nx, ny) {
+  const step = vol.img2RASstep;
+  const start = vol.img2RASstart;
+  if (!step || !start) return (x, y, z) => x + y * nx + z * nx * ny;
+  const origin = start[0] + start[1] + start[2];
+  return (x, y, z) => origin + x * step[0] + y * step[1] + z * step[2];
+}
+
 // Build a displayable NVImage for one output map from `flat` (C-order
 // `[nx,ny,nz]`, NaN outside the fit), reusing `template`'s header/orientation
 // (NVImage.zerosLike) rather than hand-rolling a NIfTI header.
@@ -63,11 +84,15 @@ export function buildMapVolume(template, flat, nx, ny, nz, name, unit, displayRa
   // `docsfig.style`'s `cm.set_bad(BG)`.
   const sentinel = lo - Math.max(1, hi - lo);
   const img = new Float32Array(nx * ny * nz);
+  // `flat` is indexed by the RAS voxel the fit ran on; `img` is the template's
+  // storage order. Writing one as if it were the other mirrors the map against
+  // the image it was fitted from.
+  const at = rasToStorage(template, nx, ny);
   for (let x = 0; x < nx; x++) {
     for (let y = 0; y < ny; y++) {
       for (let z = 0; z < nz; z++) {
         const v = flat[(x * ny + y) * nz + z];
-        img[x + y * nx + z * nx * ny] = Number.isFinite(v) ? v : sentinel;
+        img[at(x, y, z)] = Number.isFinite(v) ? v : sentinel;
       }
     }
   }
