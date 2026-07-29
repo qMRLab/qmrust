@@ -74,14 +74,15 @@ region of the page.
 | `dataset.js` | fetching, unzipping and resolving a BIDS dataset; the download ring |
 | `drop.js` | a reader's own dataset, dropped or browsed to |
 | `nifti.js` | the array boundary: NVImage ⇄ `fit_volume`'s C-order buffers |
-| `stats.js` | percentiles, the display window, the ROI summary — one convention |
+| `stats.js` | percentiles, the display window, per-label statistics — one convention |
 | `recipe.js` | the generic YAML-tree form walk, the editor, syntax highlighting |
 | `model.js` | loading a model's data: the BIDS path and the pre-baked fallback |
 | `fit.js` | fitting the slice in row-blocks, and the maps that come back |
 | `inputs.js` | the Inputs card: its two tabs, the frame slider, the file tree |
 | `viewers.js` | the fitted-map panel, and what both viewers share |
 | `level.js` | the window/level widget, and `setWindow` — the one place a window changes |
-| `roi.js` | ROI statistics and the pen |
+| `draw.js` | the tool palette, labels, undo history, one drawing shared by every viewer |
+| `measure.js` | per-label statistics as a table, and CSV |
 | `curve.js` | the ECharts voxel-fit chart, and the hover/crosshair marks |
 | `modal.js` | both modals, and the single NiiVue instance they share |
 

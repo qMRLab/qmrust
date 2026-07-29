@@ -29,7 +29,7 @@ import {
   showOutput,
   sizeViewers,
 } from "./viewers.js";
-import { renderRoiStats } from "./roi.js";
+import { copyCsv, renderMeasurements, showMeasureView, toggleMeasureScope } from "./measure.js";
 import { onDrawingStroke, wandOwnsWheel, wireDrawing } from "./draw.js";
 import { clearMapHover, onLocation, onMapHover, redrawCurve, resizeCurve } from "./curve.js";
 import { closeFileModal, closeJsonModal, closeNotice, openMapModal } from "./modal.js";
@@ -261,9 +261,23 @@ function wireInputsControls() {
   );
 }
 
+// The voxel-fit card's two views: one curve, one table of the drawn regions.
+function wireMeasurements() {
+  const toggle = () =>
+    showMeasureView($("tab-curve").classList.contains("active") ? "measurements" : "curve");
+  $("tab-curve").onclick = toggle;
+  $("tab-measure").onclick = toggle;
+  $("measure-scope").onclick = toggleMeasureScope;
+  $("measure-csv").onclick = copyCsv;
+}
+
 // The fitted map: output and colormap pickers, slice/multiplanar, window/level, ROI.
 function wireMapControls() {
-  $("output").onchange = (e) => showOutput(e.target.value);
+  $("output").onchange = (e) => {
+    showOutput(e.target.value);
+    // The table reports the map on screen, so it follows the picker.
+    renderMeasurements();
+  };
   $("colormap").onchange = onColormapChange;
   const toggleMapView = () =>
     showMapView($("tab-slice").classList.contains("active") ? "planes" : "slice");
@@ -275,7 +289,7 @@ function wireMapControls() {
   // Recompute after each stroke, so the numbers track the region as it is drawn.
   // Any viewer can be drawn on — including the modal's, which comes and goes.
   // `draw.js` mirrors the stroke between them; this says what to do afterwards.
-  onDrawingStroke(renderRoiStats);
+  onDrawingStroke(renderMeasurements);
   nvOut.canvas.addEventListener("mousemove", onMapHover);
   nvOut.canvas.addEventListener("mouseleave", clearMapHover);
 }
@@ -372,6 +386,7 @@ async function main() {
   wireInputsControls();
   wireMapControls();
   wireDataDrop();
+  wireMeasurements();
   wireModals();
 
   app.wasm = await loadWasm();

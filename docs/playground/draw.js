@@ -19,7 +19,7 @@ import { app, nvIn, nvOut } from "./state.js";
 // repainting every voxel already drawn with that label — which is why choosing a
 // fresh colour allocates a label rather than recolouring one. The list grows on
 // demand; NiiVue's draw LUT holds 255.
-const LABELS = [
+export const LABELS = [
   { value: 1, color: "#7cc3b5" },
   { value: 2, color: "#c9a86a" },
   { value: 3, color: "#cf8a5f" },
@@ -84,7 +84,7 @@ let labelsVisible = true;
 
 // Hiding is opacity, not deletion: a reader needs to see the map under a region
 // they have just drawn, and must not have to erase it to do so.
-export function toggleLabels() {
+function toggleLabels() {
   labelsVisible = !labelsVisible;
   for (const nv of drawables()) nv.setDrawOpacity(labelsVisible ? DRAW_OPACITY : 0);
   syncLabelToggle();

@@ -936,17 +936,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   width: 8ch; font: 700 11px var(--font-mono); padding: 1px 4px; border-radius: 6px;
   z-index: 2;
 }
-/* Statistics of the fitted map beneath a drawn ROI. A quantitative map is only
-   as useful as the numbers you can get out of a region. */
-.roi-stats {
-  margin-top: 8px; display: grid; gap: 2px 10px; font: 11px var(--font-mono);
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-}
-.roi-stats[hidden] { display: none; }
-.roi-stat { display: flex; justify-content: space-between; gap: 6px; }
-.roi-stat b { color: var(--ink); font-weight: 700; }
-.roi-stat span { color: var(--muted); }
-.roi-empty { color: var(--muted); grid-column: 1 / -1; }
 /* Value under the pointer as it moves over the bar. */
 .level-readout {
   position: absolute; right: calc(100% + 8px); transform: translateY(-50%);
@@ -1002,3 +991,36 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* The measurements table. Numbers are the product here, so they get the monospace
+   column alignment that makes a column of them comparable at a glance. */
+.measure-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.measure-summary { color: var(--muted); font-size: 11.5px; flex: 1 1 auto; }
+.measure-head button { font-size: 11px; padding: 3px 8px; }
+.measure-table { overflow: auto; flex: 1 1 auto; min-height: 0; }
+.measure-table table { width: 100%; border-collapse: collapse; }
+.measure-table th {
+  position: sticky; top: 0; z-index: 1; background: var(--panel);
+  font: 600 9.5px var(--font-mono); color: var(--muted);
+  text-transform: uppercase; letter-spacing: .05em; text-align: right;
+  padding: 4px 6px; border-bottom: var(--border-w) solid var(--line);
+}
+.measure-table td {
+  font: 11px var(--font-mono); color: var(--ink);
+  text-align: right; padding: 3px 6px;
+  border-bottom: var(--border-w) solid color-mix(in srgb, var(--line) 45%, transparent);
+}
+.measure-table th:first-child, .measure-table td:first-child { text-align: left; }
+.measure-label { display: flex; align-items: center; gap: 6px; }
+/* The swatch is the label's own drawing colour, so a row and a region on the map
+   are visibly the same object. */
+.measure-chip {
+  width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto;
+  box-shadow: 0 0 0 1px var(--line);
+}
+.measure-name { font: 11px var(--font-ui); color: var(--ink-2); outline: none; }
+.measure-name:focus { color: var(--ink); border-bottom: 1px solid var(--accent); }
+#measure-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+#curve-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
