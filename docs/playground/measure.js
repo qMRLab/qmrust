@@ -20,6 +20,11 @@ let allMaps = false;
 // belongs to this module and never to the bitmap.
 const names = new Map();
 
+// The names go with the drawing they described; see `resetDrawing`.
+export function clearLabelNames() {
+  names.clear();
+}
+
 function labelName(value) {
   return names.get(value) ?? `label ${value}`;
 }

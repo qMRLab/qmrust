@@ -23,6 +23,8 @@ import {
   showLoading,
 } from "./inputs.js";
 import { clearVolumes, sizeViewers, syncMapViewControls } from "./viewers.js";
+import { resetDrawing } from "./draw.js";
+import { clearLabelNames } from "./measure.js";
 import { repaintLevels } from "./level.js";
 import { clearCurve } from "./curve.js";
 import { showNotice } from "./modal.js";
@@ -125,6 +127,9 @@ export async function loadModel(name) {
     return;
   }
 
+  // Before the volumes go: the drawing is indexed into the grid they define.
+  resetDrawing();
+  clearLabelNames();
   clearVolumes(nvIn);
   clearVolumes(nvOut);
   app.outputVolumes = [];

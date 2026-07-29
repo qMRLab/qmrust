@@ -782,6 +782,26 @@ function placePalette(box) {
   placed = true;
 }
 
+// A drawing belongs to the volume it was made on: a label is a value at a voxel
+// index into one model's grid, with a name a reader gave it for that anatomy.
+// Carrying it across a model switch would paint one dataset's regions over
+// another's — and against different dims, over the wrong voxels entirely — so a
+// model load drops the drawing rather than reinterpreting it.
+//
+// `closeDrawing` is NiiVue's own teardown: it frees the GL texture as well as the
+// bitmap, so the next `ensureDrawing` builds both fresh at the new dims.
+export function resetDrawing() {
+  if (app.roiDrawing) toggleDrawing();
+  if (!labelsVisible) toggleLabels();
+  for (const nv of drawables()) {
+    if (nv.drawBitmap) nv.closeDrawing();
+  }
+  history = [];
+  historyAt = -1;
+  syncHistoryButtons();
+  onStroke?.();
+}
+
 export function toggleDrawing() {
   app.roiDrawing = !app.roiDrawing;
   $("roi-toggle").classList.toggle("active", app.roiDrawing);

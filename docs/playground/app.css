@@ -236,18 +236,14 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* Everything that is not the status line sits at the right end, reading as one
    cluster of controls: where to go (docs, source), then a rule, then how it looks. */
 .navbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
-/* One shell for both an <a> and a <button>: these are all borderless glyphs in
-   one cluster, and the element only says whether it navigates or acts. */
 .navbar-link {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 22px; border-radius: 4px;
   color: var(--muted); text-decoration: none;
-  background: none; border: 0; padding: 0; cursor: pointer;
 }
 .navbar-link:hover { color: var(--ink); background: var(--field); }
-/* At 25px the pack's default 2px stroke reads as heavy beside 14px chrome. The
-   mode toggle is a 15px glyph in the same shell, and keeps the default stroke. */
-a.navbar-link .icon { stroke-width: 1; }
+/* At 25px the pack's default 2px stroke reads as heavy beside 14px chrome. */
+.navbar-link .icon { stroke-width: 1; }
 .navbar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Separates leaving the page from restyling it — two unrelated kinds of control
    that would otherwise read as one row of six. */
@@ -452,6 +448,11 @@ a.navbar-link .icon { stroke-width: 1; }
   color: var(--ink); box-shadow: var(--shadow);
 }
 .seg button:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+/* The same toggle with a glyph in place of the word. `.seg.seg-icon` rather than
+   `.seg-icon`: the generic `.seg button` rules above are declared later at equal
+   specificity, so a single class would keep their word-sized padding. */
+.seg.seg-icon { padding: 2px; }
+.seg.seg-icon button { padding: 4px 8px; }
 
 .model-line { margin: 12px 0; color: var(--ink-2); }
 .model-line select { margin-left: 4px; }
