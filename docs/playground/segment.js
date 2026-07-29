@@ -11,11 +11,10 @@
 //
 // This module owns the imperative half — the runtime, the resampling, the tensor
 // work and the button. The index arithmetic is `volume.js`, which is pure.
-import { NVImage } from "./vendor/niivue.js";
 import { icon } from "./vendor/icons.js";
-import { $, hideProgress, setProgress, showProgress, status } from "./dom.js";
+import { $, hideProgress, nextFrame, setProgress, showProgress, status } from "./dom.js";
 import { app, nvIn } from "./state.js";
-import { rasToStorage } from "./nifti.js";
+import { rasToStorage, singleFrameLike } from "./nifti.js";
 import {
   argmaxChannels,
   boundingBox,
@@ -124,11 +123,7 @@ function frameVolume() {
   const { volume, frame } = app.current;
   const [, dx, dy, dz] = volume.hdr.dims;
   const spatial = dx * dy * dz;
-  const vol = NVImage.zerosLike(volume, "float32");
-  vol.hdr.dims = volume.hdr.dims.slice();
-  vol.hdr.dims[0] = 3;
-  vol.hdr.dims[4] = 1;
-  vol.nFrame4D = 1;
+  const vol = singleFrameLike(volume);
   vol.img = Float32Array.from(volume.img.subarray(frame * spatial, (frame + 1) * spatial));
   vol.calculateRAS();
   // The clone carried the whole series' intensity range. `conform` scales its
@@ -175,7 +170,7 @@ async function inferLabels(tf, net, data, size) {
     const probe = tensor.slice([0, 0, 0, 0, 0], [1, 1, 1, 1, 1]);
     await probe.data();
     probe.dispose();
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await nextFrame();
   }
   const scores = await tensor.data();
   tensor.dispose();
@@ -213,11 +208,7 @@ const OVERLAY_NAME = "computed mask";
 // `labels` in `template`'s own storage order, as a displayable volume on
 // `template`'s grid — which may be the conformed one or the acquisition's.
 function labelVolume(template, labels) {
-  const vol = NVImage.zerosLike(template, "uint8");
-  vol.hdr.dims = template.hdr.dims.slice();
-  vol.hdr.dims[0] = 3;
-  vol.hdr.dims[4] = 1;
-  vol.nFrame4D = 1;
+  const vol = singleFrameLike(template, "uint8");
   vol.img = Uint8Array.from(labels);
   vol.name = OVERLAY_NAME;
   vol.colorbarVisible = false;
@@ -407,7 +398,7 @@ async function runThreshold(method) {
   }
   // A frame's worth of work, so let the progress bar and the status line paint.
   setProgress(50);
-  await new Promise((resolve) => requestAnimationFrame(resolve));
+  await nextFrame();
 
   const found = foregroundMask(values, [nx, ny, nz]);
   const mask = new Uint8Array(nx * ny * nz);

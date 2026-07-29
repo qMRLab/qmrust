@@ -21,10 +21,9 @@
   --shadow: 0 1px 2px rgba(0,0,0,.34), 0 8px 20px rgba(0,0,0,.28);
   --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --track:.04em; --pad-y:8px; --pad-x:9px;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace; --pad-y:8px; --pad-x:9px;
   --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
-  --glow:transparent; --bloom:transparent;
+  --glow:transparent;
   --on-action:#241209; --on-accent:#0d221e;
   color-scheme: dark;
 }
@@ -38,10 +37,9 @@
   --shadow: 0 1px 2px rgba(70,52,30,.07), 0 8px 20px rgba(70,52,30,.11);
   --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --track:.04em; --pad-y:8px; --pad-x:9px;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace; --pad-y:8px; --pad-x:9px;
   --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
-  --glow:transparent; --bloom:transparent;
+  --glow:transparent;
   --on-action:#fff8f1; --on-accent:#ffffff;
   color-scheme: light;
 }
@@ -60,13 +58,12 @@
   --shadow: 0 1px 2px rgba(0,0,0,.55), 0 10px 26px rgba(0,0,0,.45);
   --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --track:.05em; --pad-y:8px; --pad-x:9px;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace; --pad-y:8px; --pad-x:9px;
   --bg-image: url("texture-oxide.svg"),
               linear-gradient(180deg,#26292a 0%,#243330 34%,#254440 66%,#28564b 100%);
   --grad-action: linear-gradient(100deg,#b8764e,#7fae95 55%,#6fd6bd);
   --grad-soft: linear-gradient(100deg,rgba(162,96,60,.22),rgba(111,214,189,.16));
-  --glow:rgba(111,214,189,.26); --bloom:rgba(60,150,130,.22);
+  --glow:rgba(111,214,189,.26);
   --on-action:#04140f; --on-accent:#04140f;
   color-scheme: dark;
 }
@@ -80,13 +77,12 @@
   --shadow: 0 1px 2px rgba(60,70,55,.09), 0 10px 24px rgba(60,70,55,.14);
   --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --track:.05em; --pad-y:8px; --pad-x:9px;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace; --pad-y:8px; --pad-x:9px;
   --bg-image: url("texture-oxide-light.svg"),
               linear-gradient(180deg,#e9e5da 0%,#dee2d6 40%,#cfdcd0 72%,#bed4c6 100%);
   --grad-action: linear-gradient(100deg,#9c5230,#537565 58%,#2b7a6d);
   --grad-soft: linear-gradient(100deg,rgba(156,82,48,.14),rgba(47,133,119,.12));
-  --glow:rgba(47,133,119,.14); --bloom:rgba(90,150,130,.18);
+  --glow:rgba(47,133,119,.14);
   --on-action:#fff8f1; --on-accent:#ffffff;
   color-scheme: light;
 }
@@ -100,10 +96,9 @@
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.34);
   --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --track:0; --pad-y:14px; --pad-x:14px;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace; --pad-y:14px; --pad-x:14px;
   --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
-  --glow:transparent; --bloom:transparent;
+  --glow:transparent;
   --on-action:#241209; --on-accent:#04262a;
   color-scheme: dark;
 }
@@ -117,10 +112,9 @@
   --shadow: 0 1px 2px rgba(20,30,45,.06), 0 10px 30px rgba(20,30,45,.07);
   --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --font-h: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --track:0; --pad-y:14px; --pad-x:14px;
+  --font-mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace; --pad-y:14px; --pad-x:14px;
   --bg-image:none; --grad-action:var(--rust); --grad-soft:transparent;
-  --glow:transparent; --bloom:transparent;
+  --glow:transparent;
   --on-action:#fff; --on-accent:#ffffff;
   color-scheme: light;
 }
@@ -198,7 +192,6 @@ button.primary {
 }
 button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 #status { color: var(--muted); }
-#status.error { color: var(--bad); }
 
 #fallback {
   border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px;
@@ -345,9 +338,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    start`), so a model with a deeply-nested recipe scrolls internally
    instead of the card stretching to the (now viewport-filling) viewer
    row's height and sitting mostly empty. */
-/* The viewer cards fill their row rather than declaring a height, so the two
-   black boxes match because the cards match — and neither can overflow. */
-.viewer-in-wrap, .viewer-out-wrap { min-height: 0; }
 /* The left column is one cell spanning both rows: the recipe grows to fill
    whatever the viewers and curve leave, Fit sits between it and the
    bring-your-own-data panel, and that panel stays at the bottom. */
@@ -545,8 +535,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .switch input:checked + .slider::before { transform: translateX(16px); }
 .switch input:focus-visible + .slider { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
 
-#model-info:not(:empty)::before, #fit-timing:not(:empty)::before { content: "\00a0\00b7\00a0"; }
-.recipe-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
 
 /* viewers */
 .viewer-head {
@@ -986,14 +974,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    plain HTML/CSS bar built from the same LUT `nv.colormap()` returns. */
 .viewer-row { display: flex; flex-direction: row; gap: 8px; flex: 1 1 auto; min-height: 0; }
 .viewer-row .viewer { flex: 1 1 auto; }
-.map-colorbar { display: flex; flex-direction: row; gap: 6px; flex-shrink: 0; width: 58px; }
-.map-colorbar-gradient {
-  width: 16px; border-radius: 6px; border: 1px solid var(--line);
-}
-.map-colorbar-labels {
-  display: flex; flex-direction: column; justify-content: space-between;
-  font: 11px var(--font-mono); color: var(--ink-2); white-space: nowrap; padding: 2px 0;
-}
+
 
 .out-controls { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
 .out-controls select { font-size: 12px; padding: 4px 8px; }

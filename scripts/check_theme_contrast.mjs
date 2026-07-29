@@ -29,7 +29,7 @@ export const REQUIRED = [
   "--bg", "--panel", "--panel-2", "--field", "--ink", "--ink-2", "--muted",
   "--line", "--rust", "--accent", "--accent-ink", "--brass", "--good", "--bad",
   "--viewer-bg", "--radius", "--border-w", "--shadow",
-  "--font-ui", "--font-h", "--font-mono", "--track", "--pad-y", "--pad-x",
+  "--font-ui", "--font-h", "--font-mono", "--pad-y", "--pad-x",
   "--on-accent",
 ];
 

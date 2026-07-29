@@ -65,3 +65,10 @@ export function hideProgress() {
   $("progress-bar").classList.remove("active");
   setProgress(0);
 }
+
+// Lets the browser paint, and stay responsive to input, between chunks of a long
+// computation — a plain microtask or `setTimeout(0)` does not reliably yield before
+// the next paint in every engine, but a rAF round-trip does.
+export function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}

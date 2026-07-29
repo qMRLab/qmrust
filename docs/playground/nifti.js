@@ -62,15 +62,27 @@ export function rasToStorage(vol, nx, ny) {
   return (x, y, z) => origin + x * step[0] + y * step[1] + z * step[2];
 }
 
-// Build a displayable NVImage for one output map from `flat` (C-order
-// `[nx,ny,nz]`, NaN outside the fit), reusing `template`'s header/orientation
-// (NVImage.zerosLike) rather than hand-rolling a NIfTI header.
-export function buildMapVolume(template, flat, nx, ny, nz, name, unit, displayRange) {
-  const vol = NVImage.zerosLike(template, "float32");
+// A one-frame 3D volume on `template`'s grid, ready to be given its own data.
+//
+// `zerosLike` clones the header too, and the volume it is usually cloning is the
+// acquired 4D series — so the clone claims a fourth dimension it will not have, and
+// NiiVue believes it. Correcting that here is what stops each producer of a derived
+// volume (a fitted map, one frame on its own, a label overlay) from having to
+// remember it.
+export function singleFrameLike(template, dataType = "float32") {
+  const vol = NVImage.zerosLike(template, dataType);
   vol.hdr.dims = template.hdr.dims.slice();
   vol.hdr.dims[0] = 3;
   vol.hdr.dims[4] = 1;
   vol.nFrame4D = 1;
+  return vol;
+}
+
+// Build a displayable NVImage for one output map from `flat` (C-order
+// `[nx,ny,nz]`, NaN outside the fit), reusing `template`'s header/orientation
+// (NVImage.zerosLike) rather than hand-rolling a NIfTI header.
+export function buildMapVolume(template, flat, nx, ny, nz, name, unit, displayRange) {
+  const vol = singleFrameLike(template);
   // The model's declared window for this quantity when it has one: a window
   // derived from the data is only as good as the data, and an unmasked fit puts
   // background noise in the same histogram as tissue. Falls back to a

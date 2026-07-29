@@ -1,18 +1,11 @@
 // Fitting the loaded slice, in row-blocks so progress is real and the page stays
 // responsive, then turning the returned maps into viewable volumes.
-import { $, hideProgress, setProgress, showProgress, status } from "./dom.js";
+import { $, hideProgress, nextFrame, setProgress, showProgress, status } from "./dom.js";
 import { app, editor, nvOut } from "./state.js";
 import { buildMapVolume, readVolumeSeries } from "./nifti.js";
 import { clearVolumes, showOutput, syncMapViewControls } from "./viewers.js";
 import { plotVoxel } from "./curve.js";
 import { reresolveInputs } from "./model.js";
-
-// Lets the browser paint (and stay responsive to input) between fit blocks —
-// a plain microtask/`setTimeout(0)` does not reliably yield before the next
-// paint in every engine, but a rAF round-trip does.
-function nextFrame() {
-  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
-}
 
 // `fit_volume` is one synchronous call with no progress callback across the
 // wasm boundary, so real (not simulated) progress requires splitting the work
