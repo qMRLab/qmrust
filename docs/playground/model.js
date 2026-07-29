@@ -111,8 +111,6 @@ async function loadModelFromBids(name, meta) {
   syncMapViewControls();
   $("fit").disabled = false;
   for (const w of resolved.warnings) status(w, "error");
-  $("model-info").textContent =
-    `${meta.title}: ${nt} volumes, ${nx}×${ny}${nz > 1 ? `×${nz}` : ""} (${resolved.subject})`;
   status("Ready", "ok");
   return true;
 }
@@ -136,8 +134,6 @@ export async function loadModel(name) {
   $("output").replaceChildren();
   repaintLevels();
   $("voxel-value").textContent = "";
-  $("model-info").textContent = "";
-  $("fit-timing").textContent = "";
   $("curve-note").textContent = "";
   clearCurve();
   app.enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
@@ -226,11 +222,6 @@ export async function loadModel(name) {
   setFrameUi(nt, meta.labels);
   app.current = { meta, volume, maskU8, auxFlat, auxVolumes, frame: 0 };
   $("fit").disabled = !app.wasm;
-  // The model/volume-count/dims summary lives beside the frame note, not the
-  // navbar — the navbar's `#status` is for transient app state (loading,
-  // errors, "ready"), not a per-model fact that stays true until the next
-  // model switch.
-  $("model-info").textContent = `${meta.title}: ${nt} volumes, ${nx}×${ny}`;
   syncMapViewControls();
   status(
     app.wasm ? "Ready" : "Fitting unavailable — wasm failed to load; viewers still work",

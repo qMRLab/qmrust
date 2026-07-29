@@ -87,7 +87,6 @@ export async function fitSlice() {
   const { meta, volume, maskU8, auxFlat } = app.current;
   const [nx, ny, nz, nt] = meta.dims;
   status("Fitting…", "busy");
-  $("fit-timing").textContent = "";
   showProgress();
   $("fit").disabled = true;
   const t0 = performance.now();
@@ -135,14 +134,12 @@ export async function fitSlice() {
     if (app.current.lastVox) {
       plotVoxel(app.current.lastVox.x, app.current.lastVox.y, app.current.lastVox.z);
     }
-    // The top status line is prime real estate for every reader, but neither
-    // the model summary nor "Fitted in Xs" matter there — both live beside the
-    // frame-scrubbing note under the inputs viewer instead.
-    status("Fitted", "ok");
+    // How long the fit took is the natural end of the "Fitting…" the status line
+    // is already showing, so it lands there rather than in a panel of its own.
+    status(`Fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`, "ok");
   } catch (e) {
     status(`Fitted, but could not display it — ${e?.message ?? e}`, "error");
   } finally {
-    $("fit-timing").textContent = `Fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
     hideProgress();
     $("fit").disabled = false;
     syncMapViewControls();

@@ -35,7 +35,7 @@ export function resizeCurve() {
 // Value of the currently-displayed map at `(x, y, z)`, shown beside the
 // fitted-curve parameters — updates on every crosshair move, including while
 // dragging (`onLocation` calls this on every `onLocationChange`).
-export function updateVoxelValue(x, y, z) {
+export function updateVoxelValue(x, y, z, params = "") {
   const el = $("voxel-value");
   if (!app.shownOutput) {
     el.textContent = "";
@@ -44,7 +44,7 @@ export function updateVoxelValue(x, y, z) {
   const v = app.shownOutput.volume.getValue(x, y, z, 0);
   const unit = app.shownOutput.unit ? ` ${app.shownOutput.unit}` : "";
   el.textContent = Number.isFinite(v)
-    ? `${app.shownOutput.name} = ${v.toPrecision(3)}${unit} at (${x}, ${y})`
+    ? `${app.shownOutput.name} = ${v.toPrecision(3)}${unit} at (${x}, ${y})${params ? ` · ${params}` : ""}`
     : `${app.shownOutput.name} = no fit at (${x}, ${y})`;
 }
 
@@ -109,9 +109,16 @@ export function plotVoxel(x, y, z) {
     ? alignSeriesToVolumes(predicted, meta.volume_ids)
     : meta.volume_ids.map((r) => predicted[r]);
   drawCurve(measured, values, meta.labels);
-  $("curve-note").textContent = meta.params
-    .map((p, k) => `${p} = ${params[k].toPrecision(3)}`)
-    .join(", ");
+  // The remaining fitted parameters join the displayed map's own value on one
+  // line: the map is one of them, and the rest only mean anything beside it.
+  $("curve-note").textContent = "";
+  updateVoxelValue(
+    x, y, z,
+    meta.params
+      .filter((p) => p !== app.shownOutput?.name)
+      .map((p) => `${p} = ${app.lastMaps[p][idx].toPrecision(3)}`)
+      .join(", "),
+  );
 }
 
 // Deep-ish equality for one row of `Series` params against a `forward()`
