@@ -5,6 +5,7 @@ import { app, editor, nvOut } from "./state.js";
 import { buildMapVolume, readVolumeSeries } from "./nifti.js";
 import { clearVolumes, showOutput, syncMapViewControls } from "./viewers.js";
 import { plotVoxel } from "./curve.js";
+import { reresolveInputs } from "./model.js";
 
 // The progress track is a permanent fixture above the Fit button (an empty
 // track at idle, not an element that appears/disappears and reflows the
@@ -82,6 +83,13 @@ export async function fitSlice() {
   if (!app.wasm) { status("Fitting unavailable — wasm failed to load", "error"); return; }
   if (!editor.valid) {
     status("Recipe YAML is invalid — fix it before fitting", "error");
+    return;
+  }
+  // The recipe may have changed which files the model consumes since it was
+  // loaded, not only how it fits them.
+  const problem = await reresolveInputs();
+  if (problem) {
+    status(`Not fitted — ${problem}`, "error");
     return;
   }
   const { meta, volume, maskU8, auxFlat } = app.current;

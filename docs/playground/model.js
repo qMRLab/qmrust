@@ -4,7 +4,7 @@
 // downstream is blind to where the data came from.
 import { NVImage } from "./vendor/niivue.js";
 import { $, status } from "./dom.js";
-import { app, nvIn, nvOut } from "./state.js";
+import { app, editor, nvIn, nvOut } from "./state.js";
 import { loadBundle } from "./bundles.js";
 import { fetchDataset, identityLabel, stage } from "./dataset.js";
 import { setEditorText } from "./recipe.js";
@@ -113,13 +113,77 @@ async function loadModelFromBids(name, meta) {
 
   resetViewers();
   setFrameUi(nt, labels);
-  app.current = { meta: bidsMeta, volume, maskU8, auxFlat, auxVolumes, frame: 0 };
+  // `resolution` is what these inputs were built from, so a later fit can tell
+  // whether the recipe has since changed its mind about them.
+  app.current = {
+    meta: bidsMeta, volume, maskU8, auxFlat, auxVolumes, frame: 0, resolution: resolved,
+  };
   renderFiles();
   syncMapViewControls();
   $("fit").disabled = false;
   for (const w of resolved.warnings) status(w, "error");
   status("Ready", "ok");
   return true;
+}
+
+// The recipe governs input *resolution*, not only fitting options: its `mask:`
+// and auxiliary selectors decide which of the dataset's files the model consumes.
+// `resolve_bids` reads them, and it ran when the dataset was loaded — so an edit
+// to those selectors means nothing until resolution runs again. Fitting is where
+// that happens, which is the recipe's own stated contract: edits apply to the
+// next fit.
+//
+// Only what resolution owns is rebuilt — the mask, the auxiliary inputs, and the
+// acquisition the sidecars declare. The loaded series is left alone unless the
+// recipe now names different volumes: that is a change of input rather than of
+// options, so it is reported instead of fitting one series under another's
+// resolution.
+//
+// Returns null when the inputs are ready, or the reason a fit must not proceed.
+// The pre-baked slice resolves nothing — its mask is named by the payload — and
+// it is also what a dataset that failed to load falls back to, so the test is
+// whether *these* inputs came from resolution, not whether a dataset is held.
+export async function reresolveInputs() {
+  const ds = app.dataset;
+  if (!ds?.files || !app.current?.resolution) return null;
+  let collections;
+  try {
+    collections = app.wasm.resolve_bids(ds.files, editor.text, "");
+  } catch (e) {
+    return `the recipe could not be resolved against this dataset — ${e.message}`;
+  }
+  if (collections.length === 0) return "the recipe now matches nothing in this dataset";
+  const resolved = collections[0];
+  if (String(resolved.data_files) !== String(app.current.resolution.data_files)) {
+    return "the recipe now selects different volumes — reload the model to fit them";
+  }
+
+  const [nx, ny, nz] = app.current.meta.dims;
+  const maskU8 = resolved.mask_file
+    ? readMask(await volumeFromDataset(ds.files, resolved.mask_file), nx, ny, nz)
+    : null;
+  const auxFlat = {};
+  const auxVolumes = {};
+  for (const [auxName, path] of resolved.aux_files) {
+    const auxVolume = await volumeFromDataset(ds.files, path);
+    auxFlat[auxName] = Array.from(readScalarVolume(auxVolume, nx, ny, nz));
+    auxVolumes[auxName] = auxVolume;
+  }
+
+  app.dataset = { ...ds, resolved };
+  app.current = {
+    ...app.current,
+    maskU8,
+    auxFlat,
+    auxVolumes,
+    resolution: resolved,
+    meta: { ...app.current.meta, protocol_json: resolved.protocol_json },
+  };
+  // The Files panel states a verdict per file, and those verdicts have just
+  // changed: a mask the recipe no longer selects is now an unused file.
+  renderFiles();
+  for (const w of resolved.warnings) status(w, "error");
+  return null;
 }
 
 export async function loadModel(name) {
