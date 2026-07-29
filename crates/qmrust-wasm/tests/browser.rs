@@ -29,6 +29,7 @@ fn fit_volume_single_voxel() {
     let data: Vec<f64> = arr.iter().map(|s| s["value"].as_f64().unwrap()).collect();
     let rows: Vec<&serde_json::Value> = arr.iter().map(|s| &s["params"]).collect();
     let ids = serde_json::to_string(&rows).unwrap();
-    let maps = qmrust_wasm::api::fit_volume(IR_YAML, &data, [1, 1, 1, 9], &ids, None, &[], "").unwrap();
+    let maps =
+        qmrust_wasm::api::fit_volume(IR_YAML, &data, [1, 1, 1, 9], &ids, None, &[], "").unwrap();
     assert!(maps.iter().any(|(n, _)| n == "T1"));
 }
