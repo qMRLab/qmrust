@@ -8,7 +8,7 @@
 // of the page, so a control's wiring sits with the other controls it belongs
 // with. Every behaviour those listeners reach for lives in the module that owns
 // that region.
-import { paintIcons } from "./vendor/icons.js";
+import { icon, paintIcons } from "./vendor/icons.js";
 import { $, status } from "./dom.js";
 import { app, editor, nvIn, nvOut } from "./state.js";
 import { loadBundle, fetchOrThrow, loadWasm } from "./bundles.js";
@@ -197,15 +197,16 @@ function wireTheme() {
     $("panel-logo").src =
       document.documentElement.dataset.mode === "light" ? "./logo_light.png" : "./logo_dark.png";
     $("theme-pick").title = `Theme: ${THEMES.find((t) => t.id === select.value)?.label ?? ""}`;
+    // The glyph is the destination, not the current state: a sun offers light.
     const dark = document.documentElement.dataset.mode === "dark";
-    $("mode-dark").classList.toggle("active", dark);
-    $("mode-light").classList.toggle("active", !dark);
+    const mode = $("mode-toggle");
+    mode.innerHTML = icon(dark ? "sun" : "moon", 15);
+    mode.title = dark ? "Switch to the light mode" : "Switch to the dark mode";
+    mode.setAttribute("aria-label", mode.title);
   });
   select.onchange = (e) => setFamily(e.target.value);
-  const toggleMode = () =>
+  $("mode-toggle").onclick = () =>
     setMode(document.documentElement.dataset.mode === "dark" ? "light" : "dark");
-  $("mode-light").onclick = toggleMode;
-  $("mode-dark").onclick = toggleMode;
 }
 
 // The model picker, the recipe editor, and Fit.

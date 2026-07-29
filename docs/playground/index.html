@@ -26,10 +26,9 @@
       <span class="theme-pick-icon" data-icon="palette" data-icon-size="15"></span>
       <select id="theme-family" aria-label="Theme"></select>
     </span>
-    <div class="seg seg-compact" role="group" aria-label="Light or dark">
-      <button id="mode-light" type="button" title="Light" data-icon="sun" data-icon-size="14"></button>
-      <button id="mode-dark" type="button" title="Dark" data-icon="moon" data-icon-size="14"></button>
-    </div>
+    <!-- One control with two states, showing the mode it switches *to* — the
+         glyph is the affordance, so the label follows it in `wireTheme`. -->
+    <button class="navbar-link" id="mode-toggle" type="button"></button>
   </div>
 </div>
 <div id="fallback" hidden>

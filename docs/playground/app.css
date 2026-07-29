@@ -236,14 +236,18 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* Everything that is not the status line sits at the right end, reading as one
    cluster of controls: where to go (docs, source), then a rule, then how it looks. */
 .navbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* One shell for both an <a> and a <button>: these are all borderless glyphs in
+   one cluster, and the element only says whether it navigates or acts. */
 .navbar-link {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 22px; border-radius: 4px;
   color: var(--muted); text-decoration: none;
+  background: none; border: 0; padding: 0; cursor: pointer;
 }
 .navbar-link:hover { color: var(--ink); background: var(--field); }
-/* At 25px the pack's default 2px stroke reads as heavy beside 14px chrome. */
-.navbar-link .icon { stroke-width: 1; }
+/* At 25px the pack's default 2px stroke reads as heavy beside 14px chrome. The
+   mode toggle is a 15px glyph in the same shell, and keeps the default stroke. */
+a.navbar-link .icon { stroke-width: 1; }
 .navbar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Separates leaving the page from restyling it — two unrelated kinds of control
    that would otherwise read as one row of six. */
@@ -274,22 +278,9 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .icon { display: block; }
 /* A button that is an icon beside a word, rather than one or the other. */
 .icon-btn { display: inline-flex; align-items: center; gap: 5px; }
-.seg-compact button { display: inline-flex; align-items: center; justify-content: center; }
 .theme-pick:hover .theme-pick-icon { color: var(--ink); }
 /* The select carries focus, so the ring has to be drawn by its wrapper. */
 .theme-pick:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* The mode pair, borderless like its neighbours: still a pair, but drawn as two
-   glyphs rather than a segmented control. */
-/* `.seg.seg-compact` rather than `.seg-compact`: the generic `.seg button` rules
-   are declared later at equal specificity, so a single class here would lose its
-   padding to them and squeeze the icon out of a 24px button. */
-.seg.seg-compact { padding: 0; background: none; border: 0; gap: 0; }
-.seg.seg-compact button {
-  width: 24px; height: 22px; padding: 0; border-radius: 4px;
-  display: inline-flex; align-items: center; justify-content: center;
-}
-.seg.seg-compact button:hover { background: var(--field); color: var(--ink); }
-.seg.seg-compact button.active { background: none; color: var(--accent); box-shadow: none; }
 
 /* Fitting progress: a permanent fixture above the Fit button (idle = empty
    track), not a topbar element that appears/disappears and shifts the rest
@@ -328,7 +319,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   /* Proportional rows with a zero minimum: they always divide the height the
      grid is given, so the layout cannot sum past the viewport however short it
      is. A fixed height for either row is what used to overflow. */
-  grid-template-rows: minmax(0, 1fr) minmax(0, 0.55fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 0.65fr);
   gap: 14px;
   align-items: stretch;
   flex: 1 1 auto;
@@ -399,9 +390,12 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    is what makes the two black boxes match. Sizing the viewers directly does
    not work: a fixed height cannot shrink, and overflows the card. */
 :root { --foot-h: 68px; }
-/* A fixed box, not a minimum: the fitted map's controls wrap onto a second row
-   in a narrow column, and a foot that grew with them would put the two viewers
-   at different heights. Sized to hold both rows. */
+/* A fixed box, not a minimum: the two feet carry different controls, and a foot
+   that sized itself to its own would put the two viewers at different heights.
+   `syncFootHeight` sets the value to the taller foot's content, so the box holds
+   the fitted map's controls when a narrow column wraps them onto a second row
+   without leaving dead space under both cards when it does not. This declaration
+   is the pre-script value. */
 .viewer-foot { height: var(--foot-h); flex: 0 0 auto; overflow: hidden; }
 .curve-wrap {
   grid-column: 2 / span 2; grid-row: 2;
