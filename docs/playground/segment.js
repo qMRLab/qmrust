@@ -20,7 +20,7 @@ import {
   argmaxChannels,
   boundingBox,
   cropReversed,
-  minMaxNormalize,
+  normalizeToWhiteMatter,
   placeReversed,
 } from "./volume.js";
 
@@ -91,6 +91,9 @@ function frameVolume() {
   vol.nFrame4D = 1;
   vol.img = Float32Array.from(volume.img.subarray(frame * spatial, (frame + 1) * spatial));
   vol.calculateRAS();
+  // The clone carried the whole series' intensity range. `conform` scales its
+  // output against this window, so it has to describe the one frame now in it.
+  vol.calMinMax();
   return vol;
 }
 
@@ -239,10 +242,10 @@ export async function segmentBrain() {
     const tf = await loadRuntime();
 
     status(`Conforming the volume to ${CONFORMED.join("×")} at 1 mm…`, "busy");
-    // `rawFloat32` (the last argument): the resampled values are kept as they
-    // are, rather than rescaled into 8 bits against this volume's display window.
-    // Quantitative data has no reason to survive that intact, and the network is
-    // fed a min–max normalisation of its own below.
+    // `rawFloat32` (the last argument): resampled values are kept as they are
+    // rather than mapped through this volume's display window into 8 bits.
+    // `normalizeToWhiteMatter` sets the intensity scale the network needs, and it
+    // needs real values to find the tissue mode in.
     const conformed = await nvIn.conform(
       frameVolume(), false, true, false, false, CONFORMED, 1, true,
     );
@@ -258,7 +261,7 @@ export async function segmentBrain() {
       );
     }
 
-    const values = minMaxNormalize(conformed.img);
+    const values = normalizeToWhiteMatter(conformed.img);
     const { lo, size } = boundingBox(values, CONFORMED, network.threshold, network.padding);
     const cropped = cropReversed(values, CONFORMED, lo, size);
 
@@ -271,12 +274,23 @@ export async function segmentBrain() {
     const labels = placeReversed(
       argmaxChannels(scores, network.classes), CONFORMED, lo, size,
     );
+    const found = labels.reduce((n, v) => n + (v > 0 ? 1 : 0), 0);
     const { mask, inside } = maskOnNativeGrid(
       labels, conformed, app.current.volume, app.current.meta.dims,
     );
+    // These two failures look identical from the outside and have nothing to do
+    // with each other: one is the network declining, the other is our own
+    // coordinate round trip missing. Reporting them apart is what makes the next
+    // one diagnosable.
+    if (found === 0) {
+      const frame = app.current.meta.labels[app.current.frame] ?? "this volume";
+      status(`The network found no brain in ${frame} — try a frame with more ` +
+        "anatomical contrast", "error");
+      return;
+    }
     if (inside === 0) {
-      status(`No brain found in ${app.current.meta.labels[app.current.frame] ?? "this volume"}` +
-        " — try a frame with more anatomical contrast", "error");
+      status(`The network found ${found.toLocaleString()} brain voxels, but none of them ` +
+        "landed on this volume's grid — the coordinate mapping is wrong", "error");
       return;
     }
 

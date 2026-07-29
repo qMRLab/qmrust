@@ -8,7 +8,7 @@ import {
   argmaxChannels,
   boundingBox,
   cropReversed,
-  minMaxNormalize,
+  normalizeToWhiteMatter,
   placeReversed,
 } from "../../docs/playground/volume.js";
 
@@ -20,14 +20,49 @@ function ramp([nx, ny, nz]) {
   return Float32Array.from({ length: nx * ny * nz }, (_, i) => i + 1);
 }
 
-test("minMaxNormalize spans exactly 0 to 1", () => {
-  const out = minMaxNormalize(Float32Array.from([-3, 1, 5]));
-  assert.deepEqual([...out], [0, 0.5, 1]);
+// The network is trained behind an intensity normalisation, and gets this wrong
+// silently: a volume scaled elsewhere returns almost no brain rather than an error.
+// So what is asserted is *where tissue lands*, not merely that the range is [0, 1].
+const WHITE_MATTER = 110 / 255;
+
+// Background, then a grey-matter peak, then a brighter and more populous
+// white-matter peak — so the mode of the brighter half is unambiguously the latter.
+function twoPeaks(grey, white) {
+  return Float32Array.from([
+    ...Array(1000).fill(0),
+    ...Array(400).fill(grey),
+    ...Array(600).fill(white),
+  ]);
+}
+
+test("normalizeToWhiteMatter puts the bright tissue mode at 110/255", () => {
+  const out = normalizeToWhiteMatter(twoPeaks(100, 200));
+  assert.ok(Math.abs(out.at(-1) - WHITE_MATTER) < 0.005, `white matter at ${out.at(-1)}`);
+  // Grey matter keeps its ratio to it: this is a scale, not a remapping.
+  assert.ok(Math.abs(out[1000] - WHITE_MATTER / 2) < 0.005, `grey matter at ${out[1000]}`);
+  assert.equal(out[0], 0);
 });
 
-test("a volume with no range is all zero rather than NaN", () => {
-  const out = minMaxNormalize(Float32Array.from([2, 2, 2]));
-  assert.deepEqual([...out], [0, 0, 0]);
+test("the scale follows the data, not the numbers' size", () => {
+  // The same anatomy in different units must reach the network identically.
+  const small = normalizeToWhiteMatter(twoPeaks(1, 2));
+  const large = normalizeToWhiteMatter(twoPeaks(1e5, 2e5));
+  assert.ok(Math.abs(small.at(-1) - large.at(-1)) < 0.005);
+  assert.ok(Math.abs(small.at(-1) - WHITE_MATTER) < 0.005);
+});
+
+test("anything brighter than the window clips rather than scaling everything down", () => {
+  const values = twoPeaks(100, 200);
+  const out = normalizeToWhiteMatter(
+    Float32Array.from([...values, 800]), // a bright vessel, four times white matter
+  );
+  assert.equal(out.at(-1), 1);
+  // The mode is unmoved by it — which is the whole point of using one.
+  assert.ok(Math.abs(out.at(-2) - WHITE_MATTER) < 0.02, `white matter at ${out.at(-2)}`);
+});
+
+test("an empty volume normalises to zeros rather than NaN", () => {
+  assert.deepEqual([...normalizeToWhiteMatter(Float32Array.from([0, 0, 0]))], [0, 0, 0]);
 });
 
 test("boundingBox finds the box above threshold and grows it by the padding", () => {

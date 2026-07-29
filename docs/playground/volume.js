@@ -7,22 +7,60 @@
 // layout every caller holds: NiiVue's own image buffers and the tensor a network
 // consumes are both in it. Nothing here knows what a scanner or an affine is.
 
-// `(v - min) / (max - min)`. A constant volume has no range to scale, and reads
-// as all-zero rather than as NaN.
-export function minMaxNormalize(src) {
-  let min = Infinity;
-  let max = -Infinity;
-  for (const v of src) {
-    if (!Number.isFinite(v)) continue;
-    if (v < min) min = v;
-    if (v > max) max = v;
-  }
+// The intensity a segmentation network's weights expect to see white matter at.
+// FreeSurfer's `conform` — the step these networks were trained behind — puts it
+// near 110 of 255, and a network shown a differently-scaled volume reads tissue as
+// noise and returns almost nothing.
+const WHITE_MATTER = 110 / 255;
+
+// `src` rescaled so its bright-tissue mode lands at `WHITE_MATTER`, clipped to
+// [0, 1].
+//
+// A min–max normalisation will not do, and neither will a display window. Both are
+// set by the extremes — one bright voxel, or a range chosen for looking at an
+// acquisition — while what the network is sensitive to is where *tissue* sits. So
+// the mode of the bright half of the tissue histogram is found and scaled there,
+// which is the one-parameter form of what FreeSurfer's intensity normalisation
+// does.
+//
+// The histogram is built in one pass over the volume rather than by sorting it:
+// these are 16 million voxels.
+export function normalizeToWhiteMatter(src, bins = 256) {
   const out = new Float32Array(src.length);
-  if (!Number.isFinite(min) || max === min) return out;
-  const scale = 1 / (max - min);
+  let max = 0;
+  for (const v of src) if (v > max) max = v;
+  if (!(max > 0)) return out;
+
+  // Background outnumbers tissue several times over, so it must not vote.
+  const floor = max * 0.02;
+  const counts = new Float64Array(bins);
+  const width = (max - floor) / bins;
+  let tissue = 0;
+  for (const v of src) {
+    if (v <= floor) continue;
+    counts[Math.min(bins - 1, Math.floor((v - floor) / width))]++;
+    tissue++;
+  }
+  if (tissue === 0) return out;
+
+  // The mode of the brighter half of the tissue. The whole tissue histogram's own
+  // mode is the dark end — grey matter, CSF and the noise just above background —
+  // and scaling *that* to white matter's level leaves the volume several times too
+  // bright.
+  let seen = 0;
+  let from = 0;
+  for (let b = 0; b < bins; b++) {
+    seen += counts[b];
+    if (seen >= tissue * 0.5) { from = b; break; }
+  }
+  let mode = from;
+  for (let b = from; b < bins; b++) if (counts[b] > counts[mode]) mode = b;
+
+  const level = floor + (mode + 0.5) * width;
+  const scale = WHITE_MATTER / level;
   for (let i = 0; i < src.length; i++) {
     const v = src[i];
-    out[i] = Number.isFinite(v) ? (v - min) * scale : 0;
+    out[i] = Number.isFinite(v) && v > 0 ? Math.min(1, v * scale) : 0;
   }
   return out;
 }
