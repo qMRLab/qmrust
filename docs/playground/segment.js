@@ -24,25 +24,40 @@ import {
   placeReversed,
 } from "./volume.js";
 
-// One entry per network. The numbers are upstream's own inference settings for it
-// (`niivue/brainchop-models`, `<model>/settings.json`), not ours to tune: they
-// describe how the weights were trained to be fed.
+// One entry per network, in the order the menu offers them. The numbers are
+// upstream's own inference settings for each (`niivue/brainchop-models`,
+// `<model>/settings.json`) — they describe how those weights were trained to be
+// fed, so they belong to the model rather than being ours to tune.
+//
+// `threshold`/`padding` size the box handed to the network: everything above that
+// fraction of the volume's peak, grown by that many voxels. `classes` is the final
+// layer's channel count; the label sets name two, background and brain, so any
+// non-zero class is brain.
 const NETWORKS = [
   {
-    id: "brain-extract-light",
+    id: "brain-extract-full",
     label: "brain-extraction",
     // What the menu says. The expected contrast is part of the name because it is
     // part of the contract: these weights were trained on T1-weighted anatomy, and
     // a network handed something else does not fail, it quietly finds less.
     menu: "Brain Segment T1w (brainchop)",
     icon: "brain",
-    // Everything above 2% of the volume's peak is inside the box handed to the
-    // network — background, not anatomy, is what this excludes.
+    // 11 channels over the whole resampled field of view, which is the accuracy
+    // and the memory both: ~800 MB of GPU, against the light model's ~400.
+    threshold: 0,
+    padding: 0,
+    classes: 3,
+  },
+  {
+    id: "brain-extract-light",
+    label: "brain-extraction",
+    // Kept as the one to fall back to. Nothing here can know how much memory a
+    // reader's GPU has, and 5 channels over a tightly cropped box is the version
+    // that still runs when the full one cannot.
+    menu: "Brain Segment T1w, light (brainchop)",
+    icon: "brain",
     threshold: 0.02,
     padding: 18,
-    // The final layer scores three channels while the label set names two; a
-    // brain mask only asks whether a voxel is background, so any non-zero class
-    // is brain.
     classes: 3,
   },
 ];
