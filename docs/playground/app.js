@@ -38,6 +38,7 @@ import {
   toggleMeasureScope,
 } from "./measure.js";
 import { onDrawingStroke, wandOwnsWheel, wireDrawing } from "./draw.js";
+import { wireSegment } from "./segment.js";
 import { clearMapHover, onLocation, onMapHover, redrawCurve, resizeCurve } from "./curve.js";
 import { closeFileModal, closeJsonModal, closeNotice, openMapModal } from "./modal.js";
 import { onBrowse, onDrop } from "./drop.js";
@@ -296,6 +297,7 @@ function wireMapControls() {
   $("tab-planes").onclick = toggleMapView;
   $("open-map-modal").onclick = openMapModal;
   wireDrawing();
+  wireSegment();
   app.levelMain = createLevelControl("mlevel");
   // Recompute after each stroke, so the numbers track the region as it is drawn.
   // Any viewer can be drawn on — including the modal's, which comes and goes.

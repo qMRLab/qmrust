@@ -54,7 +54,7 @@ export function readMask(volume, nx, ny, nz) {
 // itself, so this reuses its arithmetic rather than forming a second opinion on
 // the header. For an already-RAS volume they are `[1, nx, nx*ny]` and `[0, 0, 0]`,
 // making this the plain `x + y*nx + z*nx*ny`.
-function rasToStorage(vol, nx, ny) {
+export function rasToStorage(vol, nx, ny) {
   const step = vol.img2RASstep;
   const start = vol.img2RASstart;
   if (!step || !start) return (x, y, z) => x + y * nx + z * nx * ny;

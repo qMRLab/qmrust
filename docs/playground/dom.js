@@ -47,3 +47,21 @@ export function cssColorToRgba(token, alpha = 1) {
   if (!nums || nums.length < 3) return [1, 0, 0, alpha];
   return [nums[0] / 255, nums[1] / 255, nums[2] / 255, alpha];
 }
+
+// The fitting progress track: a permanent fixture above the Fit button (an empty
+// track at idle, not an element that appears and reflows the page); only its fill
+// width and the "active" stripe animation change. Anything that takes long enough
+// to need a bar drives this one — there is only ever one long computation running.
+export function showProgress() {
+  $("progress-bar").classList.add("active");
+  setProgress(0);
+}
+
+export function setProgress(pct) {
+  $("progress-bar").style.width = `${Math.max(0, Math.min(100, pct))}%`;
+}
+
+export function hideProgress() {
+  $("progress-bar").classList.remove("active");
+  setProgress(0);
+}

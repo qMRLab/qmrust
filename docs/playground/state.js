@@ -75,6 +75,13 @@ export const app = {
 
   // True while NiiVue's pen is active on the fitted map.
   roiDrawing: false,
+
+  // A brain mask computed by the segmentation network, on `current`'s own grid and
+  // in `fit_volume`'s layout, or null when none has been asked for. It overrides
+  // the mask the recipe resolves, so it is held apart from `current.maskU8`: the
+  // recipe's own is kept in `current.resolvedMask` and restored when this clears.
+  // Belongs to one grid, so a model load drops it.
+  aiMask: null,
 };
 
 // A misspelled field must not silently become a new one, leaving the real field

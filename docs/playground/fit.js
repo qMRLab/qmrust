@@ -1,26 +1,12 @@
 // Fitting the loaded slice, in row-blocks so progress is real and the page stays
 // responsive, then turning the returned maps into viewable volumes.
-import { $, status } from "./dom.js";
+import { $, hideProgress, setProgress, showProgress, status } from "./dom.js";
 import { app, editor, nvOut } from "./state.js";
 import { buildMapVolume, readVolumeSeries } from "./nifti.js";
 import { clearVolumes, showOutput, syncMapViewControls } from "./viewers.js";
 import { plotVoxel } from "./curve.js";
 import { reresolveInputs } from "./model.js";
 
-// The progress track is a permanent fixture above the Fit button (an empty
-// track at idle, not an element that appears/disappears and reflows the
-// page); only its fill width and the "active" stripe animation change.
-function showProgress() {
-  $("progress-bar").classList.add("active");
-  setProgress(0);
-}
-function setProgress(pct) {
-  $("progress-bar").style.width = `${Math.max(0, Math.min(100, pct))}%`;
-}
-function hideProgress() {
-  $("progress-bar").classList.remove("active");
-  setProgress(0);
-}
 // Lets the browser paint (and stay responsive to input) between fit blocks —
 // a plain microtask/`setTimeout(0)` does not reliably yield before the next
 // paint in every engine, but a rAF round-trip does.

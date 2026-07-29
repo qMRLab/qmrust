@@ -24,6 +24,7 @@ import {
 } from "./inputs.js";
 import { clearVolumes, sizeViewers, syncMapViewControls } from "./viewers.js";
 import { resetDrawing } from "./draw.js";
+import { clearAiMask, syncAiMaskButton } from "./segment.js";
 import { clearLabelNames } from "./measure.js";
 import { repaintLevels } from "./level.js";
 import { clearCurve } from "./curve.js";
@@ -120,6 +121,7 @@ async function loadModelFromBids(name, meta) {
   };
   renderFiles();
   syncMapViewControls();
+  syncAiMaskButton();
   $("fit").disabled = false;
   for (const w of resolved.warnings) status(w, "error");
   status("Ready", "ok");
@@ -171,9 +173,12 @@ export async function reresolveInputs() {
   }
 
   app.dataset = { ...ds, resolved };
+  // A mask the reader asked the network for outranks the one the recipe selects:
+  // they pressed a button for it, and it is kept so clearing it can restore this.
   app.current = {
     ...app.current,
-    maskU8,
+    maskU8: app.aiMask ?? maskU8,
+    resolvedMask: maskU8,
     auxFlat,
     auxVolumes,
     resolution: resolved,
@@ -196,8 +201,10 @@ export async function loadModel(name) {
     return;
   }
 
-  // Before the volumes go: the drawing is indexed into the grid they define.
+  // Before the volumes go: both the drawing and any computed mask are indexed
+  // into the grid they define.
   resetDrawing();
+  clearAiMask();
   clearLabelNames();
   clearVolumes(nvIn);
   clearVolumes(nvOut);
@@ -297,6 +304,7 @@ export async function loadModel(name) {
   app.current = { meta, volume, maskU8, auxFlat, auxVolumes, frame: 0 };
   $("fit").disabled = !app.wasm;
   syncMapViewControls();
+  syncAiMaskButton();
   status(
     app.wasm ? "Ready" : "Fitting unavailable — wasm failed to load; viewers still work",
     app.wasm ? "ok" : "error",
