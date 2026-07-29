@@ -63,10 +63,12 @@ jobs:
       - name: Generator unit tests
         run: python3 -m unittest discover -s scripts/tests -v
 
-      # Node's runner is given a glob rather than the directory: passing a
-      # directory makes it try to load that path as a module.
+      # The shell expands this, not Node: an explicit list of files is what the
+      # test runner wants on every version, while a pattern it has to expand
+      # itself is only understood by versions newer than this job pins. Naming the
+      # directory instead is also wrong — the runner tries to load it as a module.
       - name: Playground unit tests
-        run: node --test "scripts/tests/**/*.test.mjs"
+        run: node --test scripts/tests/*.test.mjs
 
       - name: Theme contrast and token contract
         run: node scripts/check_theme_contrast.mjs

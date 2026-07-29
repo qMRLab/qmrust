@@ -129,7 +129,7 @@ Adding a skin is one `THEMES` entry plus a light and a dark block. Both are gate
 
 ```bash
 node scripts/check_theme_contrast.mjs   # contrast floors, token contract, list ↔ CSS
-node --test "scripts/tests/**/*.test.mjs"
+node --test scripts/tests/*.test.mjs
 ```
 
 The checker composites translucent panels over the ground before measuring, walks
