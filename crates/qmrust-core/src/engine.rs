@@ -112,11 +112,14 @@ impl AuxMaps {
 ///
 /// - `Named { roles }`: volume `i` takes role `roles[i]` (requires exactly
 ///   `roles.len()` volumes).
-/// - `Series { rows }`: prefer externally-resolved per-volume rows
-///   (`proto.volumes` — the BIDS sidecar-derived identities); otherwise fall back
-///   to the model's own canonical identity rows. Both carry populated params —
-///   an empty/positional row is never emitted, because models assemble signal by
-///   identity rather than position.
+/// - `Series { rows }`: externally-resolved per-volume rows (`proto.volumes` —
+///   the BIDS sidecar-derived identities) when there are any, the model's own
+///   canonical identity rows when there are not. A resolved protocol of the wrong
+///   length describes different data than was passed, so it is an error rather
+///   than a reason to reach for the recipe's rows: silently swapping in another
+///   acquisition's parameters would fit the data against the wrong protocol. Both
+///   carry populated params — an empty/positional row is never emitted, because
+///   models assemble signal by identity rather than position.
 pub fn build_volume_ids(
     kind: MeasurementKind,
     proto: &Protocol,
@@ -135,10 +138,10 @@ pub fn build_volume_ids(
             Ok(roles.iter().map(|&r| VolumeId::Role(r)).collect())
         }
         MeasurementKind::Series { rows } => {
-            let source = if proto.volumes.len() == n_volumes {
-                &proto.volumes
-            } else {
+            let source = if proto.volumes.is_empty() {
                 &rows
+            } else {
+                &proto.volumes
             };
             if source.len() != n_volumes {
                 return Err(format!(

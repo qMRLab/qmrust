@@ -55,6 +55,9 @@ function commitObjEdit() {
   editor.text = yamlDump(editor.obj);
   editor.valid = true;
   $("cfg-yaml").value = editor.text;
+  // The textarea's own text is transparent — the highlight layer behind it is what
+  // a reader actually reads, so leaving it unpainted shows them the previous YAML.
+  paintYaml();
   setYamlPill(true);
 }
 

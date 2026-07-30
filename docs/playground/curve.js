@@ -81,7 +81,7 @@ export function plotVoxel(x, y, z) {
     return;
   }
   const measured = [];
-  for (let t = 0; t < nt; t++) measured.push(volume.getValue(x, y, 0, t));
+  for (let t = 0; t < nt; t++) measured.push(volume.getValue(x, y, z, t));
   // forward() takes one scalar per aux name (a single voxel), unlike
   // fit_volume's flat-array-per-name contract.
   const voxelAux = {};

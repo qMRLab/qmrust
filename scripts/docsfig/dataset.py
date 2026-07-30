@@ -33,6 +33,24 @@ def root_for(parent, model):
     return pathlib.Path(parent) / f"ds-{model['bids_suffix'].lower()}"
 
 
+def _require_complete(model, what, ordered, declared, leftover):
+    """Every declaration matched exactly one volume, and nothing was left over.
+
+    A duplicate match is impossible by construction — each match is removed from
+    the pool — so the two ways to be wrong are a declaration that matched nothing
+    and a volume no declaration claimed. Both mean this dataset is not the one the
+    model describes.
+    """
+    if len(ordered) == len(declared) and not leftover:
+        return
+    raise ValueError(
+        f"{model['name']}: matched {len(ordered)} of {len(declared)} {what} in "
+        f"{root_for('.', model).name}"
+        + (f", leaving {[p.name for _, p in leftover]} unclaimed" if leftover else "")
+        + " — the dataset does not match what the model declares"
+    )
+
+
 def find(parent, model):
     """The collection for `model`, or None when its dataset isn't there.
 
@@ -56,6 +74,11 @@ def find(parent, model):
         identity = {k: float(meta[k]) for k in per_volume if k in meta}
         volumes.append((identity, path))
 
+    # Resolution is all-or-nothing. A partial match used to leave `volumes` in
+    # glob order, which is the one outcome with no symptom: every figure still
+    # renders, and the volumes behind it are simply attributed to the wrong
+    # acquisitions. A dataset this model cannot be matched against is a broken
+    # dataset, so it stops the build instead.
     if model["measurement"]["kind"] == "series" and per_volume:
         # Order to the model's own canonical rows: identity, never position.
         rows = model["measurement"]["rows"]
@@ -71,8 +94,8 @@ def find(parent, model):
             if match:
                 pool.remove(match)
                 ordered.append(match)
-        if len(ordered) == len(rows):
-            volumes = ordered
+        _require_complete(model, "series rows", ordered, rows, pool)
+        volumes = ordered
     elif model["measurement"]["kind"] == "named":
         # Order to the model's own canonical roles: BIDS filename entity
         # tokens (e.g. "mt-on"), never glob order.
@@ -88,8 +111,8 @@ def find(parent, model):
             if match:
                 pool.remove(match)
                 ordered.append(match)
-        if len(ordered) == len(roles):
-            volumes = ordered
+        _require_complete(model, "named roles", ordered, roles, pool)
+        volumes = ordered
 
     deriv = bids_dir / "derivatives"
     aux = {}
