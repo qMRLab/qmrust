@@ -33,6 +33,21 @@ def root_for(parent, model):
     return pathlib.Path(parent) / f"ds-{model['bids_suffix'].lower()}"
 
 
+def _entity_tokens(path):
+    """The underscore-delimited tokens of a BIDS filename, extension removed.
+
+    Matching entities as substrings would let `flip-1` claim a `flip-10` volume —
+    the declared roles here are single-digit today, so this is about the ordering
+    staying correct for a dataset that is not.
+    """
+    name = path.name
+    for ext in (".nii.gz", ".nii"):
+        if name.endswith(ext):
+            name = name[: -len(ext)]
+            break
+    return set(name.split("_"))
+
+
 def _require_complete(model, what, ordered, declared, leftover):
     """Every declaration matched exactly one volume, and nothing was left over.
 
@@ -103,9 +118,9 @@ def find(parent, model):
         ordered = []
         pool = list(volumes)
         for role in roles:
-            tokens = [f"{e['key']}-{e['value']}" for e in role["entities"]]
+            tokens = {f"{e['key']}-{e['value']}" for e in role["entities"]}
             match = next(
-                (v for v in pool if all(t in v[1].name for t in tokens)),
+                (v for v in pool if tokens <= _entity_tokens(v[1])),
                 None,
             )
             if match:

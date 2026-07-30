@@ -138,15 +138,19 @@ pub fn build_volume_ids(
             Ok(roles.iter().map(|&r| VolumeId::Role(r)).collect())
         }
         MeasurementKind::Series { rows } => {
-            let source = if proto.volumes.is_empty() {
-                &rows
+            // The label travels with the choice: a length complaint about "the
+            // model's series protocol" sends a reader to the recipe, which is the
+            // wrong place to look when the rows came from the dataset's sidecars.
+            let (source, origin) = if proto.volumes.is_empty() {
+                (&rows, "the model's series protocol")
             } else {
-                &proto.volumes
+                (&proto.volumes, "the protocol resolved from the data")
             };
             if source.len() != n_volumes {
                 return Err(format!(
-                    "Data has {} volumes but the model's series protocol has {} rows",
+                    "Data has {} volumes but {} has {} rows",
                     n_volumes,
+                    origin,
                     source.len()
                 ));
             }
