@@ -5,10 +5,24 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "crates/**"
+      - "recipes/**"
+      - "scripts/gen_model_docs.py"
+      - "scripts/make_docs_figures.py"
+      - "scripts/docsfig/**"
+      - "scripts/tests/**"
+      - "scripts/check_theme_contrast.mjs"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
+      - "crates/**"
+      - "recipes/**"
+      - "scripts/gen_model_docs.py"
+      - "scripts/make_docs_figures.py"
+      - "scripts/docsfig/**"
+      - "scripts/tests/**"
+      - "scripts/check_theme_contrast.mjs"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -26,15 +40,72 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the CLI
+        run: cargo build --release -p qmrust-cli
+
+      - name: Verify generated model pages are current
+        run: |
+          ./target/release/qmrust catalog > catalog.json
+          python3 scripts/gen_model_docs.py --catalog catalog.json --check
+
+      # The generator's tests reach the figure pipeline, which needs these. The
+      # figures themselves are generated locally and committed, so this job only
+      # ever checks them — nothing else here imports any of it.
+      - name: Install the figure pipeline's dependencies
+        run: python3 -m pip install --quiet numpy pyyaml matplotlib pillow
+
+      - name: Generator unit tests
+        run: python3 -m unittest discover -s scripts/tests -v
+
+      # The shell expands this, not Node: an explicit list of files is what the
+      # test runner wants on every version, while a pattern it has to expand
+      # itself is only understood by versions newer than this job pins. Naming the
+      # directory instead is also wrong — the runner tries to load it as a module.
+      - name: Playground unit tests
+        run: node --test scripts/tests/*.test.mjs
+
+      - name: Theme contrast and token contract
+        run: node scripts/check_theme_contrast.mjs
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Build the playground wasm
+        working-directory: crates/qmrust-wasm
+        run: wasm-pack build --target web --out-dir ../../docs/playground/pkg
+
       - run: npm install -g mystmd
-      - name: Build MyST site
+
+      - name: Build the site
         working-directory: docs
         env:
           BASE_URL: /${{ github.event.repository.name }}
         run: myst build --html
+
+      - name: Copy the playground app and pin its iframe target
+        env:
+          BASE_URL: /${{ github.event.repository.name }}
+        run: |
+          cp -r docs/playground docs/_build/html/app
+          python3 -c '
+          import os, pathlib
+          base = os.environ["BASE_URL"]
+          page = pathlib.Path("docs/_build/html/playground/index.html")
+          html = page.read_text()
+          old = "src=\"./playground/index.html\""
+          new = f"src=\"{base}/app/index.html\""
+          assert html.count(old) == 1, "playground iframe src marker not found or not unique"
+          page.write_text(html.replace(old, new))
+          '
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/_build/html

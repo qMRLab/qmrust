@@ -28,18 +28,18 @@ inputs (B1/B0/R1, …) it needs. A single registry (`registry::all()`) maps a
 model name and BIDS suffix to a builder function; the CLI, simulator, and
 wasm bindings all resolve models through it. There is no `match cfg.model`
 scattered through the codebase — adding a model is one module plus one
-registry line. See [Models](models.md) for the contributor checklist.
+registry line. See [Adding a model](adding-a-model.md) for the contributor checklist.
 
 ## Fourth crate: `rust-bids`
 
 `rust-bids` is a standalone, wasm-clean BIDS layout resolver that groups raw
 dataset files into fittable `Collection`s and can build a `qmrust_core::Protocol`
 from BIDS sidecars. It depends on `qmrust-core` (as a consumer, like the CLI
-and wasm crates do) but is not part of the core itself. See [BIDS](bids.md).
+and wasm crates do) but is not part of the core itself. See [BIDS](../guide/bids.md).
 
 ## Going deeper
 
 This page is intentionally short. For the full design — the `Model` trait in
 detail, the registry, the engine's fit strategies, per-crate directory maps,
 and worked examples of adding a model — read
-[`docs/agents/ARCHITECTURE.md`](agents/ARCHITECTURE.md).
+[`docs/agents/ARCHITECTURE.md`](../agents/ARCHITECTURE.md).

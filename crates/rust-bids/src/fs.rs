@@ -1,11 +1,9 @@
-//! Filesystem abstraction. The pure layers read only through `DatasetFs`;
-//! the shell supplies `std::fs` (native) or File System Access API (wasm).
+//! Filesystem abstraction. The pure layers read only through `DatasetFs`, so a
+//! dataset need not be on a disk: the shell supplies `std::fs` natively, and
+//! `MemFs` backs anything that arrives as bytes — an unzipped archive or a
+//! directory a browser handed over — with the resolver unchanged either way.
 
-use anyhow::Result;
-
-#[cfg(any(test, feature = "testfs"))]
-use anyhow::anyhow;
-#[cfg(any(test, feature = "testfs"))]
+use anyhow::{anyhow, Result};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,13 +19,19 @@ pub trait DatasetFs {
     fn read(&self, rel_path: &str) -> Result<Vec<u8>>;
 }
 
-#[cfg(any(test, feature = "testfs"))]
+/// A whole dataset held as dataset-relative path → bytes.
+///
+/// Directories are implicit: they exist exactly insofar as some file path
+/// contains them, which is what lets a caller hand over a flat path→bytes map —
+/// an unzipped archive, a dropped directory listing — with no tree to build.
+/// Paths are taken as given; normalizing whatever the source produced (leading
+/// `./`, an archive's wrapping root directory) into dataset-relative form is the
+/// caller's job, since only the caller knows where its dataset root is.
 #[derive(Default, Clone)]
 pub struct MemFs {
     files: BTreeMap<String, Vec<u8>>,
 }
 
-#[cfg(any(test, feature = "testfs"))]
 impl MemFs {
     pub fn new() -> Self {
         Self::default()
@@ -41,9 +45,19 @@ impl MemFs {
     pub fn touch(self, path: &str) -> Self {
         self.with(path, Vec::new())
     }
+    /// Bulk-load a whole dataset in one call. Later entries win on a repeated
+    /// path, matching `with`.
+    pub fn from_files(files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Self {
+        Self {
+            files: files.into_iter().collect(),
+        }
+    }
+    /// Every path held, in sorted order.
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.files.keys().map(String::as_str)
+    }
 }
 
-#[cfg(any(test, feature = "testfs"))]
 impl DatasetFs for MemFs {
     fn list(&self, rel_dir: &str) -> Result<Vec<Entry>> {
         let prefix = if rel_dir.is_empty() {
@@ -102,5 +116,33 @@ mod tests {
         let anat = fs.list("sub-01/anat").unwrap();
         assert_eq!(anat.len(), 1);
         assert!(!anat[0].is_dir);
+    }
+
+    /// Bulk-loading a whole dataset at once must produce exactly the view
+    /// building it up file by file does — that equivalence is what lets a
+    /// caller hand over an unzipped archive without reshaping it.
+    #[test]
+    fn memfs_bulk_load_matches_incremental() {
+        let paths = [
+            ("dataset_description.json", b"{}".to_vec()),
+            ("sub-01/anat/sub-01_inv-01_IRT1.nii.gz", vec![1, 2, 3]),
+            ("sub-01/anat/sub-01_inv-01_IRT1.json", b"{\"a\":1}".to_vec()),
+        ];
+        let bulk = MemFs::from_files(paths.iter().map(|(p, b)| (p.to_string(), b.clone())));
+        let incremental = paths
+            .iter()
+            .fold(MemFs::new(), |fs, (p, b)| fs.with(p, b.clone()));
+
+        assert_eq!(
+            bulk.paths().collect::<Vec<_>>(),
+            incremental.paths().collect::<Vec<_>>()
+        );
+        for dir in ["", "sub-01", "sub-01/anat"] {
+            assert_eq!(bulk.list(dir).unwrap(), incremental.list(dir).unwrap());
+        }
+        for (path, bytes) in &paths {
+            assert_eq!(&bulk.read(path).unwrap(), bytes);
+        }
+        assert!(bulk.read("sub-01/anat/nope.nii.gz").is_err());
     }
 }

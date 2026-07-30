@@ -1,0 +1,135 @@
+{
+ "model": "mt_sat",
+ "title": "MT saturation",
+ "dims": [
+  128,
+  128,
+  1,
+  3
+ ],
+ "factor": 1,
+ "volume_ids": [
+  "MTw",
+  "PDw",
+  "T1w"
+ ],
+ "labels": [
+  "MTw",
+  "PDw",
+  "T1w"
+ ],
+ "params": [
+  "A",
+  "T1",
+  "MTSAT"
+ ],
+ "outputs": [
+  {
+   "name": "MTSAT",
+   "unit": "%",
+   "display_range": [
+    0.0,
+    6.0
+   ]
+  },
+  {
+   "name": "T1",
+   "unit": "s",
+   "display_range": [
+    0.0,
+    3.0
+   ]
+  },
+  {
+   "name": "MTR",
+   "unit": "%",
+   "display_range": [
+    0.0,
+    60.0
+   ]
+  }
+ ],
+ "enums": [],
+ "config": "model: mt_sat\n\n# Non-BIDS / bidsify protocol source: per-weighting nominal flip angle (deg)\n# and repetition time (s). bidsify writes these into the MTS sidecars\n# (FlipAngle / RepetitionTimeExcitation); a non-BIDS fit reads them directly.\nmtw: { flip_angle: 6, repetition_time: 0.028 }\npdw: { flip_angle: 6, repetition_time: 0.028 }\nt1w: { flip_angle: 20, repetition_time: 0.018 }\n\n# Options (always used; not BIDS metadata).\n# B1 correction is applied only when a B1 map (TB1map) is supplied.\nb1_correction_factor: 0.4\nexport_mtr: true\n\n# Non-BIDS input is a named set: one <role>.nii.gz per role under --nii-dir\n# (MTw.nii.gz, PDw.nii.gz, T1w.nii.gz); mask via --mask/--nii-mask. Example:\n#\n#   qmrust bidsify --model mt_sat --nii-dir <dir> \\\n#     --config recipes/non-bids/mt_sat_config.yaml --subject 01 --out ds\n",
+ "config_bids": "model: mt_sat\n\n# BIDS input: each MTS role's FlipAngle and RepetitionTimeExcitation come from\n# its JSON sidecar (via the model's protocol_schema), so the per-role\n# acquisition is NOT declared here.\n\n# Options (always used; not BIDS metadata).\n# B1 correction is applied only when a B1 map (TB1map) is present in the dataset.\nb1_correction_factor: 0.4\nexport_mtr: true\n\n# BIDS mask selection \u2014 disambiguates which mask to apply. If the dataset has\n# no matching mask, no masking is applied (as in this example).\nmask:\n  desc: brain\n",
+ "archive": "ds-mts.zip",
+ "files": {
+  "data": "mt_sat.nii.gz",
+  "mask": null,
+  "aux": {}
+ },
+ "probes": [
+  {
+   "x": 64,
+   "y": 64,
+   "expected": {
+    "MTSAT": 2.111951822189964,
+    "T1": 1.8448622757860678,
+    "MTR": 50.54945054945055
+   }
+  },
+  {
+   "x": 61,
+   "y": 61,
+   "expected": {
+    "MTSAT": 2.736168179801543,
+    "T1": 1.7989847837104316,
+    "MTR": 56.52173913043478
+   }
+  },
+  {
+   "x": 61,
+   "y": 67,
+   "expected": {
+    "MTSAT": 2.497199228190386,
+    "T1": 1.6553896663110148,
+    "MTR": 52.71739130434783
+   }
+  },
+  {
+   "x": 67,
+   "y": 61,
+   "expected": {
+    "MTSAT": 1.8158273402394647,
+    "T1": 2.51953588893889,
+    "MTR": 52.247191011235955
+   }
+  },
+  {
+   "x": 67,
+   "y": 67,
+   "expected": {
+    "MTSAT": 2.44981786750007,
+    "T1": 1.9229645545514713,
+    "MTR": 55.0
+   }
+  },
+  {
+   "x": 64,
+   "y": 70,
+   "expected": {
+    "MTSAT": 2.4813291387988357,
+    "T1": 1.5341340097660514,
+    "MTR": 51.111111111111114
+   }
+  },
+  {
+   "x": 70,
+   "y": 64,
+   "expected": {
+    "MTSAT": 0.6952289613980133,
+    "T1": 2.0534358448873458,
+    "MTR": 26.666666666666668
+   }
+  },
+  {
+   "x": 58,
+   "y": 58,
+   "expected": {
+    "MTSAT": 2.382667850337971,
+    "T1": 1.8741942137360406,
+    "MTR": 53.84615384615385
+   }
+  }
+ ]
+}

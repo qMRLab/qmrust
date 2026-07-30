@@ -2,7 +2,7 @@
 
 This page gets you from a fresh clone to a fitted map or a simulated signal.
 If you just want the shape of the project first, read [index](index.md) or
-[architecture](architecture.md) instead.
+[architecture](dev/architecture.md) instead.
 
 ## Build
 
@@ -70,7 +70,7 @@ declares (B1/B0/R1) from the dataset by suffix — so aux-requiring models like
 qMT fit through `--bids-dir` too. *Named* collections (fixed role slots, e.g.
 MTR's mt-on/mt-off) fit as well: their role-labeled volumes are mapped onto the
 model's declared roles, so the grouping's `named_set` role names must match the
-model's `measurement()` roles. See [BIDS](bids.md) for how `rust-bids` resolves
+model's `measurement()` roles. See [BIDS](guide/bids.md) for how `rust-bids` resolves
 the dataset layout.
 
 Notice `--config` above points at `recipes/bids/irt1_config.yaml`, not the
@@ -78,7 +78,7 @@ non-BIDS one — a BIDS fit's config doesn't carry the inversion times: the
 model declares which acquisition parameters it needs from the JSON sidecars,
 so `--config` is just algorithm options (fit bounds, etc.) plus the `mask:`
 block that disambiguates which mask to apply. See
-[From sidecar metadata to `Protocol`](bids.md#from-sidecar-metadata-to-protocol)
+[From sidecar metadata to `Protocol`](guide/bids.md#from-sidecar-metadata-to-protocol)
 for how that mapping works.
 
 Fitted maps are written under `--output-dir` as a **BIDS-derivatives** tree:
@@ -99,28 +99,28 @@ cargo run -p qmrust-cli -- bidsify \
   --model inversion_recovery \
   --mat-data IRData.mat --mask Mask.mat \
   --config recipes/non-bids/irt1_config.yaml \
-  --subject 01 --out ds-qmrust
+  --subject 01 --out ds-irt1
 ```
 
-This writes `ds-qmrust/sub-01/anat/sub-01_inv-<i>_IRT1.nii.gz` (+
+This writes `ds-irt1/sub-01/anat/sub-01_inv-<i>_IRT1.nii.gz` (+
 `{InversionTime}` sidecars), `dataset_description.json`, `participants.tsv`,
-and the mask under `ds-qmrust/derivatives/preprocessed/sub-01/anat/
-sub-01_desc-brain_mask.nii.gz`.
+and the mask under `ds-irt1/derivatives/preprocessed/sub-01/anat/
+sub-01_desc-brain_mask.nii.gz`. Each `--out` is a complete, self-contained BIDS
+dataset root — one per model, rather than many models sharing one tree.
 
 `bidsify` also supports `qmt_spgr`, whose BIDS identity is the custom,
-non-official suffix `QMTSPGR` (see [BIDS](bids.md)). Point it at a directory
-of qMRLab's qMT `.mat` files instead of a single file, and append it as a
-second subject in the same dataset:
+non-official suffix `QMTSPGR` (see [BIDS](guide/bids.md)). Point it at a directory
+of qMRLab's qMT `.mat` files instead of a single file, and give it its own root:
 
 ```bash
 cargo run -p qmrust-cli -- bidsify \
   --model qmt_spgr \
   --mat-dir <dir-with-MTdata/R1map/B1map/B0map/Mask.mat> \
   --config recipes/non-bids/qmt_config_ramani.yaml \
-  --subject 02 --out ds-qmrust
+  --subject 01 --out ds-qmtspgr
 ```
 
-This writes `ds-qmrust/sub-02/anat/sub-02_flip-<f>_mt-<m>_QMTSPGR.nii.gz` for
+This writes `ds-qmtspgr/sub-01/anat/sub-01_flip-<f>_mt-<m>_QMTSPGR.nii.gz` for
 each of the 10 MT-weighted volumes (2 flip angles × 5 offsets), each with a
 sidecar carrying the acquisition metadata the fit reads back by identity:
 
@@ -130,33 +130,50 @@ sidecar carrying the acquisition metadata the fit reads back by identity:
 
 and a root `.bidsignore` containing `*QMTSPGR*` (so general BIDS validators
 skip the non-official suffix; qmrust's own layout resolver discovers it
-regardless — see [BIDS](bids.md)). Any computed inputs present in `--mat-dir`
+regardless — see [BIDS](guide/bids.md)). Any computed inputs present in `--mat-dir`
 are written byte-identical to a `preprocessed` derivatives pipeline: B1/B0
-field maps under `ds-qmrust/derivatives/preprocessed/sub-02/fmap/`
+field maps under `ds-qmtspgr/derivatives/preprocessed/sub-01/fmap/`
 (`_TB1map`/`_B0map`), the R1 map and brain mask under that pipeline's `anat/`
 (`_R1map`/`_desc-brain_mask`).
+
+A model's auxiliary inputs are auto-discovered as `<name>.mat` under `--mat-dir`
+(as above). A NIfTI source has no such convention, so pass them explicitly —
+`--aux <name>=<path>`, repeatable, where `<name>` is one the model declares:
+
+```bash
+cargo run -p qmrust-cli -- bidsify \
+  --model mt_sat --nii-dir <dir-with-MTw/PDw/T1w.nii.gz> \
+  --aux B1map=<TB1map.nii.gz> \
+  --config recipes/non-bids/mt_sat_config.yaml \
+  --subject 01 --out ds-mts
+```
 
 Fitting the resulting `QMTSPGR` collection the same way as IRT1:
 
 ```bash
 cargo run -p qmrust-cli -- fit \
-  --bids-dir ds-qmrust \
+  --bids-dir ds-qmtspgr \
   --config recipes/bids/qmt_config_ramani.yaml \
-  --output-dir ds-qmrust/derivatives
+  --output-dir ds-qmtspgr/derivatives
 ```
 
 writes the six qMT maps qmt_spgr declares via `bids_outputs()` —
-`sub-02_Fmap.nii.gz`, `_kRmap`, `_R1Fmap`, `_R1Rmap`, `_T2Fmap`, `_T2Rmap` —
-under `ds-qmrust/derivatives/qmrust/sub-02/anat/`.
+`sub-01_Fmap.nii.gz`, `_kRmap`, `_R1Fmap`, `_R1Rmap`, `_T2Fmap`, `_T2Rmap` —
+under `ds-qmtspgr/derivatives/qmrust/sub-01/anat/`.
 
-`scripts/make_bids_examples.sh` automates both examples end to end: it
-fetches qMRLab's OSF IR and qMT demo datasets, runs `bidsify` for each into
-the same `ds-qmrust` (sub-01 IRT1, sub-02 QMTSPGR), fits both via
-`qmrust fit --bids-dir`, and confirms the IRT1 result is voxel-identical to
-fitting the original `.mat` (in-mask) and within qMRLab's own reference
-tolerance (`FitResults/T1.nii.gz`). The generated dataset itself is not
-committed (large data stays out of the repo); re-run the script to regenerate
-it.
+`scripts/make_bids_examples.sh` automates this for every model: it fetches
+qMRLab's OSF demo datasets and builds one self-contained single-subject BIDS
+dataset per model — `ds-irt1`, `ds-mese`, `ds-mtr`, `ds-mts`, `ds-qmtspgr`,
+named `ds-<lowercased BIDS suffix>` — fits each via `qmrust fit --bids-dir`, and
+asserts each model's declared maps were produced. Because each root carries its
+own raw acquisitions *and* its own `derivatives/preprocessed` inputs, any one of
+them is a single self-sufficient unit: `--zip` writes `ds-<slug>.zip` per root,
+excluding the `derivatives/qmrust` reference outputs (those check a fit; they
+aren't an input to one). The datasets themselves are not committed (large data
+stays out of the repo); re-run the script to regenerate them.
+
+Voxelwise agreement with qMRLab's own `FitResults` is checked separately by
+`ci/integration_osf.sh`.
 
 ## Run a simulation
 
@@ -196,5 +213,5 @@ qmrust's `T1map` by a factor of 1000. See the "Units — BIDS-native (SI)" princ
 
 ## Next steps
 
-- Adding your own model? See [Models](models.md).
-- Working from a BIDS dataset instead of individual files? See [BIDS](bids.md).
+- Adding your own model? See [Adding a model](dev/adding-a-model.md).
+- Working from a BIDS dataset instead of individual files? See [BIDS](guide/bids.md).

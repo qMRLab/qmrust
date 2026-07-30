@@ -17,50 +17,13 @@ use qmrust_core::engine::AuxMaps;
 use qmrust_core::models;
 use rust_bids::{Collection, GroupedData};
 
-/// Build per-volume identities for `engine::run` from a model's declared
-/// measurement kind and the resolved protocol — dispatch on the measurement
-/// shape, never on the model name. Every volume is labeled with a real
-/// identity, so the model's `fit` always assembles by value, never by position.
-///
-/// - `Named { roles }`: volume `i` takes role `roles[i]` (requires exactly
-///   `roles.len()` volumes).
-/// - `Series { rows }`: prefer externally-resolved per-volume rows
-///   (`proto.volumes`, the BIDS sidecar-derived identities); otherwise fall
-///   back to the model's own canonical identity rows. Both carry populated
-///   params — an empty/positional row is never emitted.
+/// `qmrust_core::engine::build_volume_ids` in this crate's error type.
 fn build_volume_ids(
     kind: MeasurementKind,
     proto: &Protocol,
     n_volumes: usize,
 ) -> Result<Vec<VolumeId>> {
-    match kind {
-        MeasurementKind::Named { roles } => {
-            if roles.len() != n_volumes {
-                bail!(
-                    "Data has {} volumes but model expects {} named volumes ({:?})",
-                    n_volumes,
-                    roles.len(),
-                    roles
-                );
-            }
-            Ok(roles.iter().map(|&r| VolumeId::Role(r)).collect())
-        }
-        MeasurementKind::Series { rows } => {
-            let source = if proto.volumes.len() == n_volumes {
-                &proto.volumes
-            } else {
-                &rows
-            };
-            if source.len() != n_volumes {
-                bail!(
-                    "Data has {} volumes but the model's series protocol has {} rows",
-                    n_volumes,
-                    source.len()
-                );
-            }
-            Ok(source.iter().cloned().map(VolumeId::Params).collect())
-        }
-    }
+    qmrust_core::engine::build_volume_ids(kind, proto, n_volumes).map_err(|e| anyhow::anyhow!(e))
 }
 
 /// Read a config file from disk and parse + validate it, also returning the
@@ -68,7 +31,7 @@ fn build_volume_ids(
 /// I/O lives here (in the CLI); `qmrust_core::config::parse_config` is a
 /// pure parser with no `std::fs` dependency, keeping the core crate
 /// wasm-clean.
-fn load_config_raw(
+pub(crate) fn load_config_raw(
     path: &std::path::Path,
 ) -> anyhow::Result<(qmrust_core::config::Config, serde_yaml::Value)> {
     let contents = std::fs::read_to_string(path)
@@ -256,9 +219,9 @@ fn load_map(path: &Path) -> Result<Array3<f64>> {
 /// mis-assignment. `roles` is `None` when the model uses a `Series`
 /// measurement — a `Named` collection then has no axis to map onto and fails.
 ///
-/// An empty `schema` (a model that declares no `protocol_schema()`) resolves to
-/// an empty `Protocol`; the model then reads its acquisition from its own
-/// `--config`.
+/// The protocol itself comes from `rust_bids::compose_protocol`, which owns the
+/// schema-to-`Protocol` contract (including the empty-schema case) and puts the
+/// volumes on the same axis this stacks the data onto.
 fn load_collection(
     fs: &StdFs,
     c: &Collection,
@@ -266,40 +229,13 @@ fn load_collection(
     options: &std::collections::BTreeMap<String, f64>,
     roles: Option<&[&'static str]>,
 ) -> Result<(Array4<f64>, Protocol, Option<NiftiHeader>)> {
-    let vols: Vec<&rust_bids::VolumeRef> = match &c.data {
-        GroupedData::Sequential(vols) => vols.iter().collect(),
-        GroupedData::Named(map) => {
-            let roles = roles.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "collection for '{}' is a named set, but model uses a series measurement \
-                     with no role axis to map its volumes onto",
-                    c.suffix
-                )
-            })?;
-            roles
-                .iter()
-                .map(|&r| {
-                    map.get(r).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "named collection for '{}' is missing role '{}' (has {:?})",
-                            c.suffix,
-                            r,
-                            map.keys().collect::<Vec<_>>()
-                        )
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?
-        }
-    };
-    if vols.is_empty() {
-        bail!("collection for '{}' has no volumes", c.suffix);
-    }
+    let vols = rust_bids::ordered_volume_paths(c, roles)?;
 
     let mut header = None;
     let mut dims: Option<(usize, usize, usize)> = None;
     let mut slices: Vec<Array3<f64>> = Vec::with_capacity(vols.len());
     for v in vols {
-        let path = fs.root.join(&v.nii);
+        let path = fs.root.join(v);
         let (data, h) = io::nifti::read_map_nifti_with_header(&path)?;
         let d = data.dim();
         match dims {
@@ -328,46 +264,10 @@ fn load_collection(
         out.index_axis_mut(ndarray::Axis(3), t).assign(slice);
     }
 
-    // An empty schema must yield an empty `Protocol` (zero volumes), NOT one
-    // with N empty per-volume maps: `build_volume_ids` treats a volume count
-    // matching the data as authoritative identities, so N empty rows would
-    // suppress the model's canonical `rows` fallback and break identity
-    // matching. This branch is load-bearing for correctness, not an optimization.
-    let proto = if schema.is_empty() {
-        Protocol::default()
-    } else {
-        let resolved = rust_bids::resolve_protocol(fs, c, schema, options)?;
-        match (&c.data, roles) {
-            // `resolve_protocol` walks a named set in `BTreeMap` (alphabetical
-            // role) order, which need not match the model's declared role
-            // order the data was just stacked in. Reorder — and select, if the
-            // model uses a subset of the set's roles — so `proto.volumes[i]` is
-            // `roles[i]`, letting a Named model's `ingest_protocol` fold each
-            // role's acquisition by position.
-            (GroupedData::Named(map), Some(roles)) => {
-                let alpha: Vec<&str> = map.keys().map(String::as_str).collect();
-                let mut by_role: std::collections::BTreeMap<&str, _> =
-                    alpha.into_iter().zip(resolved.volumes).collect();
-                let volumes = roles
-                    .iter()
-                    .map(|&r| {
-                        by_role.remove(r).ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "named collection for '{}' resolved no protocol for role '{}'",
-                                c.suffix,
-                                r
-                            )
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Protocol {
-                    volumes,
-                    global: resolved.global,
-                }
-            }
-            _ => resolved,
-        }
-    };
+    // Composed on the model's own axis, so `out`'s column `i` and
+    // `proto.volumes[i]` describe the same volume — this stacked the data in
+    // `roles` order above for exactly that reason.
+    let proto = rust_bids::compose_protocol(fs, c, schema, options, roles)?;
     Ok((out, proto, header))
 }
 
@@ -725,21 +625,8 @@ pub fn run_fit_bids(
     let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
 
     // Optional `mask:` config: which mask to apply, disambiguated by entity
-    // constraints. Its entity keys are normalized (e.g. `desc` -> `description`)
-    // to match how the table stores them.
-    let mask_spec: Option<MaskSpec> = raw
-        .get("mask")
-        .map(|v| serde_yaml::from_value::<MaskSpec>(v.clone()))
-        .transpose()
-        .map_err(|e| anyhow::anyhow!("invalid `mask:` config: {e}"))?
-        .map(|spec| MaskSpec {
-            suffix: spec.suffix,
-            entities: spec
-                .entities
-                .into_iter()
-                .map(|(k, v)| (vocab.normalize_entity_key(&k), v))
-                .collect(),
-        });
+    // constraints.
+    let mask_spec = rust_bids::MaskSpec::from_recipe(&raw, &vocab)?;
     let suffix = entry.bids_suffix;
     // The flat file table spans the whole dataset — raw tree and every
     // `derivatives/` pipeline — and is the single source from which each
@@ -793,7 +680,7 @@ pub fn run_fit_bids(
         let (nx, ny, nz, _) = data.dim();
         let header = header.unwrap_or_else(|| make_minimal_header(nx, ny, nz));
 
-        let (aux, mask, aux_sources) = resolve_aux_and_mask(
+        let (aux, mask, aux_sources) = load_aux_and_mask(
             &table,
             model.as_ref(),
             &c.entities,
@@ -900,7 +787,7 @@ pub fn collect_mtsat_r1_b1(bids_dir: &Path) -> Result<Vec<(f64, f64, f64)>> {
     // correcting agree. This helper only ever calibrates `mt_sat`.
     let model = qmrust_core::models::mt_sat::build_calibration(&raw, &proto)?;
     let (aux, mask, _sources) =
-        resolve_aux_and_mask(&table, model.as_ref(), &c.entities, None, bids_dir)?;
+        load_aux_and_mask(&table, model.as_ref(), &c.entities, None, bids_dir)?;
     let b1 = aux.get_map("B1map").ok_or_else(|| {
         anyhow::anyhow!(
             "no B1map (TB1map) resolved for the mtsat-b1 reference collection in {:?}; a B1 map \
@@ -939,124 +826,32 @@ pub fn collect_mtsat_r1_b1(bids_dir: &Path) -> Result<Vec<(f64, f64, f64)>> {
     Ok(out)
 }
 
-/// Locate a single input file for a collection by matching its full grouping
-/// `identity` (every entity the dataset groups by) plus `extra` constraints
-/// (the declared BIDS suffix, and any entity the model says indexes the input)
-/// against the whole dataset `table` — raw tree and every `derivatives/`
-/// pipeline alike. `None` when nothing matches; an error when several do, so an
-/// ambiguous input is surfaced rather than silently chosen. Nothing here is
-/// model- or dataset-specific: the model supplies `extra`, the collection
-/// supplies `identity`, and `table_filter` does the rest.
-/// How to locate the brain mask for a fit, declared in `--config` under a
-/// `mask:` key. `suffix` is the BIDS suffix (default `mask`); every other field
-/// is an entity constraint (`desc: brain`) that disambiguates which mask to use
-/// when a dataset holds several. Absent `mask:` means no masking — a mask is
-/// never guessed, because a dataset can carry many (brain, tissue, lesion, …)
-/// and auto-picking one is ill-posed.
-#[derive(Debug, Clone, serde::Deserialize)]
-struct MaskSpec {
-    #[serde(default = "default_mask_suffix")]
-    suffix: String,
-    #[serde(flatten)]
-    entities: std::collections::BTreeMap<String, String>,
-}
-
-fn default_mask_suffix() -> String {
-    "mask".to_string()
-}
-
-fn find_input<'a>(
-    table: &'a [rust_bids::BidsRow],
-    identity: &std::collections::BTreeMap<String, String>,
-    extra: &[(&str, &str)],
-) -> Result<Option<&'a rust_bids::BidsRow>> {
-    let mut constraints: Vec<(&str, &str)> = identity
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    constraints.extend_from_slice(extra);
-    let hits = rust_bids::table_filter(table, &constraints);
-    match hits.as_slice() {
-        [] => Ok(None),
-        [one] => Ok(Some(one)),
-        many => bail!(
-            "ambiguous input for {:?}: {} candidates ({})",
-            constraints,
-            many.len(),
-            many.iter()
-                .map(|r| r.path.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
-}
-
-/// Resolve a model's declared BIDS auxiliary inputs and a brain mask for one
-/// collection from the dataset `table`. Each input is located by the
-/// collection's full entity `identity` + its declared BIDS suffix (+ any
-/// `BidsMap.entity` the model declares), so it is matched on whatever entities
-/// identify the collection — subject/session/run/… alike — not a fixed pair.
-/// A `required` input that is absent is a hard error; an optional one becomes a
-/// `None` entry (the model uses its default). A brain mask is applied only when
-/// `mask_spec` is given (from the config's `mask:` key): it is located by the
-/// collection identity + the spec's suffix and entity constraints, so a dataset
-/// with several masks is disambiguated by the config rather than guessed.
-/// Returns the aux bundle, the optional mask, and the dataset-relative paths of
-/// every input loaded (for provenance `Sources`).
-fn resolve_aux_and_mask(
+/// Load the aux maps and mask `rust_bids::resolve_input_paths` selected for one
+/// collection. Selection (which file is which input, and the ambiguity and
+/// required-but-missing errors) lives in `rust-bids`; this is only the reading
+/// half. Returns the aux bundle, the optional mask, and the dataset-relative
+/// paths actually loaded (for provenance `Sources`).
+fn load_aux_and_mask(
     table: &[rust_bids::BidsRow],
     model: &dyn Model,
     identity: &std::collections::BTreeMap<String, String>,
-    mask_spec: Option<&MaskSpec>,
+    mask_spec: Option<&rust_bids::MaskSpec>,
     bids_dir: &Path,
 ) -> Result<(AuxMaps, Option<Array3<bool>>, Vec<String>)> {
+    let paths = rust_bids::resolve_input_paths(table, model, identity, mask_spec)?;
     let mut maps: Vec<(String, Option<Array3<f64>>)> = Vec::new();
-    let mut sources: Vec<String> = Vec::new();
-    for spec in model.required_inputs() {
-        let Some(bids) = spec.bids.as_ref() else {
-            // Not BIDS-locatable: leave absent for the model's own default.
-            maps.push((spec.name.to_string(), None));
-            continue;
+    for (name, path) in &paths.aux {
+        let map = match path {
+            Some(p) => Some(io::nifti::read_map_nifti(&bids_dir.join(p))?),
+            None => None,
         };
-        let mut extra = vec![("suffix", bids.suffix)];
-        if let Some(entity) = bids.entity {
-            // The model declares an entity that indexes this input; match it
-            // against the identity value the collection carries for it.
-            if let Some(val) = identity.get(entity) {
-                extra.push((entity, val.as_str()));
-            }
-        }
-        match find_input(table, identity, &extra)? {
-            Some(row) => {
-                let map = io::nifti::read_map_nifti(&bids_dir.join(&row.path))?;
-                maps.push((spec.name.to_string(), Some(map)));
-                sources.push(row.path.clone());
-            }
-            None if spec.required => bail!(
-                "required input '{}' (BIDS suffix '{}') not found for {:?} in {:?}",
-                spec.name,
-                bids.suffix,
-                identity,
-                bids_dir
-            ),
-            None => maps.push((spec.name.to_string(), None)),
-        }
+        maps.push((name.clone(), map));
     }
-    let mask = match mask_spec {
-        Some(spec) => {
-            let mut extra: Vec<(&str, &str)> = vec![("suffix", spec.suffix.as_str())];
-            extra.extend(spec.entities.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-            match find_input(table, identity, &extra)? {
-                Some(row) => {
-                    sources.push(row.path.clone());
-                    Some(io::nifti::read_mask_nifti(&bids_dir.join(&row.path))?)
-                }
-                None => None,
-            }
-        }
+    let mask = match &paths.mask {
+        Some(p) => Some(io::nifti::read_mask_nifti(&bids_dir.join(p))?),
         None => None,
     };
-    Ok((AuxMaps::new(maps), mask, sources))
+    Ok((AuxMaps::new(maps), mask, paths.found()))
 }
 
 /// Header for outputs whose input carried no spatial reference (.mat inputs),
@@ -1120,6 +915,36 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// Walk a real dataset directory into the path→bytes shape
+    /// `qmrust_wasm::bids::resolve_bids` takes, so the in-memory (browser)
+    /// resolution path can be exercised against the same on-disk fixture the
+    /// native path reads directly.
+    fn read_dataset_dir(root: &std::path::Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
+        fn walk(
+            dir: &std::path::Path,
+            root: &std::path::Path,
+            out: &mut Vec<(String, Vec<u8>)>,
+        ) -> std::io::Result<()> {
+            for entry in std::fs::read_dir(dir)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    walk(&path, root, out)?;
+                } else {
+                    let rel = path
+                        .strip_prefix(root)
+                        .expect("walked under root")
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    out.push((rel, std::fs::read(&path)?));
+                }
+            }
+            Ok(())
+        }
+        let mut out = Vec::new();
+        walk(root, root, &mut out)?;
+        Ok(out)
     }
 
     /// Clean IR signal `a + b*exp(-ti/t1)`, matching the fixture the fitting
@@ -1578,101 +1403,6 @@ mod tests {
         assert!(msg.contains("MTon"), "got: {msg}");
     }
 
-    /// Input resolution is driven by a collection's *full* entity identity, not
-    /// a fixed subject/session pair: the same suffix present once per session
-    /// must resolve to the file matching the collection's own session, and an
-    /// underspecified identity that matches several files is a hard error (no
-    /// silent pick). This is what lets the backbone scale past two models —
-    /// any entity a dataset groups by participates in locating inputs.
-    #[test]
-    fn find_input_matches_full_identity_and_flags_ambiguity() {
-        use std::collections::BTreeMap;
-        let row = |path: &str, ses: &str| rust_bids::BidsRow {
-            path: path.into(),
-            derivatives: Some("preprocessed".into()),
-            datatype: Some("fmap".into()),
-            suffix: "TB1map".into(),
-            extension: ".nii.gz".into(),
-            entities: BTreeMap::from([
-                ("subject".to_string(), "01".to_string()),
-                ("session".to_string(), ses.to_string()),
-            ]),
-            sidecar_path: None,
-        };
-        let rows = vec![
-            row(
-                "derivatives/preprocessed/sub-01/ses-1/fmap/sub-01_ses-1_TB1map.nii.gz",
-                "1",
-            ),
-            row(
-                "derivatives/preprocessed/sub-01/ses-2/fmap/sub-01_ses-2_TB1map.nii.gz",
-                "2",
-            ),
-        ];
-
-        let identity = |ses: Option<&str>| {
-            let mut m = BTreeMap::from([("subject".to_string(), "01".to_string())]);
-            if let Some(s) = ses {
-                m.insert("session".to_string(), s.to_string());
-            }
-            m
-        };
-
-        // Full identity (subject + session) → the matching session's file.
-        let hit = find_input(&rows, &identity(Some("2")), &[("suffix", "TB1map")])
-            .unwrap()
-            .unwrap();
-        assert!(hit.path.contains("ses-2"));
-        // Underspecified identity (subject only) matches both → ambiguity error.
-        assert!(find_input(&rows, &identity(None), &[("suffix", "TB1map")]).is_err());
-        // No match → None (an optional input the fit does without).
-        assert!(
-            find_input(&rows, &identity(Some("9")), &[("suffix", "TB1map")])
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    /// A `mask:` config disambiguates which mask to use by entity constraint,
-    /// and its short entity keys must be matched against the table's full names.
-    /// A dataset holding several masks resolves to the configured one; a spec
-    /// too loose to be unique is a hard error rather than a silent pick.
-    #[test]
-    fn mask_spec_disambiguates_and_flags_ambiguity() {
-        use std::collections::BTreeMap;
-        // `desc: brain` parses (suffix defaults to `mask`); `desc` is the short
-        // key the config author writes.
-        let spec: MaskSpec = serde_yaml::from_str("desc: brain\n").unwrap();
-        assert_eq!(spec.suffix, "mask");
-        assert_eq!(spec.entities.get("desc").map(String::as_str), Some("brain"));
-
-        // Two masks for one subject; the table stores the entity as its full
-        // name `description` (as `parse_to_table` would), so the config key is
-        // normalized to match.
-        let mask_row = |desc: &str| rust_bids::BidsRow {
-            path: format!("derivatives/preprocessed/sub-01/anat/sub-01_desc-{desc}_mask.nii.gz"),
-            derivatives: Some("preprocessed".into()),
-            datatype: Some("anat".into()),
-            suffix: "mask".into(),
-            extension: ".nii.gz".into(),
-            entities: BTreeMap::from([
-                ("subject".to_string(), "01".to_string()),
-                ("description".to_string(), desc.to_string()),
-            ]),
-            sidecar_path: None,
-        };
-        let rows = vec![mask_row("brain"), mask_row("tumor")];
-        let identity = BTreeMap::from([("subject".to_string(), "01".to_string())]);
-
-        // Config `desc` -> full `description`, matching the table.
-        let extra = [("suffix", "mask"), ("description", "brain")];
-        let hit = find_input(&rows, &identity, &extra).unwrap().unwrap();
-        assert!(hit.path.contains("desc-brain"));
-
-        // Suffix alone is too loose — both masks match, so it errors.
-        assert!(find_input(&rows, &identity, &[("suffix", "mask")]).is_err());
-    }
-
     /// End-to-end validation: the BIDS fit path (`bidsify` +
     /// `run_fit_bids`) must reproduce the `.mat` fit path (`run_fit
     /// --mat-data`) exactly, since `bidsify` writes byte-identical voxel data
@@ -1728,7 +1458,7 @@ mod tests {
         let bids_dir = tmp.0.join("ds-qmrust");
         // `output_dir` is the *derivatives root*: `run_fit_bids`/`write_derivatives`
         // append `qmrust/<subject>/anat/...` themselves (mirrors
-        // `scripts/make_bids_examples.sh`'s `--output-dir ds-qmrust/derivatives`).
+        // `scripts/make_bids_examples.sh`'s `--output-dir ds-<slug>/derivatives`).
         let deriv_dir = bids_dir.join("derivatives");
 
         // (a) Fit via the .mat path, in-process.
@@ -1757,6 +1487,7 @@ mod tests {
             nii_dir: None,
             nii_mask: None,
             mask: Some(ir_mask),
+            aux: Vec::new(),
             config: config.clone(),
             subject: "01".to_string(),
             out: bids_dir.clone(),
@@ -1867,6 +1598,7 @@ mod tests {
             nii_dir: None,
             nii_mask: None,
             mask: None,
+            aux: Vec::new(),
             config: config.clone(),
             subject: "02".to_string(),
             out: bids_dir.clone(),
@@ -2064,5 +1796,100 @@ mod tests {
         .unwrap();
         inject_mt_sat_b1_correction(&mut raw).unwrap();
         assert!(raw.get("b1_correction").is_none());
+    }
+
+    /// `MemFs` must be a faithful `DatasetFs`: resolving a real dataset from an
+    /// in-memory path→bytes map has to produce exactly what resolving the same
+    /// dataset off disk produces — same collections, same volume order, same
+    /// protocol, same mask and aux selection. Both paths call the same
+    /// `rust-bids` resolution, so what this pins is the backing itself (directory
+    /// listing semantics and relative-path handling), which is the assumption the
+    /// browser's whole "your data, same code path" claim rests on.
+    #[test]
+    fn memfs_resolution_matches_on_disk_resolution() {
+        let dir = TempDir::new("memfs-vs-stdfs");
+        let bids_dir = dir.0.join("ds-irt1");
+
+        // A real bidsified IRT1 dataset: sidecar-carried TIs + a brain mask in a
+        // `preprocessed` derivatives pipeline (so aux/mask selection is exercised).
+        let tis = [0.35, 0.65, 0.95];
+        let data =
+            Array4::from_shape_fn((2, 2, 1, 3), |(i, j, _k, t)| (i * 10 + j) as f64 + t as f64);
+        let mask = Array3::from_shape_vec((2, 2, 1), vec![true, false, true, true]).unwrap();
+        let yaml = format!(
+            "model: inversion_recovery\nmethod: magnitude\ninversion_times: {:?}\n",
+            tis
+        );
+        let v: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+        let entry = qmrust_core::registry::by_name("inversion_recovery").unwrap();
+        let model = (entry.describe)(&v).unwrap();
+        crate::bidsify::write_bids_tree(
+            model.as_ref(),
+            &data,
+            Some(&mask),
+            &[],
+            "01",
+            &bids_dir,
+            None,
+        )
+        .unwrap();
+
+        // The recipe a BIDS fit uses: options only, no acquisition axis.
+        let recipe = "model: inversion_recovery\nmethod: magnitude\nmask:\n  desc: brain\n";
+
+        // (a) On disk, the way `run_fit_bids` does it.
+        let fs = StdFs {
+            root: bids_dir.clone(),
+        };
+        let bids_cfg = rust_bids::default_config();
+        let vocab = rust_bids::Vocabulary::from_config(&bids_cfg);
+        let (_cfg, raw) = qmrust_core::config::parse_config(recipe).unwrap();
+        let probe = (entry.describe)(&raw).unwrap();
+        let schema = probe.protocol_schema();
+        let opts = std::collections::BTreeMap::new();
+        let mask_spec = rust_bids::MaskSpec::from_recipe(&raw, &vocab).unwrap();
+        let table = rust_bids::parse_to_table(&fs, &vocab).unwrap();
+        let disk = rust_bids::collections_for(&fs, &bids_cfg, "IRT1").unwrap();
+
+        // (b) In memory, the way the browser does it.
+        let files = read_dataset_dir(&bids_dir).unwrap();
+        let mem = qmrust_wasm::bids::resolve_bids(files, recipe, None).unwrap();
+
+        assert_eq!(mem.len(), disk.len(), "collection count");
+        for (m, d) in mem.iter().zip(&disk) {
+            assert_eq!(m.subject, d.subject);
+            assert_eq!(m.suffix, d.suffix);
+
+            let disk_paths = rust_bids::ordered_volume_paths(d, None).unwrap();
+            assert_eq!(m.data_files, disk_paths, "volume order");
+
+            let disk_proto = rust_bids::compose_protocol(&fs, d, &schema, &opts, None).unwrap();
+            let mem_proto = qmrust_wasm::api::parse_protocol(&m.protocol_json).unwrap();
+            assert_eq!(mem_proto.volumes, disk_proto.volumes, "per-volume protocol");
+            assert_eq!(mem_proto.global, disk_proto.global, "global protocol");
+            // And it really is the dataset's acquisition, not the recipe's
+            // (the recipe declares none).
+            let resolved: Vec<f64> = mem_proto
+                .volumes
+                .iter()
+                .map(|v| v["InversionTime"])
+                .collect();
+            assert_eq!(resolved, tis);
+
+            let disk_inputs = rust_bids::resolve_input_paths(
+                &table,
+                probe.as_ref(),
+                &d.entities,
+                mask_spec.as_ref(),
+            )
+            .unwrap();
+            assert_eq!(m.mask_file, disk_inputs.mask, "mask selection");
+            let disk_aux: Vec<(String, String)> = disk_inputs
+                .aux
+                .iter()
+                .filter_map(|(n, p)| p.clone().map(|p| (n.clone(), p)))
+                .collect();
+            assert_eq!(m.aux_files, disk_aux, "aux selection");
+        }
     }
 }

@@ -1,7 +1,9 @@
 //! The single voxel-fitting engine. Drives any `Model`, dispatching on its
 //! declared `FitStrategy`.
 
-use crate::core::model::{Aux, FitStrategy, Measurement, MeasurementKind, Model, Sample, VolumeId};
+use crate::core::model::{
+    Aux, FitStrategy, Measurement, MeasurementKind, Model, Protocol, Sample, VolumeId,
+};
 use crate::fitting::FitResults;
 use anyhow::{bail, Result};
 use ndarray::{Array3, Array4};
@@ -103,6 +105,57 @@ impl AuxMaps {
             }
         }
         Ok(())
+    }
+}
+
+/// Each volume's identity, for a measurement of `n_volumes` volumes.
+///
+/// - `Named { roles }`: volume `i` takes role `roles[i]` (requires exactly
+///   `roles.len()` volumes).
+/// - `Series { rows }`: externally-resolved per-volume rows (`proto.volumes` —
+///   the BIDS sidecar-derived identities) when there are any, the model's own
+///   canonical identity rows when there are not. A resolved protocol of the wrong
+///   length describes different data than was passed, so it is an error rather
+///   than a reason to reach for the recipe's rows: silently swapping in another
+///   acquisition's parameters would fit the data against the wrong protocol. Both
+///   carry populated params — an empty/positional row is never emitted, because
+///   models assemble signal by identity rather than position.
+pub fn build_volume_ids(
+    kind: MeasurementKind,
+    proto: &Protocol,
+    n_volumes: usize,
+) -> Result<Vec<VolumeId>, String> {
+    match kind {
+        MeasurementKind::Named { roles } => {
+            if roles.len() != n_volumes {
+                return Err(format!(
+                    "Data has {} volumes but model expects {} named volumes ({:?})",
+                    n_volumes,
+                    roles.len(),
+                    roles
+                ));
+            }
+            Ok(roles.iter().map(|&r| VolumeId::Role(r)).collect())
+        }
+        MeasurementKind::Series { rows } => {
+            // The label travels with the choice: a length complaint about "the
+            // model's series protocol" sends a reader to the recipe, which is the
+            // wrong place to look when the rows came from the dataset's sidecars.
+            let (source, origin) = if proto.volumes.is_empty() {
+                (&rows, "the model's series protocol")
+            } else {
+                (&proto.volumes, "the protocol resolved from the data")
+            };
+            if source.len() != n_volumes {
+                return Err(format!(
+                    "Data has {} volumes but {} has {} rows",
+                    n_volumes,
+                    origin,
+                    source.len()
+                ));
+            }
+            Ok(source.iter().cloned().map(VolumeId::Params).collect())
+        }
     }
 }
 

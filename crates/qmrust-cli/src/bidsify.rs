@@ -28,6 +28,7 @@ pub struct BidsifyArgs {
     pub nii_dir: Option<PathBuf>,
     pub nii_mask: Option<PathBuf>,
     pub mask: Option<PathBuf>,
+    pub aux: Vec<String>,
     pub config: PathBuf,
     pub subject: String,
     pub out: PathBuf,
@@ -51,7 +52,7 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
     // carries none (a minimal header is synthesized in `write_bids_tree`). Each
     // source reads its mask from its own flag, so reject the other source's
     // mask flag rather than silently ignoring it.
-    let (data, mask, aux, source_header) = if let Some(dir) = args.nii_dir.as_ref() {
+    let (data, mask, mut aux, source_header) = if let Some(dir) = args.nii_dir.as_ref() {
         anyhow::ensure!(
             args.nii_data.is_none() && args.mat_data.is_none() && args.mat_dir.is_none(),
             "--nii-dir is mutually exclusive with --nii-data/--mat-data/--mat-dir"
@@ -78,6 +79,15 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
         );
         read_mat_source(&args, model.as_ref())?
     };
+
+    // Explicit `--aux` maps are source-agnostic and win over anything the
+    // source auto-discovered for the same input name.
+    for (name, vol) in read_aux_args(&args.aux, model.as_ref())? {
+        match aux.iter_mut().find(|(n, _)| *n == name) {
+            Some(slot) => slot.1 = vol,
+            None => aux.push((name, vol)),
+        }
+    }
 
     write_bids_tree(
         model.as_ref(),
@@ -163,9 +173,40 @@ fn read_mat_source(args: &BidsifyArgs, model: &dyn Model) -> Result<Source> {
     Ok((data, mask, aux, None))
 }
 
+/// Parse and read `--aux NAME=PATH` arguments into the same
+/// `(input name, map)` shape `write_bids_tree` places by BIDS suffix.
+///
+/// Model-agnostic: `NAME` is validated against the model's own
+/// `required_inputs()`, so a typo or an input this model doesn't declare is an
+/// error naming the valid choices rather than a silently ignored file. The
+/// reader is chosen by extension (`.mat` vs. NIfTI), which is what lets one
+/// flag serve both source kinds — a `.mat` source's aux maps are additionally
+/// auto-discovered under `--mat-dir`, but nothing auto-discovers a NIfTI one.
+fn read_aux_args(specs: &[String], model: &dyn Model) -> Result<Vec<(String, Array3<f64>)>> {
+    let declared: Vec<&str> = model.required_inputs().iter().map(|s| s.name).collect();
+    specs
+        .iter()
+        .map(|arg| {
+            let (name, path) = arg
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("--aux expects NAME=PATH, got {arg:?}"))?;
+            anyhow::ensure!(
+                declared.contains(&name),
+                "--aux {name:?} is not an input this model declares; valid names: {declared:?}"
+            );
+            let path = Path::new(path);
+            let vol = match path.extension().and_then(|x| x.to_str()) {
+                Some("mat") => io::mat::read_map_mat(path)?,
+                _ => io::nifti::read_map_nifti(path)?,
+            };
+            Ok((name.to_string(), vol))
+        })
+        .collect()
+}
+
 /// Read a 4D NIfTI measurement (+ optional NIfTI mask), preserving its spatial
-/// header. Auxiliary NIfTI inputs are not resolved here — no NIfTI-shipped
-/// model currently declares any.
+/// header. Auxiliary maps come from `--aux` for a NIfTI source; there is no
+/// directory convention to discover them from.
 fn read_nifti_source(nii: &Path, nii_mask: Option<&Path>, _model: &dyn Model) -> Result<Source> {
     let (data, header) = io::nifti::read_4d_nifti(nii)?;
     let mask = match nii_mask {
@@ -178,7 +219,8 @@ fn read_nifti_source(nii: &Path, nii_mask: Option<&Path>, _model: &dyn Model) ->
 /// Read a `Named` model's per-role NIfTIs from `dir` (`<role>.nii.gz`),
 /// stacked in the model's declared role order, preserving the first role's
 /// spatial header. Only Named models have a role axis; a Series model has no
-/// `<role>.nii.gz` layout to read from a directory.
+/// `<role>.nii.gz` layout to read from a directory. Auxiliary maps come from
+/// `--aux`.
 fn read_named_nifti_source(
     dir: &Path,
     nii_mask: Option<&Path>,
@@ -880,6 +922,44 @@ mod tests {
 
         // The raw tree holds no aux — only the QMTSPGR acquisitions.
         assert!(!dir.join("sub-02").join("fmap").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `--aux` is how a NIfTI source supplies a declared auxiliary map, since
+    /// nothing auto-discovers one. The name is checked against the model's own
+    /// `required_inputs()`, so an input this model doesn't declare is an error
+    /// rather than a silently dropped file.
+    #[test]
+    fn aux_args_read_declared_inputs_and_reject_undeclared() {
+        let dir = tmp_dir("aux-args");
+        let b1 = Array3::from_shape_vec((2, 1, 1), vec![0.92, 1.07]).unwrap();
+        let path = dir.join("tb1.nii.gz");
+        write_inv_volume(&b1, &make_minimal_header(2, 1, 1), &path).unwrap();
+
+        // mt_sat declares exactly one input, `B1map`.
+        let model = model_from_yaml(
+            "mt_sat",
+            "model: mt_sat\nmt_sat:\n  mtw: {flip_angle: 6.0, repetition_time: 0.028}\n  \
+             pdw: {flip_angle: 6.0, repetition_time: 0.028}\n  \
+             t1w: {flip_angle: 20.0, repetition_time: 0.018}\n",
+        );
+
+        let spec = format!("B1map={}", path.display());
+        let read = read_aux_args(&[spec], model.as_ref()).unwrap();
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].0, "B1map");
+        for ((x, y, z), &v) in b1.indexed_iter() {
+            assert_eq!(read[0].1[[x, y, z]], v);
+        }
+
+        let err = read_aux_args(&["R1map=whatever.nii.gz".to_string()], model.as_ref())
+            .expect_err("an undeclared input name must be rejected");
+        assert!(err.to_string().contains("B1map"), "{err}");
+
+        let err = read_aux_args(&["no-equals-sign".to_string()], model.as_ref())
+            .expect_err("a malformed --aux spec must be rejected");
+        assert!(err.to_string().contains("NAME=PATH"), "{err}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

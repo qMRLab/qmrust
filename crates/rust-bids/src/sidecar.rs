@@ -99,13 +99,21 @@ fn directory_chain(dir: &str) -> Vec<String> {
     levels
 }
 
-/// Build the full, inheritance-merged `Sidecar` for one image.
-pub fn sidecar_for<F: DatasetFs>(fs: &F, nii_rel_path: &str) -> Result<Sidecar> {
+/// Every sidecar that applies to `nii_rel_path`, in merge order (least to most
+/// specific), deduplicated.
+///
+/// BIDS inheritance: a sidecar applies to an image when it shares the image's
+/// suffix and its entities are a subset of the image's, at any directory level
+/// from the dataset root down. Within a level, fewer-entity (less specific)
+/// files come first so a more specific inherited file wins ties. The
+/// co-located sidecar is applied last so it always wins, regardless of that
+/// tie-break.
+fn sidecar_chain<F: DatasetFs>(fs: &F, nii_rel_path: &str) -> Result<Vec<String>> {
     let dir = nii_rel_path.rsplit_once('/').map_or("", |(d, _)| d);
     let file = nii_rel_path.rsplit('/').next().unwrap_or(nii_rel_path);
     let image = parse_filename(file).context("image filename is not valid BIDS")?;
 
-    let mut sidecar = Sidecar::default();
+    let mut chain: Vec<String> = Vec::new();
     for level in directory_chain(dir) {
         let mut candidates: Vec<(usize, String)> = Vec::new();
         for entry in fs.list(&level)? {
@@ -132,31 +140,43 @@ pub fn sidecar_for<F: DatasetFs>(fs: &F, nii_rel_path: &str) -> Result<Sidecar> 
             };
             candidates.push((parsed.entities.len(), path));
         }
-        // Fewer-entity (less specific) files first, so a more-specific
-        // inherited file at the same directory level wins ties.
         candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-        for (_, path) in candidates {
-            sidecar.merge(read_json_object(fs, &path)?);
-        }
+        chain.extend(candidates.into_iter().map(|(_, path)| path));
     }
 
-    // The co-located sidecar is already picked up by the scan above (it
-    // lives in the image's own, last-visited directory and its entities are
+    // The co-located sidecar is already picked up by the scan above (it lives
+    // in the image's own, last-visited directory and its entities are
     // trivially a subset of the image's), but re-apply it explicitly so it
     // always wins regardless of that scan's tie-break order. A missing
-    // co-located file is fine (many raw images have none); malformed JSON is
-    // still an error.
+    // co-located file is fine; malformed JSON is caught when it is read.
     let co_located = format!("{}.json", strip_image_ext(nii_rel_path));
-    if let Ok(bytes) = fs.read(&co_located) {
-        let value: Value = serde_json::from_slice(&bytes)
-            .with_context(|| format!("parsing {co_located} as JSON"))?;
-        match value {
-            Value::Object(map) => sidecar.merge(map),
-            other => anyhow::bail!("{co_located}: expected a JSON object, got {other}"),
-        }
+    if fs.read(&co_located).is_ok() {
+        chain.push(co_located);
     }
+    Ok(chain)
+}
 
+/// Build the full, inheritance-merged `Sidecar` for one image.
+pub fn sidecar_for<F: DatasetFs>(fs: &F, nii_rel_path: &str) -> Result<Sidecar> {
+    let mut sidecar = Sidecar::default();
+    for path in sidecar_chain(fs, nii_rel_path)? {
+        sidecar.merge(read_json_object(fs, &path)?);
+    }
     Ok(sidecar)
+}
+
+/// The dataset-relative path of every sidecar that merged into `nii_rel_path`,
+/// deduplicated, in merge order.
+///
+/// This is what makes a file browser able to say *which* JSON supplied a
+/// volume's protocol values, rather than guessing from filenames — under
+/// inheritance the answer is often not the co-located file.
+pub fn sidecar_sources_for<F: DatasetFs>(fs: &F, nii_rel_path: &str) -> Result<Vec<String>> {
+    let mut seen = std::collections::BTreeSet::new();
+    Ok(sidecar_chain(fs, nii_rel_path)?
+        .into_iter()
+        .filter(|p| seen.insert(p.clone()))
+        .collect())
 }
 
 #[cfg(test)]
@@ -222,5 +242,61 @@ mod tests {
             b"{not valid json".to_vec(),
         );
         assert!(sidecar_for(&fs, "sub-01/anat/sub-01_inv-01_IRT1.nii.gz").is_err());
+    }
+
+    /// Which sidecars fed a volume, not which one sits next to it. BIDS
+    /// inheritance merges JSON from every directory level, so a root-level file
+    /// contributes to volumes several directories below — reporting only the
+    /// co-located file would misattribute the protocol's real source.
+    #[test]
+    fn sidecar_sources_report_the_whole_inheritance_chain() {
+        // A dataset-root sidecar applies to every IRT1 image only if it carries no
+        // entities of its own: inheritance requires a sidecar's entities to be a
+        // subset of the image's, so `task-ir_IRT1.json` would apply to task-ir
+        // images and correctly not to this one.
+        let fs = MemFs::new()
+            .with("IRT1.json", br#"{"RepetitionTime": 2.5}"#.to_vec())
+            .with("sub-01/sub-01_IRT1.json", br#"{"FlipAngle": 90}"#.to_vec())
+            .with(
+                "sub-01/anat/sub-01_inv-1_IRT1.json",
+                br#"{"InversionTime": 0.35}"#.to_vec(),
+            )
+            .touch("sub-01/anat/sub-01_inv-1_IRT1.nii.gz");
+
+        let sources = sidecar_sources_for(&fs, "sub-01/anat/sub-01_inv-1_IRT1.nii.gz").unwrap();
+
+        assert!(
+            sources.contains(&"IRT1.json".to_string()),
+            "root-level inherited sidecar must be reported: {sources:?}"
+        );
+        assert!(
+            sources.contains(&"sub-01/sub-01_IRT1.json".to_string()),
+            "subject-level inherited sidecar must be reported: {sources:?}"
+        );
+        assert!(
+            sources.contains(&"sub-01/anat/sub-01_inv-1_IRT1.json".to_string()),
+            "co-located sidecar must be reported: {sources:?}"
+        );
+        // The co-located file is both scanned and re-applied; it must appear once.
+        assert_eq!(
+            sources.len(),
+            3,
+            "each contributing sidecar exactly once: {sources:?}"
+        );
+
+        // The reported set must be exactly what merging actually used.
+        let merged = sidecar_for(&fs, "sub-01/anat/sub-01_inv-1_IRT1.nii.gz").unwrap();
+        assert_eq!(Sidecar::f64(&merged, "RepetitionTime"), Some(2.5));
+        assert_eq!(Sidecar::f64(&merged, "FlipAngle"), Some(90.0));
+        assert_eq!(Sidecar::f64(&merged, "InversionTime"), Some(0.35));
+    }
+
+    /// A volume with no sidecar anywhere reports no sources (not an error) — many
+    /// raw images have none.
+    #[test]
+    fn sidecar_sources_are_empty_when_there_are_none() {
+        let fs = MemFs::new().touch("sub-01/anat/sub-01_inv-1_IRT1.nii.gz");
+        let sources = sidecar_sources_for(&fs, "sub-01/anat/sub-01_inv-1_IRT1.nii.gz").unwrap();
+        assert!(sources.is_empty(), "{sources:?}");
     }
 }

@@ -1,0 +1,226 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>qMRust</title>
+<link rel="icon" type="image/x-icon" href="./favicon.ico">
+<link rel="stylesheet" href="./app.css">
+<div class="navbar" id="navbar">
+  <span class="navbar-dl" id="navbar-dl" hidden>
+    <svg class="dl-ring" viewBox="0 0 84 84" aria-hidden="true">
+      <circle class="dl-track" cx="42" cy="42" r="36"></circle>
+      <circle class="dl-arc" id="dl-arc" cx="42" cy="42" r="36"></circle>
+    </svg>
+    <span class="dl-pct" id="dl-pct"></span>
+  </span>
+  <span id="status" class="navbar-status busy">Starting…</span>
+  <div class="navbar-right">
+    <a class="navbar-link" href="https://qmrlab.org/qmrust" target="_blank" rel="noopener"
+       title="Documentation"><span data-icon="book-text" data-icon-size="25"></span></a>
+    <a class="navbar-link" href="https://github.com/qmrlab/qmrust" target="_blank" rel="noopener"
+       title="Source on GitHub"><span data-icon="git-compare-arrows" data-icon-size="25"></span></a>
+    <span class="navbar-rule" aria-hidden="true"></span>
+    <!-- The select stays a real select — native keyboard, native mobile picker —
+         and only its appearance is replaced: it sits transparent over the glyph,
+         which is the only way an icon-sized control can also be a <select>,
+         since a closed select always renders the chosen option's text. -->
+    <span class="theme-pick" id="theme-pick">
+      <span class="theme-pick-icon" data-icon="palette" data-icon-size="15"></span>
+      <select id="theme-family" aria-label="Theme"></select>
+    </span>
+    <div class="seg seg-icon" role="group" aria-label="Light or dark">
+      <button id="mode-light" type="button" title="Light mode" data-icon="sun" data-icon-size="14"></button>
+      <button id="mode-dark" type="button" title="Dark mode" data-icon="moon" data-icon-size="14"></button>
+    </div>
+  </div>
+</div>
+<div id="fallback" hidden>
+  <p><strong>The WebAssembly build is not present.</strong> The viewers below still work —
+  fitting needs the wasm package. Build it, then reload:</p>
+  <pre><code>cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg</code></pre>
+</div>
+<div class="draw-palette" id="draw-palette" hidden></div>
+<div class="menu" id="segment-menu" role="menu" hidden></div>
+<div class="layout">
+  <div class="left-col">
+  <div class="recipe-card card">
+    <div class="section-h recipe-head">
+      <img class="panel-logo" id="panel-logo" src="./logo_dark.png" alt="qMRust">
+      <div class="seg recipe-seg" role="tablist" aria-label="Recipe editor view">
+        <button id="tab-form" class="active" role="tab" aria-selected="true"><span data-icon="form" data-icon-size="13"></span>Form</button>
+        <button id="tab-yaml" role="tab" aria-selected="false"><span data-icon="code-xml" data-icon-size="13"></span>YAML</button>
+      </div>
+      <button id="recipe-collapse" class="collapse-btn" type="button" aria-expanded="true">Hide</button>
+    </div>
+    <div class="section-h recipe-title"><span class="panel-title">Recipe</span><button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." data-tip="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit."><span data-icon="info" data-icon-size="14"></span></button></div>
+    <div class="model-line">model: <select id="model"></select></div>
+    <div class="recipe-scroll">
+    <div id="form-view"><div id="form-fields" class="form-fields"></div></div>
+    <div id="yaml-view" class="yaml-wrap" hidden>
+      <span id="yaml-pill" class="yaml-pill valid">valid</span>
+      <div class="yaml-edit">
+        <pre id="yaml-hl" aria-hidden="true"></pre>
+        <textarea id="cfg-yaml" spellcheck="false"></textarea>
+      </div>
+    </div>
+    </div>
+    </div>
+
+    <div class="fit-strip">
+      <div id="fit-progress" class="fit-progress">
+        <div id="progress-bar" class="fit-progress-bar"></div>
+      </div>
+      <button id="fit" class="primary">Fit Data</button>
+    </div>
+
+    <div class="drop-wrap card" id="drop-wrap">
+      <div class="drop-title">Fit your own data<button class="info" type="button" aria-label="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it." data-tip="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it."><span data-icon="info" data-icon-size="14"></span></button></div>
+      <div class="drop-sub">Drop a BIDS folder (or .zip) here.</div>
+      <div class="drop-actions">
+        <button id="browse-folder" class="accent-btn" type="button">Browse</button>
+      </div>
+      <div class="drop-privacy">Nothing is uploaded</div>
+      <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
+    </div>
+  </div>
+
+  <div class="viewer-in-wrap card" id="viewer-in-wrap">
+    <div class="viewer-head">
+      <h2 class="section-h" style="margin:0">Inputs<button class="info" type="button" aria-label="The acquired volumes this model fits, in the order it consumes them. Scroll or drag the slider to step through them. Files shows every file in the dataset and what BIDS resolution decided about each one." data-tip="The acquired volumes this model fits, in the order it consumes them. Scroll or drag the slider to step through them. Files shows every file in the dataset and what BIDS resolution decided about each one."><span data-icon="info" data-icon-size="14"></span></button></h2>
+      <div class="seg" role="tablist" aria-label="Inputs view">
+        <button id="tab-viewer" class="active" role="tab" aria-selected="true"><span data-icon="square-mouse-pointer" data-icon-size="13"></span>Viewer</button>
+        <button id="tab-files" role="tab" aria-selected="false"><span data-icon="folder-tree" data-icon-size="13"></span>Files</button>
+      </div>
+    </div>
+    <div class="viewer" id="viewer-in">
+      <canvas id="gl-in"></canvas>
+      <div class="viewer-skel" id="skel-in" hidden></div>
+    </div>
+    <div class="files-panel" id="files-view" hidden>
+      <div class="files-summary" id="files-summary"></div>
+      <div class="files-tree" id="files-tree"></div>
+    </div>
+    <div class="viewer-foot">
+      <div class="frame-row">
+        <input type="range" id="frame" min="0" max="0" value="0" step="1" disabled>
+        <span class="frame-label" id="frame-label">—</span>
+        <button id="segment" class="ghost-btn icon-btn" type="button" disabled
+                aria-haspopup="menu" aria-expanded="false"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="viewer-out-wrap card" id="viewer-out-wrap">
+    <div class="viewer-head">
+      <h2 class="section-h" style="margin:0">Fitted map<button class="info" type="button" aria-label="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region." data-tip="Quantitative maps produced by the fit. Drag the scale's handles, or click its end values, to change the display window; the histogram shows where the data actually sits. Draw an ROI to measure a region."><span data-icon="info" data-icon-size="14"></span></button></h2>
+      <div class="seg" role="tablist" aria-label="Fitted map view">
+        <button id="tab-slice" class="active" role="tab" aria-selected="true"><span data-icon="slice" data-icon-size="13"></span>Slice</button>
+        <button id="tab-planes" role="tab" aria-selected="false"><span data-icon="rotate-3d" data-icon-size="13"></span>Multiplanar</button>
+      </div>
+    </div>
+    <div class="viewer-row">
+      <div class="viewer" id="viewer-out">
+        <canvas id="gl-out"></canvas>
+        <div class="viewer-skel" id="skel-out" hidden></div>
+      </div>
+      <div class="level" id="mlevel">
+        <canvas class="level-hist" id="mlevel-hist" width="46" height="300"></canvas>
+        <div class="level-bar" id="mlevel-bar">
+          <div class="level-grad" id="mlevel-grad"></div>
+          <div class="level-handle" id="mlevel-hi" role="slider" tabindex="0"
+               aria-label="Display maximum"><span></span></div>
+          <div class="level-handle" id="mlevel-lo" role="slider" tabindex="0"
+               aria-label="Display minimum"><span></span></div>
+          <div class="level-dot" id="mlevel-dot" hidden><span></span></div>
+          <div class="level-readout" id="mlevel-readout" hidden></div>
+        </div>
+      </div>
+    </div>
+    <div class="viewer-foot">
+      <div class="out-controls">
+        <select id="output" hidden></select>
+        <select id="colormap"></select>
+        <button id="open-map-modal" class="ghost-btn icon-btn" type="button" disabled>
+          <span data-icon="picture-in-picture"></span>Multiplanar
+        </button>
+        <button id="roi-toggle" class="ghost-btn icon-btn" type="button" disabled><span data-icon="pencil"></span><span id="roi-toggle-label">Draw ROI</span></button>
+        <button id="labels-toggle" class="ghost-btn icon-btn" type="button" title="Hide labels"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="curve-wrap card">
+    <div class="viewer-head">
+      <h2 class="section-h" id="voxel-title" style="margin:0">Voxel &amp; regions<button class="info" type="button" aria-label="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume." data-tip="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume."><span data-icon="info" data-icon-size="14"></span></button></h2>
+      <div class="seg" role="tablist" aria-label="Voxel fit or region measurements">
+        <button id="tab-curve" class="active" role="tab" aria-selected="true"><span data-icon="chart-spline" data-icon-size="13"></span>VoxFit</button>
+        <button id="tab-measure" role="tab" aria-selected="false"><span data-icon="table-2" data-icon-size="13"></span>ROI</button>
+      </div>
+    </div>
+    <div id="curve-view">
+      <div id="voxel-value" class="voxel-value"></div>
+      <div id="curve"></div>
+      <div id="curve-note"></div>
+    </div>
+    <div id="measure-view" hidden>
+      <div class="measure-head">
+        <span id="measure-summary" class="measure-summary"></span>
+        <button id="measure-scope" class="ghost-btn" type="button" title="Show every fitted map instead of the one on screen">All maps</button>
+        <button id="measure-chart" class="ghost-btn icon-btn" type="button" title="Show the distributions as boxplots"><span data-icon="chart-spline" data-icon-size="13"></span>Distributions</button>
+        <button id="measure-csv" class="ghost-btn" type="button" title="Copy the table as CSV">Copy CSV</button>
+      </div>
+      <div id="measure-table" class="measure-table"></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="modal" id="chart-modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="chart-modal-title" class="files-name"></span>
+      <button id="chart-modal-close" class="ghost-btn" type="button">Close</button>
+    </div>
+    <div id="chart-body" class="chart-body"></div>
+  </div>
+</div>
+<div class="modal" id="notice-modal" hidden>
+  <div class="modal-card notice-card" role="alertdialog" aria-labelledby="notice-title">
+    <span class="notice-icon" id="notice-icon"></span>
+    <h2 class="notice-title" id="notice-title"></h2>
+    <p class="notice-body" id="notice-body"></p>
+    <button id="notice-close" class="primary" type="button">OK</button>
+  </div>
+</div>
+<div class="modal" id="json-modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="json-modal-title" class="files-name"></span>
+      <button id="json-modal-close" aria-label="Close">✕</button>
+    </div>
+    <pre class="json-view"><code id="json-body"></code></pre>
+  </div>
+</div>
+
+<div class="modal" id="file-modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <span id="file-modal-title" class="files-name"></span>
+      <button id="file-modal-close" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="level" id="level" hidden>
+        <canvas class="level-hist" id="level-hist" width="52" height="300"></canvas>
+        <div class="level-bar" id="level-bar">
+          <div class="level-grad" id="level-grad"></div>
+          <div class="level-handle" id="level-hi" role="slider" tabindex="0"
+               aria-label="Display maximum"><span></span></div>
+          <div class="level-handle" id="level-lo" role="slider" tabindex="0"
+               aria-label="Display minimum"><span></span></div>
+          <div class="level-dot" id="level-dot" hidden><span></span></div>
+          <div class="level-readout" id="level-readout" hidden></div>
+        </div>
+      </div>
+      <div class="viewer" id="viewer-modal"><canvas id="gl-modal"></canvas></div>
+    </div>
+  </div>
+</div>
+<script type="module" src="./app.js"></script>

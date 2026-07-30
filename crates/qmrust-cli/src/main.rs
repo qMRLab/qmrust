@@ -7,6 +7,7 @@ use qmrust_core::sim;
 use std::path::PathBuf;
 
 mod bidsify;
+mod catalog;
 mod commands;
 mod io;
 mod mtsat_b1;
@@ -95,6 +96,14 @@ enum Commands {
         config: PathBuf,
     },
 
+    /// Print every registered model's documentation metadata and declared
+    /// contract as JSON — the input to the documentation generators.
+    Catalog {
+        /// Repository root that declared recipe paths resolve against.
+        #[arg(long, default_value = ".")]
+        repo_root: PathBuf,
+    },
+
     /// Simulate signal / sim→fit round-trips (qMRLab-style Sim_*).
     Sim {
         #[command(subcommand)]
@@ -137,6 +146,14 @@ enum Commands {
         /// or found in --mat-dir)
         #[arg(long)]
         mask: Option<PathBuf>,
+
+        /// An auxiliary input map as `<name>=<path>` (repeatable), where
+        /// `<name>` is one the model declares (e.g. `B1map=tb1.nii.gz`).
+        /// Reader chosen by extension (`.mat` or NIfTI). Required for a NIfTI
+        /// source, which has no directory convention to discover aux from;
+        /// with `--mat-dir`, overrides the auto-discovered `<name>.mat`.
+        #[arg(long = "aux", value_name = "NAME=PATH")]
+        aux: Vec<String>,
 
         /// Path to the model's YAML config (for inversion_times/qmt_spgr
         /// protocol fallback)
@@ -240,6 +257,7 @@ fn main() -> Result<()> {
         }
         Commands::DumpSf { config, output } => commands::run_dump_sf(config, output),
         Commands::DumpConfig { config } => commands::run_dump_config(config),
+        Commands::Catalog { repo_root } => catalog::run(repo_root),
         Commands::Sim { mode } => {
             let (name, config, output, plot) = match mode {
                 SimMode::Signal {
@@ -273,6 +291,7 @@ fn main() -> Result<()> {
             nii_dir,
             nii_mask,
             mask,
+            aux,
             config,
             subject,
             out,
@@ -284,6 +303,7 @@ fn main() -> Result<()> {
             nii_dir,
             nii_mask,
             mask,
+            aux,
             config,
             subject,
             out,

@@ -31,7 +31,21 @@ exists.
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name + BIDS
    suffix + `build` + `describe` + `dump`).
-4. Add tests: a forward → fit round-trip, and config parse/validate.
+4. Fill in that entry's `doc: ModelDoc` — title, category, a one-paragraph
+   summary, the LaTeX equation, `symbols` matching `param_names()`, citation
+   keys added to `docs/references.bib`, and the recipe paths. Then regenerate
+   the site's model pages:
+
+   ```bash
+   cargo build --release -p qmrust-cli
+   ./target/release/qmrust catalog > catalog.json
+   python3 scripts/gen_model_docs.py --catalog catalog.json
+   ```
+
+   The model's page, its gallery card, and its sidebar entry are generated
+   from that metadata — there is no page to write by hand. CI fails the build
+   if the committed pages are stale, so run this before committing.
+5. Add tests: a forward → fit round-trip, and config parse/validate.
 
 That's it. Use `models/inversion_recovery/` as the minimal reference model
 (its `protocol_schema()` maps `InversionTime` off the BIDS sidecar);
@@ -49,7 +63,7 @@ declarative grouping config (`BidsConfig`). Everything downstream (grouping,
 auxiliary-input resolution, mask resolution) is just a query over that table
 via `table_filter(rows, &[(column, value)])` — nothing model- or
 dataset-specific. See
-[`docs/agents/DATA-PIPELINE.md`](agents/DATA-PIPELINE.md) for the full
+[`docs/agents/DATA-PIPELINE.md`](../agents/DATA-PIPELINE.md) for the full
 walkthrough.
 
 ## Declaring your model's BIDS contract
@@ -165,7 +179,7 @@ MTS:
   fixed, role-labeled volumes matched by entity constraints, with a
   `required` list of which roles must all be present.
 
-See [`docs/agents/DATA-PIPELINE.md`](agents/DATA-PIPELINE.md) for the full
+See [`docs/agents/DATA-PIPELINE.md`](../agents/DATA-PIPELINE.md) for the full
 `Vocabulary`/grouping mechanics.
 
 ## Auxiliary maps and the mask
@@ -210,6 +224,6 @@ explicitly.
 For the full trait definition, the supporting value types (`Aux`,
 `InputSpec`, `FitStrategy`, `Protocol`, `MeasurementKind`, `BidsSpec`), and a
 worked line-by-line example, see
-[`docs/agents/ARCHITECTURE.md`](agents/ARCHITECTURE.md#the-model-trait--the-single-contributor-surface).
+[`docs/agents/ARCHITECTURE.md`](../agents/ARCHITECTURE.md#the-model-trait--the-single-contributor-surface).
 For the BIDS layout/sidecar/protocol machinery in depth, see
-[`docs/agents/DATA-PIPELINE.md`](agents/DATA-PIPELINE.md).
+[`docs/agents/DATA-PIPELINE.md`](../agents/DATA-PIPELINE.md).

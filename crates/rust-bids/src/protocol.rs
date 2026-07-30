@@ -25,7 +25,12 @@ impl Meta for Sidecar {
 
 /// Each volume's `.nii` path, in collection order, so a schema evaluation can
 /// build the matching full `Sidecar` (inheritance-resolved) for each volume.
-fn ordered_nii_paths(c: &Collection) -> Vec<&str> {
+///
+/// For a named set this is `BTreeMap` (alphabetical role) order, which is *not*
+/// a model's declared role order — see [`compose_protocol`], which reorders onto
+/// that axis. Callers stacking voxel data must use the same order the protocol
+/// ends up in, or column `i` and `proto.volumes[i]` describe different volumes.
+pub fn ordered_nii_paths(c: &Collection) -> Vec<&str> {
     match &c.data {
         GroupedData::Sequential(vols) => vols.iter().map(|v| v.nii.as_str()).collect(),
         GroupedData::Named(groups) => groups.values().map(|v| v.nii.as_str()).collect(),
@@ -115,6 +120,110 @@ pub fn resolve_protocol<F: DatasetFs>(
     }
 
     Ok(proto)
+}
+
+/// A collection's volume paths on the axis a model consumes them — the order any
+/// caller must stack voxel data in for column `i` to be the volume
+/// [`compose_protocol`] put at `proto.volumes[i]`.
+///
+/// A `Sequential` collection keeps its own order (the model re-identifies each
+/// volume from the protocol by value). A `Named` collection is ordered — and
+/// subset, if the model uses fewer roles than the set holds — to the model's
+/// declared `roles`, so column `i` is `roles[i]` with no positional guesswork. A
+/// declared role with no matching volume is a hard error, never a silent
+/// mis-assignment. `roles` is `None` for a `Series` measurement, which has no
+/// axis a named set could map onto.
+pub fn ordered_volume_paths<'a>(c: &'a Collection, roles: Option<&[&str]>) -> Result<Vec<&'a str>> {
+    let paths = match &c.data {
+        GroupedData::Sequential(vols) => vols.iter().map(|v| v.nii.as_str()).collect(),
+        GroupedData::Named(map) => {
+            let roles = roles.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "collection for '{}' is a named set, but model uses a series measurement \
+                     with no role axis to map its volumes onto",
+                    c.suffix
+                )
+            })?;
+            roles
+                .iter()
+                .map(|&r| {
+                    map.get(r).map(|v| v.nii.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "named collection for '{}' is missing role '{}' (has {:?})",
+                            c.suffix,
+                            r,
+                            map.keys().collect::<Vec<_>>()
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?
+        }
+    };
+    if paths.is_empty() {
+        bail!("collection for '{}' has no volumes", c.suffix);
+    }
+    Ok(paths)
+}
+
+/// A collection's `Protocol`, composed on the axis a model consumes it.
+///
+/// This is [`resolve_protocol`] plus the two adjustments a model's measurement
+/// kind demands, and it is the form every caller wants — the CLI fitting a
+/// dataset on disk, or a frontend resolving one held in memory.
+///
+/// `roles` is the model's declared role order for a `Named` measurement, `None`
+/// for a `Series` one (whose volumes are re-identified from the protocol by
+/// value instead of by position).
+///
+/// Two contracts live here:
+///
+/// - An empty `schema` (a model declaring no `protocol_schema()`) yields an
+///   empty `Protocol` — zero volumes, *not* N empty per-volume maps.
+///   `build_volume_ids` treats a volume count matching the data as
+///   authoritative identities, so N empty rows would suppress the model's
+///   canonical `rows` fallback and break identity matching. Load-bearing for
+///   correctness, not an optimization.
+/// - A named set resolves in alphabetical role order (see
+///   [`ordered_nii_paths`]), which need not be the model's declared order.
+///   Reorder — and select, if the model uses a subset of the set's roles — so
+///   `proto.volumes[i]` is `roles[i]`, letting a `Named` model's
+///   `ingest_protocol` fold each role's acquisition by position. A declared role
+///   with no resolved protocol is a hard error, never a silent mis-assignment.
+pub fn compose_protocol<F: DatasetFs>(
+    fs: &F,
+    c: &Collection,
+    schema: &[ProtoParam],
+    options: &BTreeMap<String, f64>,
+    roles: Option<&[&str]>,
+) -> Result<Protocol> {
+    if schema.is_empty() {
+        return Ok(Protocol::default());
+    }
+    let resolved = resolve_protocol(fs, c, schema, options)?;
+    let (GroupedData::Named(map), Some(roles)) = (&c.data, roles) else {
+        return Ok(resolved);
+    };
+    let mut by_role: BTreeMap<&str, _> = map
+        .keys()
+        .map(String::as_str)
+        .zip(resolved.volumes)
+        .collect();
+    let volumes = roles
+        .iter()
+        .map(|&r| {
+            by_role.remove(r).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "named collection for '{}' resolved no protocol for role '{}'",
+                    c.suffix,
+                    r
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Protocol {
+        volumes,
+        global: resolved.global,
+    })
 }
 
 #[cfg(test)]
@@ -459,6 +568,101 @@ mod tests {
             set_c, set_s,
             "shuffled collection must resolve to the same identity set"
         );
+    }
+
+    /// An empty schema must yield an empty `Protocol` — zero volumes, not N
+    /// empty per-volume maps. `build_volume_ids` treats a volume count
+    /// matching the data as authoritative identities, so N empty rows would
+    /// suppress the model's canonical `rows` fallback and break identity
+    /// matching.
+    #[test]
+    fn compose_protocol_empty_schema_yields_empty_protocol() {
+        let (fs, vol1) = with_irt1_volume(MemFs::new(), "01", "01", 30.0);
+        let (fs, vol2) = with_irt1_volume(fs, "01", "02", 530.0);
+        let (fs, vol3) = with_irt1_volume(fs, "01", "03", 1030.0);
+        let c = Collection {
+            subject: "sub-01".into(),
+            session: None,
+            run: None,
+            task: None,
+            entities: std::collections::BTreeMap::new(),
+            suffix: "IRT1".into(),
+            data: GroupedData::Sequential(vec![vol1, vol2, vol3]),
+            warnings: vec![],
+        };
+        let proto = compose_protocol(&fs, &c, &[], &BTreeMap::new(), None).unwrap();
+        assert!(proto.volumes.is_empty());
+        assert!(proto.global.is_empty());
+    }
+
+    /// A `Named` set resolves in `BTreeMap` (alphabetical) order, which need
+    /// not be the model's declared role order. `compose_protocol` must
+    /// reorder onto the declared order so `proto.volumes[i]` corresponds to
+    /// `roles[i]` by value, not by alphabetical position.
+    #[test]
+    fn compose_protocol_reorders_named_set_onto_declared_role_order() {
+        let fs = MemFs::new()
+            .with("a_MTw.json", br#"{"FlipAngle": 3}"#.to_vec())
+            .with("a_PDw.json", br#"{"FlipAngle": 6}"#.to_vec())
+            .with("a_T1w.json", br#"{"FlipAngle": 20}"#.to_vec());
+        let mut groups = BTreeMap::new();
+        groups.insert(
+            "PDw".to_string(),
+            VolumeRef {
+                nii: "a_PDw.nii.gz".into(),
+                json: Some("a_PDw.json".into()),
+            },
+        );
+        groups.insert(
+            "MTw".to_string(),
+            VolumeRef {
+                nii: "a_MTw.nii.gz".into(),
+                json: Some("a_MTw.json".into()),
+            },
+        );
+        groups.insert(
+            "T1w".to_string(),
+            VolumeRef {
+                nii: "a_T1w.nii.gz".into(),
+                json: Some("a_T1w.json".into()),
+            },
+        );
+        let c = Collection {
+            subject: "sub-01".into(),
+            session: None,
+            run: None,
+            task: None,
+            entities: std::collections::BTreeMap::new(),
+            suffix: "MTS".into(),
+            data: GroupedData::Named(groups),
+            warnings: vec![],
+        };
+        // Declared order differs from the BTreeMap's alphabetical order
+        // (MTw, PDw, T1w).
+        let roles = ["T1w", "PDw", "MTw"];
+        let proto = compose_protocol(
+            &fs,
+            &c,
+            &flip_angle_schema(),
+            &BTreeMap::new(),
+            Some(&roles),
+        )
+        .unwrap();
+        assert_eq!(proto.volumes.len(), 3);
+        assert_eq!(proto.volumes[0].get("FlipAngle"), Some(&20.0)); // T1w
+        assert_eq!(proto.volumes[1].get("FlipAngle"), Some(&6.0)); // PDw
+        assert_eq!(proto.volumes[2].get("FlipAngle"), Some(&3.0)); // MTw
+
+        let missing_roles = ["T1w", "PDw", "MTw", "MISSING"];
+        let err = compose_protocol(
+            &fs,
+            &c,
+            &flip_angle_schema(),
+            &BTreeMap::new(),
+            Some(&missing_roles),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("MISSING"), "{err}");
     }
 
     #[test]

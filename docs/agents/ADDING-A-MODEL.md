@@ -162,10 +162,22 @@ before any data is resolved; `build` is the fit-ready path.
    errors ("no set definition named `<SUFFIX>`") unless the dataset ships its
    own `--config` grouping. This is the one shell-side edit a new model needs;
    the CLI/wasm/`bidsify`/engine paths are all registry-driven.
-5. Tests: forward→fit round-trip; config parse/validate; `ingest_protocol`
+5. Fill in that entry's `doc: ModelDoc` — title, `Category`, one-paragraph
+   summary, LaTeX equation, `symbols` (each naming a real `param_names()`
+   entry), BibTeX citation keys added to `docs/references.bib`, `source_dir`,
+   and the `Recipes` paths. Then regenerate the user documentation:
+
+       cargo build --release -p qmrust-cli
+       ./target/release/qmrust catalog > catalog.json
+       python3 scripts/gen_model_docs.py --catalog catalog.json
+
+   The model's page, its gallery card and its sidebar entry are generated from
+   that metadata — there is no page to write by hand. CI fails if the committed
+   pages are stale.
+6. Tests: forward→fit round-trip; config parse/validate; `ingest_protocol`
    composes from a resolved `Protocol`; if `bids_outputs()` is non-empty,
    assert every entry names a real `output_names()` value.
-6. Two `--config` recipes (`recipes/README.md`): `recipes/non-bids/<name>_config.yaml`
+7. Two `--config` recipes (`recipes/README.md`): `recipes/non-bids/<name>_config.yaml`
    **with** the acquisition arrays (the non-BIDS/`--mat`/`bidsify` protocol source),
    mask via the `--mask` flag; and `recipes/bids/<name>_config.yaml` **without** them
    (the BIDS fit resolves the acquisition from sidecars), mask via a `mask:` block.
