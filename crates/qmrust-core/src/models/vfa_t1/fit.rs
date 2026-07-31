@@ -13,7 +13,7 @@ use nalgebra::{DMatrix, DVector, Dyn, Owned};
 
 use crate::models::vfa_t1::config::FitType;
 
-/// qMRLab's declared bounds, in `param_names()` order [M0, T1] (T1 in seconds).
+/// qMRLab's declared bounds, in `param_names()` order [T1, M0] (T1 in seconds).
 /// The linearized solve is unconstrained; these describe the physically
 /// sensible range rather than constraining the solution.
 pub const M0_BOUNDS: (f64, f64) = (0.0, 6000.0);
@@ -42,12 +42,15 @@ impl VfaT1Fitter {
         }
     }
 
+    /// The quantitative map first, as every relaxometry model here orders them:
+    /// it is what a reader of a T1 method came for, and it is the map the app
+    /// shows before any other is chosen.
     pub fn param_names() -> [&'static str; 2] {
-        ["M0", "T1"]
+        ["T1", "M0"]
     }
 
     pub fn output_names() -> [&'static str; 2] {
-        ["M0", "T1"]
+        ["T1", "M0"]
     }
 
     /// Nominal flip angles (degrees) in the order `forward`/`fit_voxel` expect.
@@ -61,7 +64,7 @@ impl VfaT1Fitter {
 
     /// Noise-free SPGR signal at each flip angle. `b1` is the normalized
     /// transmit field scaling the nominal angle (`α_actual = b1 · α_nominal`).
-    pub fn forward(&self, m0: f64, t1: f64, b1: f64) -> Vec<f64> {
+    pub fn forward(&self, t1: f64, m0: f64, b1: f64) -> Vec<f64> {
         let e = (-self.tr / t1).exp();
         self.flip_angles
             .iter()
@@ -72,7 +75,7 @@ impl VfaT1Fitter {
             .collect()
     }
 
-    /// Fit a single voxel. Returns values in `output_names()` order — [M0, T1],
+    /// Fit a single voxel. Returns values in `output_names()` order — [T1, M0],
     /// with T1 in seconds.
     pub fn fit_voxel(&self, signal: &[f64], b1: f64) -> Vec<f64> {
         let linear = self.fit_linear(signal, b1);
@@ -104,7 +107,7 @@ impl VfaT1Fitter {
         if slope.is_nan() || slope < 0.0 || intercept.is_nan() || intercept < 0.0 {
             return vec![f64::NAN, f64::NAN];
         }
-        vec![intercept / (1.0 - slope), -self.tr / slope.ln()]
+        vec![-self.tr / slope.ln(), intercept / (1.0 - slope)]
     }
 
     /// Levenberg-Marquardt on the signal equation itself, minimising
@@ -120,7 +123,7 @@ impl VfaT1Fitter {
     /// disagree about which voxels were fitted at all — bounds are a policy
     /// that must apply to both paths or neither, and the qMRLab-faithful
     /// `Linear` default applies neither.
-    fn fit_nonlinear(&self, signal: &[f64], b1: f64, m0_init: f64, t1_init: f64) -> Vec<f64> {
+    fn fit_nonlinear(&self, signal: &[f64], b1: f64, t1_init: f64, m0_init: f64) -> Vec<f64> {
         let problem = VfaProblem {
             p: DVector::from_vec(vec![m0_init, t1_init]),
             alpha: self
@@ -136,7 +139,7 @@ impl VfaT1Fitter {
         if !report.termination.was_successful() || !m0.is_finite() || !t1.is_finite() || t1 <= 0.0 {
             return vec![f64::NAN, f64::NAN];
         }
-        vec![m0, t1]
+        vec![t1, m0]
     }
 }
 
@@ -219,6 +222,23 @@ mod tests {
     use super::*;
     use crate::models::vfa_t1::config::VfaT1Config;
 
+    /// Read a fit result by name. `fit_voxel` returns `output_names()` order,
+    /// and every assertion below reads through these — so reordering the
+    /// outputs without updating `output_names` fails the guard test rather than
+    /// silently relabelling what each number means.
+    fn t1_of(out: &[f64]) -> f64 {
+        out[0]
+    }
+    fn m0_of(out: &[f64]) -> f64 {
+        out[1]
+    }
+
+    #[test]
+    fn outputs_are_named_in_the_order_the_accessors_assume() {
+        assert_eq!(VfaT1Fitter::output_names(), ["T1", "M0"]);
+        assert_eq!(VfaT1Fitter::param_names(), ["T1", "M0"]);
+    }
+
     fn fitter(flip_angles: Vec<f64>) -> VfaT1Fitter {
         with_type(flip_angles, FitType::Linear)
     }
@@ -254,18 +274,26 @@ mod tests {
     fn nonlinear_recovers_known_params_on_clean_data() {
         let f = with_type(vec![2.0, 5.0, 10.0, 20.0, 30.0], FitType::Nonlinear);
         for &t1 in &[0.2, 0.5, 0.9, 1.5, 3.0] {
-            let clean = f.forward(750.0, t1, 1.0);
+            let clean = f.forward(t1, 750.0, 1.0);
             let out = f.fit_voxel(&clean, 1.0);
-            assert!((out[1] - t1).abs() < 1e-6, "T1={t1}: got {}", out[1]);
-            assert!((out[0] - 750.0).abs() < 1e-3, "T1={t1}: M0 {}", out[0]);
+            assert!(
+                (t1_of(&out) - t1).abs() < 1e-6,
+                "T1={t1}: got {}",
+                t1_of(&out)
+            );
+            assert!(
+                (m0_of(&out) - 750.0).abs() < 1e-3,
+                "T1={t1}: M0 {}",
+                m0_of(&out)
+            );
         }
     }
 
     #[test]
     fn nonlinear_applies_b1_like_the_linear_path() {
         let f = with_type(vec![3.0, 10.0, 20.0], FitType::Nonlinear);
-        let sig = f.forward(1000.0, 0.9, 1.15);
-        assert!((f.fit_voxel(&sig, 1.15)[1] - 0.9).abs() < 1e-6);
+        let sig = f.forward(0.9, 1000.0, 1.15);
+        assert!((t1_of(&f.fit_voxel(&sig, 1.15)) - 0.9).abs() < 1e-6);
     }
 
     #[test]
@@ -281,13 +309,16 @@ mod tests {
         let truth = 1.2;
         let lin = with_type(angles.clone(), FitType::Linear);
         let non = with_type(angles, FitType::Nonlinear);
-        let clean = lin.forward(1000.0, truth, 1.0);
+        let clean = lin.forward(truth, 1000.0, 1.0);
 
         let mut noise = Noise(0x5EED);
         let (mut sq_lin, mut sq_non, mut n) = (0.0, 0.0, 0u32);
         for _ in 0..400 {
             let data = noise.apply(&clean, 3.0);
-            let (a, b) = (lin.fit_voxel(&data, 1.0)[1], non.fit_voxel(&data, 1.0)[1]);
+            let (a, b) = (
+                t1_of(&lin.fit_voxel(&data, 1.0)),
+                t1_of(&non.fit_voxel(&data, 1.0)),
+            );
             if !a.is_finite() || !b.is_finite() {
                 continue; // a failed fit is not evidence either way
             }
@@ -322,14 +353,17 @@ mod tests {
         let lin = with_type(vec![3.0, 20.0], FitType::Linear);
         let non = with_type(vec![3.0, 20.0], FitType::Nonlinear);
         for &t1 in &[0.5, 1.2, 6.5] {
-            let data = lin.forward(1000.0, t1, 1.0);
+            let data = lin.forward(t1, 1000.0, 1.0);
             let (a, b) = (lin.fit_voxel(&data, 1.0), non.fit_voxel(&data, 1.0));
             assert_eq!(
-                a[1].is_nan(),
-                b[1].is_nan(),
+                t1_of(&a).is_nan(),
+                t1_of(&b).is_nan(),
                 "T1={t1}: disagreement on whether the voxel was fitted"
             );
-            assert!((a[1] - b[1]).abs() < 1e-9, "T1={t1}: {a:?} vs {b:?}");
+            assert!(
+                (t1_of(&a) - t1_of(&b)).abs() < 1e-9,
+                "T1={t1}: {a:?} vs {b:?}"
+            );
         }
     }
 
@@ -342,19 +376,27 @@ mod tests {
     #[test]
     fn forward_then_fit_recovers_params() {
         let f = fitter(vec![3.0, 20.0]);
-        let sig = f.forward(1000.0, 0.9, 1.0);
+        let sig = f.forward(0.9, 1000.0, 1.0);
         let out = f.fit_voxel(&sig, 1.0);
-        assert!((out[0] - 1000.0).abs() < 1e-6, "M0: {}", out[0]);
-        assert!((out[1] - 0.9).abs() < 1e-9, "T1: {}", out[1]);
+        assert!((m0_of(&out) - 1000.0).abs() < 1e-6, "M0: {}", m0_of(&out));
+        assert!((t1_of(&out) - 0.9).abs() < 1e-9, "T1: {}", t1_of(&out));
     }
 
     #[test]
     fn round_trip_over_a_range_of_t1() {
         let f = fitter(vec![2.0, 5.0, 10.0, 20.0, 30.0]);
         for &t1 in &[0.2, 0.5, 0.9, 1.5, 3.0] {
-            let out = f.fit_voxel(&f.forward(750.0, t1, 1.0), 1.0);
-            assert!((out[1] - t1).abs() < 1e-9, "T1={t1}: got {}", out[1]);
-            assert!((out[0] - 750.0).abs() < 1e-6, "T1={t1}: M0 {}", out[0]);
+            let out = f.fit_voxel(&f.forward(t1, 750.0, 1.0), 1.0);
+            assert!(
+                (t1_of(&out) - t1).abs() < 1e-9,
+                "T1={t1}: got {}",
+                t1_of(&out)
+            );
+            assert!(
+                (m0_of(&out) - 750.0).abs() < 1e-6,
+                "T1={t1}: M0 {}",
+                m0_of(&out)
+            );
         }
     }
 
@@ -363,14 +405,18 @@ mod tests {
         // A transmit field that departs from nominal biases the fit unless the
         // same B1 is applied; supplying it recovers the truth exactly.
         let f = fitter(vec![3.0, 20.0]);
-        let sig = f.forward(1000.0, 0.9, 1.15);
+        let sig = f.forward(0.9, 1000.0, 1.15);
         let corrected = f.fit_voxel(&sig, 1.15);
-        assert!((corrected[1] - 0.9).abs() < 1e-9, "T1: {}", corrected[1]);
+        assert!(
+            (t1_of(&corrected) - 0.9).abs() < 1e-9,
+            "T1: {}",
+            t1_of(&corrected)
+        );
         let uncorrected = f.fit_voxel(&sig, 1.0);
         assert!(
-            (uncorrected[1] - 0.9).abs() > 1e-3,
+            (t1_of(&uncorrected) - 0.9).abs() > 1e-3,
             "ignoring B1 should bias T1, got {}",
-            uncorrected[1]
+            t1_of(&uncorrected)
         );
     }
 
