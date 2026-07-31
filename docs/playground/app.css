@@ -517,7 +517,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
 }
 .field-label { color: var(--ink-2); font: 12px var(--font-ui); }
-.field-key { display: block; color: var(--muted); font: 11px var(--font-mono); }
+.field-key { display: none; }
 .field-row input, .field-row textarea { width: 100%; }
 .field-row textarea { min-height: 44px; resize: vertical; }
 /* A number array is one compact line at rest and one value per line while
@@ -1080,3 +1080,83 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
 /* The chart fills the modal it was given room in. */
 .chart-body { flex: 1 1 auto; min-height: 0; width: 100%; }
+
+
+/* The BIDS mark in place of the words "from sidecars": this value came from the
+   dataset, not the recipe. Sized to the label's cap height so it reads as part
+   of the line rather than as an image dropped into it. */
+.bids-badge {
+  height: 13px;
+  width: auto;
+  margin-left: 6px;
+  vertical-align: -2px;
+  opacity: 0.85;
+}
+.group-title .bids-badge { vertical-align: -1px; }
+
+/* Slide to override the sidecar-supplied protocol. Modelled on the iOS
+   slide-to-act control: a pill track, a red knob, and a prompt that fades as
+   the knob travels. Red because the outcome is a recipe that contradicts its
+   own dataset. */
+.override {
+  position: relative;
+  margin-top: 14px;
+  padding: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+}
+.override-slider {
+  position: absolute;
+  inset: 4px;
+  width: calc(100% - 8px);
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  z-index: 2;
+}
+.override-slider::-webkit-slider-runnable-track { background: transparent; height: 32px; }
+.override-slider::-moz-range-track { background: transparent; height: 32px; }
+.override-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 32px; width: 32px;
+  border-radius: 50%;
+  background: var(--bad);
+  border: none;
+  cursor: grab;
+}
+.override-slider::-moz-range-thumb {
+  height: 32px; width: 32px;
+  border-radius: 50%;
+  background: var(--bad);
+  border: none;
+  cursor: grab;
+}
+.override-slider:active::-webkit-slider-thumb { cursor: grabbing; }
+.override-label {
+  pointer-events: none;
+  width: 100%;
+  text-align: center;
+  padding-left: 26px;            /* clear of the resting knob */
+  color: var(--bad);
+  font: 12px var(--font-ui);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: opacity 80ms linear;
+}
+.override.unlocked {
+  justify-content: space-between;
+  padding: 6px 6px 6px 14px;
+}
+.override-msg { color: var(--bad); font: 12px var(--font-ui); font-weight: 600; }
+.override-relock {
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: 12px var(--font-ui);
+  cursor: pointer;
+}

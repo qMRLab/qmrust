@@ -224,6 +224,7 @@ export async function loadModel(name) {
   app.wheelAccum = 0;
   app.dataset = null;
   app.protocolResolved = false;
+  app.overrideProtocol = false;
 
   // The full BIDS dataset is the real thing: fetched, resolved in the browser,
   // and fitted with the acquisition its own sidecars declare. The pre-baked

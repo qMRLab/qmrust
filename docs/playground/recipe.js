@@ -16,6 +16,7 @@ import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
 import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers, resolvedProtocolJson } from "./surface.js";
 import { debounce } from "./debounce.js";
+import { fieldLabel, groupLabel } from "./labels.js";
 
 hljs.registerLanguage("yaml", hljsYaml);
 hljs.registerLanguage("json", hljsJson);
@@ -130,19 +131,30 @@ const scheduleSurfaceRefresh = debounce(() => {
   renderForm();
 }, 150);
 
-function fieldRow(label, path, widget) {
+// The dotted config path is deliberately not shown: it is the serialization's
+// business, the YAML view already spells it out verbatim, and a reader of the
+// form wants the quantity, not the key that stores it.
+function fieldRow(path, widget) {
   const row = document.createElement("div");
   row.className = "field-row";
   const labelWrap = document.createElement("div");
   const labelSpan = document.createElement("span");
   labelSpan.className = "field-label";
-  labelSpan.textContent = label.replace(/_/g, " ");
-  const keySpan = document.createElement("span");
-  keySpan.className = "field-key";
-  keySpan.textContent = path.join(".");
-  labelWrap.append(labelSpan, keySpan);
+  labelSpan.textContent = fieldLabel(path);
+  labelWrap.append(labelSpan);
   row.append(labelWrap, widget);
   return row;
+}
+
+// The BIDS mark, standing in for the words "from sidecars": this value came
+// from the dataset, not from the recipe.
+function bidsBadge() {
+  const img = document.createElement("img");
+  img.className = "bids-badge";
+  img.src = "./vendor/bids-logo.png";
+  img.alt = "BIDS";
+  img.title = "resolved from the dataset's BIDS sidecars";
+  return img;
 }
 
 function buildWidget(value, path) {
@@ -300,7 +312,7 @@ function buildRows(container, rows, parentLocked = false) {
       group.className = "group";
       const title = document.createElement("div");
       title.className = "group-title";
-      title.textContent = row.key;
+      title.textContent = groupLabel(row.key);
       const fields = document.createElement("div");
       fields.className = "form-fields";
       group.append(title, fields);
@@ -309,10 +321,7 @@ function buildRows(container, rows, parentLocked = false) {
       if (row.readOnly) {
         group.classList.add("locked");
         if (!parentLocked) {
-          const note = document.createElement("span");
-          note.className = "field-source";
-          note.textContent = "from sidecars";
-          title.after(note);
+          title.append(bidsBadge());
         }
       }
       continue;
@@ -340,15 +349,12 @@ function buildRows(container, rows, parentLocked = false) {
       target.disabled = true;
       target.title = "supplied by the dataset's sidecars";
     }
-    const el = fieldRow(row.key, row.path, widget);
+    const el = fieldRow(row.path, widget);
     if (!row.isSet) el.classList.add("unset");
     if (row.readOnly) {
       el.classList.add("locked");
       if (!parentLocked) {
-        const note = document.createElement("span");
-        note.className = "field-source";
-        note.textContent = "from sidecars";
-        el.querySelector(".field-key")?.after(note);
+        el.querySelector(".field-label")?.after(bidsBadge());
       }
     }
     container.append(el);
@@ -403,7 +409,7 @@ function renderForm() {
   const surface = app.surface ? yamlLoad(app.surface.yaml) : editor.obj;
   const rows = mergeSurface(surface, editor.obj, {
     protocolKeys: app.surface?.protocol_keys ?? [],
-    readOnly: app.protocolResolved,
+    readOnly: app.protocolResolved && !app.overrideProtocol,
   });
 
   // Every render rebuilds the whole subtree from the merged rows — the only
@@ -418,7 +424,75 @@ function renderForm() {
   const focus = captureFocus(container);
   container.replaceChildren();
   buildRows(container, rows);
+  // Only offered when there is something to unlock: a resolved protocol, and
+  // at least one field it supplies.
+  if (app.protocolResolved && rows.some((r) => r.isProtocol)) {
+    container.append(overrideControl());
+  }
   restoreFocus(container, focus);
+}
+
+// Slide to override: a deliberate sweep rather than a click, because unlocking
+// these fields lets the recipe contradict the dataset it is fitted against —
+// and a value typed here is recorded in the output provenance as if the
+// acquisition said so. Built on a range input, so it is keyboard- and
+// screen-reader-operable without reimplementing a drag; a sweep that stops
+// short springs back, so only a full travel counts.
+function overrideControl() {
+  const wrap = document.createElement("div");
+  wrap.className = "override";
+  const apply = () => {
+    refreshSurface();
+    updateYamlView();
+    renderForm();
+  };
+
+  if (app.overrideProtocol) {
+    wrap.classList.add("unlocked");
+    const msg = document.createElement("span");
+    msg.className = "override-msg";
+    msg.textContent = "Protocol unlocked — edits override the dataset";
+    const relock = document.createElement("button");
+    relock.type = "button";
+    relock.className = "override-relock";
+    relock.textContent = "Re-lock";
+    relock.onclick = () => {
+      app.overrideProtocol = false;
+      apply();
+    };
+    wrap.append(msg, relock);
+    return wrap;
+  }
+
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "override-slider";
+  slider.min = "0";
+  slider.max = "100";
+  slider.value = "0";
+  slider.setAttribute("aria-label", "Slide to override BIDS protocol");
+  const label = document.createElement("span");
+  label.className = "override-label";
+  label.textContent = "Slide to Override BIDS Protocol";
+  const commit = () => {
+    if (Number(slider.value) >= 100) {
+      app.overrideProtocol = true;
+      apply();
+    } else {
+      // Sprung back: the gesture was abandoned, so the prompt returns.
+      slider.value = "0";
+      label.style.opacity = "1";
+    }
+  };
+  slider.addEventListener("input", () => {
+    // The prompt fades as the knob travels, so a partial sweep reads as
+    // progress rather than as a control ignoring the drag.
+    label.style.opacity = String(1 - Number(slider.value) / 120);
+    if (Number(slider.value) >= 100) commit();
+  });
+  slider.addEventListener("change", commit);
+  wrap.append(slider, label);
+  return wrap;
 }
 
 function showConfigError(message) {

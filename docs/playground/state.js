@@ -87,6 +87,11 @@ export const app = {
   // when wasm is unavailable or the recipe fails to deserialize — in which
   // case the form falls back to mirroring the recipe.
   surface: null,
+  // Set by the slide-to-override control: the reader has deliberately unlocked
+  // the sidecar-supplied fields for editing. Always reset on a model or dataset
+  // load — an override is a decision about the dataset in front of you, and it
+  // must not silently carry over to the next one.
+  overrideProtocol: false,
   // Whether a resolved BIDS protocol is supplying the acquisition, which locks
   // the model's protocol keys. Read from the loaded dataset, never from the
   // recipe: the recipe's contents are the thing being rendered.
