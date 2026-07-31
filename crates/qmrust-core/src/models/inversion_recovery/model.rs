@@ -126,11 +126,23 @@ impl Model for IrModel {
         })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
-        vec![ProtoParam {
-            name: "InversionTime",
-            source: Source::Field("InversionTime"),
-            scope: Scope::PerVolume,
-        }]
+        vec![
+            ProtoParam {
+                name: "InversionTime",
+                source: Source::Field("InversionTime"),
+                scope: Scope::PerVolume,
+                required: true,
+            },
+            // Not read by the fit (Barral fits a + b·exp(-TI/T1), no TR term);
+            // recorded only so `bids_volume` can echo it into each volume's
+            // sidecar. Optional: a dataset whose sidecars omit it must still fit.
+            ProtoParam {
+                name: "RepetitionTime",
+                source: Source::Field("RepetitionTime"),
+                scope: Scope::Global,
+                required: false,
+            },
+        ]
     }
     fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
         // Only `T1` is a genuine qMRLab-convention quantitative map here: `a`
@@ -146,7 +158,7 @@ impl Model for IrModel {
 impl crate::core::model::ModelConfig for IrConfig {
     const NAME: &'static str = "inversion_recovery";
     const SUBKEY: Option<&'static str> = None;
-    const PROTOCOL_KEYS: &'static [&'static str] = &["inversion_times"];
+    const PROTOCOL_KEYS: &'static [&'static str] = &["inversion_times", "repetition_time"];
 
     fn validate_options(&mut self) -> Result<()> {
         IrConfig::validate_options(self)
@@ -162,6 +174,9 @@ impl crate::core::model::ModelConfig for IrConfig {
             if !tis.is_empty() {
                 self.inversion_times = tis;
             }
+        }
+        if let Some(&tr) = proto.global.get("RepetitionTime") {
+            self.repetition_time = Some(tr);
         }
         Ok(())
     }
@@ -195,8 +210,11 @@ pub fn dump(v: &serde_yaml::Value) -> Result<String> {
 /// Registry option-surface entry point (see
 /// [`effective_model`](crate::core::model::effective_model)): every option this
 /// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(v: &serde_yaml::Value) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<IrConfig>(v)
+pub fn effective(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> Result<crate::core::model::EffectiveConfig> {
+    crate::core::model::effective_model::<IrConfig>(v, proto)
 }
 
 #[cfg(test)]
@@ -322,10 +340,43 @@ mod tests {
     fn declares_inversion_time_protocol_schema() {
         let m = build(&ir_value(), &Protocol::default()).unwrap();
         let schema = m.protocol_schema();
-        assert_eq!(schema.len(), 1);
+        assert_eq!(schema.len(), 2);
         assert_eq!(schema[0].name, "InversionTime");
         assert!(matches!(schema[0].source, Source::Field("InversionTime")));
         assert!(matches!(schema[0].scope, Scope::PerVolume));
+        assert!(schema[0].required);
+        assert_eq!(schema[1].name, "RepetitionTime");
+        assert!(matches!(schema[1].scope, Scope::Global));
+        assert!(!schema[1].required, "TR is not needed to fit IR");
+    }
+
+    #[test]
+    fn repetition_time_is_folded_from_the_global_protocol() {
+        let mut proto = Protocol::default();
+        for ti in [0.350, 0.500, 0.650] {
+            let mut mm = std::collections::BTreeMap::new();
+            mm.insert("InversionTime".to_string(), ti);
+            proto.volumes.push(mm);
+        }
+        proto.global.insert("RepetitionTime".to_string(), 3.5);
+        let m = build(&ir_value(), &proto).unwrap();
+        let vol = m.bids_volume(0);
+        assert_eq!(vol.sidecar["RepetitionTime"], json!(3.5));
+    }
+
+    #[test]
+    fn builds_fine_without_a_repetition_time_in_the_protocol() {
+        // RepetitionTime is not required: a dataset whose sidecars omit it
+        // must still fit, and its sidecar simply carries no RepetitionTime.
+        let mut proto = Protocol::default();
+        for ti in [0.350, 0.500, 0.650] {
+            let mut mm = std::collections::BTreeMap::new();
+            mm.insert("InversionTime".to_string(), ti);
+            proto.volumes.push(mm);
+        }
+        let m = build(&ir_value(), &proto).unwrap();
+        let vol = m.bids_volume(0);
+        assert!(!vol.sidecar.contains_key("RepetitionTime"));
     }
 
     #[test]

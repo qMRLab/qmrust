@@ -61,9 +61,12 @@ fn eval_source(
 /// `Scope::Global` params are evaluated once, against the *first* volume's
 /// sidecar (global fields are expected to be dataset-wide and hence
 /// consistent across volumes); an empty collection makes any `Global` param
-/// unresolvable. A param that cannot be resolved is a hard error naming the
-/// param and (for `PerVolume`) the offending volume's path — a silently
-/// missing value would otherwise surface only as a per-voxel fit failure.
+/// unresolvable. A `required` param that cannot be resolved is a hard error
+/// naming the param and (for `PerVolume`) the offending volume's path — a
+/// silently missing value would otherwise surface only as a per-voxel fit
+/// failure. A param declared `required: false` is instead skipped — omitted
+/// from the `Protocol` — when it cannot be resolved, so a model whose fit
+/// does not need it still fits a dataset whose sidecars lack it.
 pub fn resolve_protocol<F: DatasetFs>(
     fs: &F,
     c: &Collection,
@@ -87,6 +90,7 @@ pub fn resolve_protocol<F: DatasetFs>(
                 Some(v) => {
                     vol.insert(param.name.to_string(), v);
                 }
+                None if !param.required => {}
                 None => bail!(
                     "protocol param '{}' could not be resolved for volume '{}'",
                     param.name,
@@ -101,17 +105,20 @@ pub fn resolve_protocol<F: DatasetFs>(
     }
 
     for param in schema.iter().filter(|p| matches!(p.scope, Scope::Global)) {
-        let sidecar = first_sidecar.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
+        let sidecar = match first_sidecar.as_ref() {
+            Some(s) => s,
+            None if !param.required => continue,
+            None => bail!(
                 "protocol param '{}' is global but the collection has no volumes",
                 param.name
-            )
-        })?;
+            ),
+        };
         let value = eval_source(&param.source, sidecar, options)?;
         match value {
             Some(v) => {
                 proto.global.insert(param.name.to_string(), v);
             }
+            None if !param.required => {}
             None => bail!(
                 "protocol param '{}' (global) could not be resolved",
                 param.name
@@ -237,6 +244,7 @@ mod tests {
             name: "FlipAngle",
             source: Source::Field("FlipAngle"),
             scope: Scope::PerVolume,
+            required: true,
         }]
     }
 
@@ -314,6 +322,7 @@ mod tests {
             name: "InversionTime",
             source: Source::Field("InversionTime"),
             scope: Scope::PerVolume,
+            required: true,
         }]
     }
 
@@ -353,6 +362,7 @@ mod tests {
                 Ok(a * b)
             }),
             scope: Scope::PerVolume,
+            required: true,
         }]
     }
 
@@ -409,6 +419,7 @@ mod tests {
             name: "x",
             source: Source::Option("x"),
             scope: Scope::PerVolume,
+            required: true,
         }];
         let mut options = BTreeMap::new();
         options.insert("x".to_string(), 42.0);
@@ -454,11 +465,13 @@ mod tests {
                 name: "Angle",
                 source: Source::Field("Angle"),
                 scope: Scope::PerVolume,
+                required: true,
             },
             ProtoParam {
                 name: "Offset",
                 source: Source::Field("Offset"),
                 scope: Scope::PerVolume,
+                required: true,
             },
         ]
     }
@@ -702,11 +715,13 @@ mod tests {
                 name: "InversionTime",
                 source: Source::Field("InversionTime"),
                 scope: Scope::PerVolume,
+                required: true,
             },
             ProtoParam {
                 name: "MagneticFieldStrength",
                 source: Source::Field("MagneticFieldStrength"),
                 scope: Scope::Global,
+                required: true,
             },
         ];
         let proto = resolve_protocol(&fs, &c, &schema, &BTreeMap::new()).unwrap();
@@ -720,5 +735,72 @@ mod tests {
                 "a Global-scope param must not appear in the per-volume map"
             );
         }
+    }
+
+    #[test]
+    fn required_false_param_missing_from_sidecars_is_skipped_not_an_error() {
+        // No RepetitionTime in either sidecar.
+        let (fs, vol) = with_irt1_volume(MemFs::new(), "01", "01", 30.0);
+        let c = Collection {
+            subject: "sub-01".into(),
+            session: None,
+            run: None,
+            task: None,
+            entities: std::collections::BTreeMap::new(),
+            suffix: "IRT1".into(),
+            data: GroupedData::Sequential(vec![vol]),
+            warnings: vec![],
+        };
+        let schema = vec![
+            ProtoParam {
+                name: "InversionTime",
+                source: Source::Field("InversionTime"),
+                scope: Scope::PerVolume,
+                required: true,
+            },
+            ProtoParam {
+                name: "RepetitionTime",
+                source: Source::Field("RepetitionTime"),
+                scope: Scope::Global,
+                required: false,
+            },
+        ];
+        let proto = resolve_protocol(&fs, &c, &schema, &BTreeMap::new()).unwrap();
+        assert_eq!(proto.volumes[0].get("InversionTime"), Some(&30.0));
+        assert!(
+            !proto.global.contains_key("RepetitionTime"),
+            "an unresolvable optional param must not appear in the protocol at all"
+        );
+    }
+
+    #[test]
+    fn required_true_param_missing_from_sidecars_still_errors() {
+        let (fs, vol) = with_irt1_volume(MemFs::new(), "01", "01", 30.0);
+        let c = Collection {
+            subject: "sub-01".into(),
+            session: None,
+            run: None,
+            task: None,
+            entities: std::collections::BTreeMap::new(),
+            suffix: "IRT1".into(),
+            data: GroupedData::Sequential(vec![vol]),
+            warnings: vec![],
+        };
+        let schema = vec![
+            ProtoParam {
+                name: "InversionTime",
+                source: Source::Field("InversionTime"),
+                scope: Scope::PerVolume,
+                required: true,
+            },
+            ProtoParam {
+                name: "RepetitionTime",
+                source: Source::Field("RepetitionTime"),
+                scope: Scope::Global,
+                required: true,
+            },
+        ];
+        let err = resolve_protocol(&fs, &c, &schema, &BTreeMap::new()).unwrap_err();
+        assert!(err.to_string().contains("RepetitionTime"), "{err}");
     }
 }

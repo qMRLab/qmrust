@@ -891,6 +891,7 @@ mod tests {
             name: "InversionTime",
             source: Source::Field("InversionTime"),
             scope: Scope::PerVolume,
+            required: true,
         }]
     }
 
