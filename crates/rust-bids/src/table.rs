@@ -116,17 +116,19 @@ pub fn parse_to_table<F: DatasetFs>(fs: &F, vocab: &Vocabulary) -> Result<Vec<Bi
 
     let mut all = Vec::new();
     walk(fs, "", &mut all)?;
-    // A path whose filename parses to a *custom* suffix (registered model or
-    // config-declared) is exempt from `.bidsignore`: custom (non-standard-BIDS)
-    // suffixes like QMTSPGR are deliberately `.bidsignore`'d so generic BIDS
-    // validators don't choke on them, but they must still be discoverable by
-    // qmrust itself. Canonical BIDS suffixes are never force-exempted.
-    let is_custom_suffix = |p: &str| {
+    // A path whose filename parses to a suffix qmrust declared (a registered
+    // model's own, or one this dataset's config named) is exempt from
+    // `.bidsignore`. That file is the data a model was asked to fit, and
+    // `.bidsignore` exists to keep third-party validators quiet, not to hide
+    // data from the tool reading it. The exemption covers canonical suffixes
+    // too: datasets published before a suffix was recognized as canonical still
+    // carry a line for it, and honouring that would make them unreadable.
+    let is_declared_suffix = |p: &str| {
         let file = p.rsplit('/').next().unwrap_or(p);
-        parse_filename(file).is_some_and(|parsed| vocab.is_custom_suffix(&parsed.suffix))
+        parse_filename(file).is_some_and(|parsed| vocab.is_declared_suffix(&parsed.suffix))
     };
     let ignored =
-        |p: &str| !is_custom_suffix(p) && ignore.iter().any(|pat| bidsignore_match(pat, p));
+        |p: &str| !is_declared_suffix(p) && ignore.iter().any(|pat| bidsignore_match(pat, p));
 
     // Index sidecars by directory-qualified stem for pairing, so a raw file
     // never pairs with a same-named sidecar living under a different
@@ -277,6 +279,24 @@ mod tests {
             rows[0].sidecar_path.is_some(),
             "sidecar must also be exempted so pairing still works"
         );
+    }
+
+    #[test]
+    fn bidsignore_does_not_hide_a_canonical_registered_suffix() {
+        // Datasets published before a suffix was recognized as canonical carry
+        // a `.bidsignore` line for it (every qmrust example archive shipped an
+        // `*IRT1*` line). Honouring that hides the model's own volumes and the
+        // dataset reads as "nothing this model can fit" — so the exemption must
+        // cover registered suffixes that are ALSO canonical BIDS, not just
+        // non-official ones like QMTSPGR.
+        let fs = MemFs::new()
+            .touch("sub-01/anat/sub-01_inv-1_IRT1.nii.gz")
+            .with("sub-01/anat/sub-01_inv-1_IRT1.json", b"{}".to_vec())
+            .with(".bidsignore", b"*IRT1*".to_vec());
+        let rows = parse_to_table(&fs, &Vocabulary::bids()).unwrap();
+        assert_eq!(rows.len(), 1, "a stale *IRT1* line must not hide the data");
+        assert_eq!(rows[0].suffix, "IRT1");
+        assert!(rows[0].sidecar_path.is_some(), "its sidecar too");
     }
 
     #[test]

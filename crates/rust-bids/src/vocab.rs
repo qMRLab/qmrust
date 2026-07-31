@@ -165,8 +165,10 @@ impl Vocabulary {
     /// The built-in vocabulary qmrust knows with no dataset config: canonical
     /// BIDS terms plus every registered model's BIDS suffix. Registered models
     /// are a compile-time fact (not configuration), so their suffixes — e.g.
-    /// the custom `QMTSPGR` — are known and `.bidsignore`-exempt by default;
-    /// `from_config` only layers a *dataset's* own declared customs on top.
+    /// the non-official `QMTSPGR` — are known and `.bidsignore`-exempt by
+    /// default; `from_config` only layers a *dataset's* own declared customs on
+    /// top. A registered suffix that is also canonical stays canonical (see
+    /// [`is_custom_suffix`](Self::is_custom_suffix)).
     pub fn bids() -> Self {
         let mut vocab = Vocabulary {
             suffixes: CANONICAL_SUFFIXES.iter().copied().collect(),
@@ -212,8 +214,26 @@ impl Vocabulary {
     }
 
     /// Whether `s` is a *custom* (non-canonical) suffix: registered model or
-    /// config-declared, but NOT a canonical BIDS suffix.
+    /// config-declared, but NOT a canonical BIDS suffix. A canonical suffix is
+    /// never custom, however it was declared — most registered models use one
+    /// (`VFA`, `IRT1`, `MTS`, …), and only a genuinely non-official suffix like
+    /// `QMTSPGR` needs a `.bidsignore` line written for it.
+    ///
+    /// This answers the *write* question ("does this dataset need a
+    /// `.bidsignore` entry?"). For the *read* question — "may a `.bidsignore`
+    /// hide this file from qmrust?" — see [`is_declared_suffix`](Self::is_declared_suffix).
     pub fn is_custom_suffix(&self, s: &str) -> bool {
+        !self.suffixes.contains(s) && self.custom_suffixes.contains(s)
+    }
+
+    /// Whether `s` is a suffix qmrust itself declared: a registered model's own
+    /// suffix, or one this dataset's config named. Such a file must stay
+    /// visible to qmrust even when `.bidsignore` names it, canonical or not —
+    /// a dataset written before a suffix was recognized as canonical still
+    /// carries that line, and honouring it would hide the very volumes the
+    /// model was asked to fit. `.bidsignore` exists to keep third-party
+    /// validators quiet, never to hide data from the tool reading it.
+    pub fn is_declared_suffix(&self, s: &str) -> bool {
         self.custom_suffixes.contains(s)
     }
 
@@ -235,8 +255,14 @@ mod tests {
         assert!(v.is_known_suffix("IRT1"));
         // A canonical suffix is known but not "custom".
         assert!(!v.is_custom_suffix("T1map"));
-        // Registered model suffixes are built in (compile-time), so known and
-        // custom (hence `.bidsignore`-exempt) with no config.
+        // Registered model suffixes are built in (compile-time), so known
+        // with no config — but a registered suffix that BIDS itself defines
+        // stays canonical, so it needs no `.bidsignore` exemption.
+        for canonical in ["IRT1", "MESE", "MTR", "MTS", "VFA"] {
+            assert!(v.is_known_suffix(canonical));
+            assert!(!v.is_custom_suffix(canonical), "{canonical} is canonical");
+        }
+        // Only a genuinely non-official suffix is custom.
         assert!(v.is_known_suffix("QMTSPGR"));
         assert!(v.is_custom_suffix("QMTSPGR"));
         assert!(v.is_datatype("anat"));

@@ -283,7 +283,7 @@ fn measurement_in_dir(dir: &Path, model: &dyn Model) -> Result<PathBuf> {
 
 /// Write one dataset as a BIDS tree rooted at `out`, driven by
 /// `model`'s declared BIDS identity: `dataset_description.json`,
-/// `participants.tsv`, a `.bidsignore` entry if `model`'s suffix is
+/// `participants.tsv`, a `.bidsignore` entry iff `model`'s suffix is
 /// non-canonical, one `sub-<subject>/anat/sub-<subject>[_<entity>-<val>...]_<suffix>.nii.gz`
 /// (+ JSON sidecar, from `model.bids_volume(i)`) per volume in `data`'s 4th
 /// axis, a brain-mask derivative if `mask` is given, and each `aux` map
@@ -312,7 +312,7 @@ pub fn write_bids_tree(
     std::fs::create_dir_all(out)?;
     write_dataset_description(out)?;
     write_participants_row(out, subject)?;
-    write_bidsignore_if_custom(out, spec.suffix)?;
+    sync_bidsignore(out, spec.suffix)?;
 
     let anat_dir = out.join(format!("sub-{subject}")).join("anat");
     std::fs::create_dir_all(&anat_dir)?;
@@ -492,17 +492,35 @@ fn write_derivative_dataset_description(pipeline: &Path, name: &str) -> Result<(
     Ok(())
 }
 
-/// Ensure the dataset root's `.bidsignore` contains a `*<suffix>*` line when
-/// `suffix` is not a canonical BIDS suffix (a registered model's own
-/// suffix is "custom" by construction — see `rust_bids::Vocabulary`).
-/// Canonical suffixes need no entry. Creates the file if missing; never
+/// Reconcile the dataset root's `.bidsignore` with `suffix`'s status: a
+/// non-canonical suffix (like `QMTSPGR`) gets a `*<suffix>*` line so generic
+/// BIDS validators don't choke on it, and a canonical one (like `VFA`) must
+/// have no such line — an entry there would hide the acquisitions from any
+/// validator that honours it. Both directions are enforced, so appending to a
+/// root written before a suffix's status was settled corrects it rather than
+/// leaving the stale line in place. Creates the file if missing; never
 /// duplicates the line.
-fn write_bidsignore_if_custom(out: &Path, suffix: &str) -> Result<()> {
-    if !rust_bids::Vocabulary::bids().is_custom_suffix(suffix) {
-        return Ok(());
-    }
+fn sync_bidsignore(out: &Path, suffix: &str) -> Result<()> {
     let path = out.join(".bidsignore");
     let line = format!("*{suffix}*");
+
+    if !rust_bids::Vocabulary::bids().is_custom_suffix(suffix) {
+        if !path.exists() {
+            return Ok(());
+        }
+        let contents = std::fs::read_to_string(&path)?;
+        let kept: Vec<&str> = contents.lines().filter(|l| l.trim() != line).collect();
+        if kept.len() == contents.lines().count() {
+            return Ok(());
+        }
+        if kept.iter().all(|l| l.trim().is_empty()) {
+            std::fs::remove_file(&path)?;
+        } else {
+            std::fs::write(&path, format!("{}\n", kept.join("\n")))?;
+        }
+        return Ok(());
+    }
+
     if !path.exists() {
         std::fs::write(&path, format!("{line}\n"))?;
         return Ok(());
@@ -978,6 +996,30 @@ mod tests {
 
         let bidsignore = std::fs::read_to_string(dir.join(".bidsignore")).unwrap();
         assert_eq!(bidsignore.matches("*QMTSPGR*").count(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A canonical BIDS suffix must never be `.bidsignore`d — an entry there
+    /// hides the acquisitions from any validator that honours it. Writing into
+    /// a root that already carries a stale line must clear it, while leaving
+    /// unrelated entries alone.
+    #[test]
+    fn bidsify_clears_a_stale_bidsignore_line_for_a_canonical_suffix() {
+        let dir = tmp_dir("vfa-bidsignore-canonical");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".bidsignore"), "*VFA*\n*SOMETHINGELSE*\n").unwrap();
+
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: vfa_t1\nflip_angles: [3, 20]\nrepetition_time: 0.015\n")
+                .unwrap();
+        let model = qmrust_core::models::vfa_t1::describe(&v).unwrap();
+        let data = Array4::from_shape_fn((1, 1, 1, 2), |_| 1.0);
+        write_bids_tree(model.as_ref(), &data, None, &[], "01", &dir, None).unwrap();
+
+        let bidsignore = std::fs::read_to_string(dir.join(".bidsignore")).unwrap();
+        assert!(!bidsignore.contains("*VFA*"), "{bidsignore}");
+        assert!(bidsignore.contains("*SOMETHINGELSE*"), "{bidsignore}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
