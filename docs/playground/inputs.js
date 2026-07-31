@@ -94,12 +94,21 @@ export function showLoading(note, expect = 12) {
   }
 }
 
-// Leaves whichever tab the reader is on selected, now that it has real content.
-export function endLoading() {
+// Reveals the real content behind the skeletons. `prefer` names the tab to land
+// on: a dataset that loaded is showing its image, so the viewer is what the
+// reader wants, whatever tab they happened to leave selected — being stranded on
+// a file list after a successful load reads as if nothing arrived. Callers that
+// pass nothing keep the reader where they are, which is what the failure paths
+// want: they have already selected Files to explain themselves.
+export function endLoading(prefer = null) {
   app.loading = false;
   hideDownloadProgress();
   $("skel-in").hidden = true;
   $("skel-out").hidden = true;
+  if (prefer) {
+    showInputsTab(prefer);
+    return;
+  }
   const onFiles = $("tab-files").classList.contains("active");
   showInputsTab(onFiles ? "files" : "viewer");
 }
