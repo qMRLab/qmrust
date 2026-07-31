@@ -394,6 +394,51 @@ mod tests {
         assert_eq!(a[0], b[0], "T1 must be identical under reordering");
     }
 
+    /// A TI whose shortest decimal form needs 17 significant digits must
+    /// survive the `forward` -> `fit_voxel` round-trip. `forward` writes the
+    /// measurement with serde_json while the recipe is read with serde_yaml,
+    /// so this fails the moment the two parsers disagree by one ulp.
+    #[test]
+    fn fit_voxel_round_trips_a_17_digit_inversion_time() {
+        // 19 * 0.05 == 0.9500000000000001, one ulp above the f64 nearest 0.95.
+        let ti: Vec<f64> = (1..=30).map(|i| i as f64 * 0.05).collect();
+        let list: Vec<String> = ti.iter().map(|t| t.to_string()).collect();
+        let cfg = format!(
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [{}]\n",
+            list.join(", ")
+        );
+        let meas = forward(&cfg, &[1.0, 1.2231, -2.0], "", "").unwrap();
+        let out = fit_voxel(&cfg, &meas, "", "").unwrap();
+        assert!((out[0] - 1.0).abs() < 1e-3, "T1: {}", out[0]);
+    }
+
+    /// The identity a model emits must be the identity it accepts back. This
+    /// isolates the parser disagreement from the fit that trips over it.
+    #[test]
+    fn emitted_inversion_times_survive_a_json_round_trip() {
+        let ti: Vec<f64> = (1..=30).map(|i| i as f64 * 0.05).collect();
+        let list: Vec<String> = ti.iter().map(|t| t.to_string()).collect();
+        let cfg = format!(
+            "model: inversion_recovery\nmethod: complex\ninversion_times: [{}]\n",
+            list.join(", ")
+        );
+        let meas = forward(&cfg, &[1.0, 1.2231, -2.0], "", "").unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&meas).unwrap();
+        let got: Vec<f64> = parsed
+            .iter()
+            .map(|s| s["params"]["InversionTime"].as_f64().unwrap())
+            .collect();
+        for (expected, actual) in ti.iter().zip(&got) {
+            assert_eq!(
+                expected.to_bits(),
+                actual.to_bits(),
+                "InversionTime {} came back as {}",
+                expected,
+                actual
+            );
+        }
+    }
+
     #[test]
     fn parse_aux_reads_scalars() {
         let a = parse_aux(r#"{"B1map": 1.2, "R1map": 0.9}"#).unwrap();
