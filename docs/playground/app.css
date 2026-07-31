@@ -520,6 +520,19 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .field-key { display: block; color: var(--muted); font: 11px var(--font-mono); }
 .field-row input, .field-row textarea { width: 100%; }
 .field-row textarea { min-height: 44px; resize: vertical; }
+/* A number array is one compact line at rest and one value per line while
+   focused, so a long acquisition axis neither dominates the panel nor has to
+   be edited by counting commas. Same element in both states. */
+.field-row textarea.num-array {
+  min-height: 0;
+  resize: none;
+  overflow-y: hidden;
+  white-space: pre;
+}
+.field-row textarea.num-array.editing {
+  overflow-y: auto;
+  line-height: 1.5;
+}
 
 .cfg-error {
   margin: 0 0 0.75rem;

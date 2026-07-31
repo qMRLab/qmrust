@@ -102,7 +102,11 @@ export function mergeSurface(surface, overrides, { protocolKeys = [], readOnly =
         });
       }
     }
-    return rows;
+    // Protocol first, then options. What the dataset dictates is the ground a
+    // reader stands on before choosing anything, and grouping the locked rows
+    // together also stops the greyed and editable controls from interleaving.
+    // A stable partition, so each group keeps the config's own field order.
+    return [...rows.filter((r) => r.isProtocol), ...rows.filter((r) => !r.isProtocol)];
   };
   return walk(surface, overrides, [], false);
 }
@@ -157,4 +161,22 @@ export function stripProtocolComments(text) {
   const idx = text.indexOf(PROTOCOL_COMMENT_HEADER);
   if (idx === -1) return text;
   return `${text.slice(0, idx).replace(/\s+$/, "")}\n`;
+}
+
+/**
+ * Numbers out of a free-text list, separated by commas, newlines, or both.
+ *
+ * The number-array widget shows one compact line at rest and one value per line
+ * while editing, so both separators are live at once — a reader who pastes a
+ * comma list into the expanded column, or leaves a trailing comma, gets what
+ * they meant. Anything that is not a number is dropped rather than silently
+ * becoming NaN in the recipe.
+ */
+export function readNumbers(text) {
+  return String(text)
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map(Number)
+    .filter((n) => Number.isFinite(n));
 }

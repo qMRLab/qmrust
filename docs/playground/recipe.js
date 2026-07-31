@@ -14,7 +14,7 @@ import hljsYaml from "./vendor/highlight-yaml.js";
 import hljsJson from "./vendor/highlight-json.js";
 import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
-import { mergeSurface, withProtocolComments, stripProtocolComments } from "./surface.js";
+import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers } from "./surface.js";
 import { debounce } from "./debounce.js";
 
 hljs.registerLanguage("yaml", hljsYaml);
@@ -190,18 +190,41 @@ function buildWidget(value, path) {
     return input;
   }
   if (isNumberArray(value)) {
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = value.join(", ");
-    input.onchange = () => {
-      const parsed = input.value
-        .split(",")
-        .map((s) => Number(s.trim()))
-        .filter((n) => !Number.isNaN(n));
-      setAtPath(editor.obj, path, parsed);
-      commitObjEdit();
+    // A number array reads best two different ways. At rest it is one compact
+    // line, so a long acquisition axis doesn't dominate the panel; while it is
+    // being edited it is one value per line, where a reader can see the count,
+    // scan the values against each other, and edit a single entry without
+    // counting commas. Both are the same textarea, so the element identity —
+    // and hence focus restoration across a re-render — survives the switch.
+    const ta = document.createElement("textarea");
+    ta.className = "num-array";
+    const collapse = () => {
+      ta.value = readNumbers(ta.value).join(", ");
+      ta.rows = 1;
+      ta.classList.remove("editing");
     };
-    return input;
+    const expand = () => {
+      const nums = readNumbers(ta.value);
+      ta.value = nums.join("\n");
+      // Cap the height so a 30-echo series scrolls rather than pushing the
+      // rest of the recipe off-screen.
+      ta.rows = Math.min(Math.max(nums.length, 2), 12);
+      ta.classList.add("editing");
+    };
+    ta.value = value.join(", ");
+    ta.rows = 1;
+    ta.addEventListener("focus", expand);
+    ta.addEventListener("blur", () => {
+      const parsed = readNumbers(ta.value);
+      collapse();
+      // Only commit a real change: a focus-and-leave would otherwise rebuild
+      // the form and rewrite the recipe for nothing.
+      if (String(parsed) !== String(value)) {
+        setAtPath(editor.obj, path, parsed);
+        commitObjEdit();
+      }
+    });
+    return ta;
   }
   if (typeof value === "string") {
     const input = document.createElement("input");

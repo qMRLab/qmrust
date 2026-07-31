@@ -4,7 +4,7 @@
 // sidecars supply must not be presented as editable.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeSurface, withProtocolComments, stripProtocolComments } from "../../docs/playground/surface.js";
+import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers } from "../../docs/playground/surface.js";
 
 const flat = (rows) => Object.fromEntries(rows.map((r) => [r.path.join("."), r]));
 
@@ -222,4 +222,45 @@ test("isSet is true for an override that is explicitly false, 0, or null", () =>
   assert.equal(rows.b.value, 0);
   assert.equal(rows.c.isSet, true);
   assert.equal(rows.c.value, null);
+});
+
+test("protocol rows come before options, each keeping config order", () => {
+  // What the dataset dictates is the ground a reader stands on before choosing
+  // anything; interleaving locked and editable controls also reads as noise.
+  const rows = mergeSurface(
+    { fit_type: "linear", flip_angles: [3, 20], drop_first: false, repetition_time: 0.015 },
+    { mask: { desc: "brain" } },
+    { protocolKeys: ["flip_angles", "repetition_time"], readOnly: true },
+  );
+  assert.deepEqual(rows.map((r) => r.key), [
+    "flip_angles", "repetition_time",   // protocol, in config order
+    "fit_type", "drop_first",           // options, in config order
+    "mask",                             // override-only, last
+  ]);
+});
+
+test("ordering holds when nothing is protocol-sourced", () => {
+  const rows = mergeSurface(
+    { fit_type: "linear", flip_angles: [3, 20] },
+    {},
+    { protocolKeys: [], readOnly: false },
+  );
+  assert.deepEqual(rows.map((r) => r.key), ["fit_type", "flip_angles"]);
+});
+
+test("readNumbers accepts commas, newlines, and both together", () => {
+  // The widget shows a comma line at rest and a column while editing, so both
+  // separators are live at once — and a pasted comma list must survive.
+  assert.deepEqual(readNumbers("0.35, 0.5, 0.65"), [0.35, 0.5, 0.65]);
+  assert.deepEqual(readNumbers("0.35\n0.5\n0.65"), [0.35, 0.5, 0.65]);
+  assert.deepEqual(readNumbers("0.35, 0.5\n0.65,"), [0.35, 0.5, 0.65]);
+  assert.deepEqual(readNumbers("  3 ,\n\n 20 \n"), [3, 20]);
+});
+
+test("readNumbers drops what is not a number rather than yielding NaN", () => {
+  // A NaN reaching the recipe would serialize as `.nan` and fail the fit later,
+  // far from the typo that caused it.
+  assert.deepEqual(readNumbers("3, oops, 20"), [3, 20]);
+  assert.deepEqual(readNumbers(""), []);
+  assert.deepEqual(readNumbers("Infinity, 5"), [5]);
 });
