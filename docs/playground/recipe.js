@@ -14,7 +14,7 @@ import hljsYaml from "./vendor/highlight-yaml.js";
 import hljsJson from "./vendor/highlight-json.js";
 import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
-import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers } from "./surface.js";
+import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers, resolvedProtocolJson } from "./surface.js";
 import { debounce } from "./debounce.js";
 
 hljs.registerLanguage("yaml", hljsYaml);
@@ -110,7 +110,7 @@ let surfaceThrow = null;
 function refreshSurface() {
   if (!app.wasm || !editor.valid) return;
   try {
-    app.surface = app.wasm.effective_config(editor.text, app.current?.meta?.protocol_json ?? "");
+    app.surface = app.wasm.effective_config(editor.text, resolvedProtocolJson(app));
     surfaceThrow = null;
   } catch (e) {
     app.surface = null;

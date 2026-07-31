@@ -4,7 +4,13 @@
 // sidecars supply must not be presented as editable.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers } from "../../docs/playground/surface.js";
+import {
+  mergeSurface,
+  withProtocolComments,
+  stripProtocolComments,
+  readNumbers,
+  resolvedProtocolJson,
+} from "../../docs/playground/surface.js";
 
 const flat = (rows) => Object.fromEntries(rows.map((r) => [r.path.join("."), r]));
 
@@ -263,4 +269,26 @@ test("readNumbers drops what is not a number rather than yielding NaN", () => {
   assert.deepEqual(readNumbers("3, oops, 20"), [3, 20]);
   assert.deepEqual(readNumbers(""), []);
   assert.deepEqual(readNumbers("Infinity, 5"), [5]);
+});
+
+test("the protocol is read from app.dataset, which exists before app.current", () => {
+  // Loading a BIDS dataset assigns `app.dataset`, then sets the recipe text —
+  // which builds the first surface — and only later assigns `app.current`.
+  // Sourcing the protocol from `app.current` returns "" on that first pass, so
+  // every sidecar-supplied row renders the model's struct default instead of
+  // the acquisition (mt_sat showed flip_angle 0, repetition_time 0) and nothing
+  // recomputes it afterwards.
+  const midLoad = { dataset: { resolved: { protocol_json: '{"global":{}}' } } };
+  assert.equal(resolvedProtocolJson(midLoad), '{"global":{}}', "must resolve before app.current exists");
+
+  const loaded = { ...midLoad, current: { meta: { protocol_json: '{"global":{}}' } } };
+  assert.equal(resolvedProtocolJson(loaded), '{"global":{}}');
+});
+
+test("no resolved dataset yields the empty protocol", () => {
+  // The pre-baked slice and the pre-load state both mean "no acquisition
+  // resolved"; effective_config reads "" as an empty Protocol.
+  assert.equal(resolvedProtocolJson({}), "");
+  assert.equal(resolvedProtocolJson({ dataset: { files: new Map() } }), "");
+  assert.equal(resolvedProtocolJson(undefined), "");
 });

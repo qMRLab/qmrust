@@ -180,3 +180,19 @@ export function readNumbers(text) {
     .map(Number)
     .filter((n) => Number.isFinite(n));
 }
+
+/**
+ * The resolved acquisition to build the option surface against, in the form
+ * `effective_config` takes (`""` when nothing is resolved).
+ *
+ * Read from `app.dataset.resolved`, never `app.current`. Loading a dataset
+ * assigns `app.dataset` and then sets the recipe text — which triggers the
+ * first surface refresh — well before `app.current` exists, so sourcing this
+ * from `app.current` yields `""` on that first pass and every sidecar-supplied
+ * row renders the model's struct default (zeros) instead of the acquisition.
+ * `app.dataset.resolved` is also the object `app.protocolResolved` is derived
+ * from, so which rows lock and what those rows show cannot disagree.
+ */
+export function resolvedProtocolJson(app) {
+  return app?.dataset?.resolved?.protocol_json ?? "";
+}
