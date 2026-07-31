@@ -215,3 +215,96 @@ pub fn write_map_nifti(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array;
+    use std::path::PathBuf;
+
+    /// A unique tempdir, removed on drop.
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "qmrust-nifti-test-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Write a NIfTI of the given shape; values are the C-order index, so a
+    /// transposed read is detectable and not just a shape mismatch.
+    fn write_nifti(dir: &std::path::Path, name: &str, shape: &[usize]) -> PathBuf {
+        let n: usize = shape.iter().product();
+        let data = Array::from_iter((0..n).map(|i| i as f64))
+            .into_shape_with_order(shape.to_vec())
+            .unwrap();
+        let path = dir.join(name);
+        WriterOptions::new(&path).write_nifti(&data).unwrap();
+        path
+    }
+
+    /// NIfTI's `dim[0]` counts dimensions, and a value of 3 declares three
+    /// *spatial* axes — there is no temporal axis in the file at all. Reading
+    /// the third one as time turns a 143x218x220 brain into one slice imaged
+    /// 220 times, which is what a single-volume model (mp2rage, mt_ratio's
+    /// individual inputs) is handed.
+    #[test]
+    fn a_3d_volume_keeps_its_third_axis_spatial() {
+        let tmp = TempDir::new("3d-spatial");
+        let path = write_nifti(&tmp.0, "vol.nii", &[4, 5, 6]);
+        let (arr, _) = read_4d_nifti(&path).unwrap();
+        assert_eq!(
+            arr.dim(),
+            (4, 5, 6, 1),
+            "a 3D NIfTI is one volume of 3D data, not 6 timepoints of a single slice"
+        );
+    }
+
+    /// The voxel at a known spatial position must survive the read. If the
+    /// third axis is silently reinterpreted as time, this lands somewhere
+    /// else entirely.
+    #[test]
+    fn a_3d_volume_keeps_its_voxels_where_they_were() {
+        let tmp = TempDir::new("3d-voxels");
+        let path = write_nifti(&tmp.0, "vol.nii", &[4, 5, 6]);
+        let (arr, _) = read_4d_nifti(&path).unwrap();
+        // C-order value at (x=1, y=2, z=3) is (1*5 + 2)*6 + 3.
+        assert_eq!(arr[[1, 2, 3, 0]], ((1 * 5 + 2) * 6 + 3) as f64);
+    }
+
+    /// The case the 3D branch was written for is properly a *4D* file with a
+    /// singleton z — which is exactly how every dataset qmrust ships is
+    /// stored (e.g. inversion_recovery.nii.gz is 128x128x1x9). This must keep
+    /// working unchanged.
+    #[test]
+    fn a_single_slice_series_is_stored_4d_and_still_loads() {
+        let tmp = TempDir::new("4d-series");
+        let path = write_nifti(&tmp.0, "series.nii", &[4, 5, 1, 9]);
+        let (arr, _) = read_4d_nifti(&path).unwrap();
+        assert_eq!(arr.dim(), (4, 5, 1, 9));
+    }
+
+    /// A genuine multi-slice, multi-volume acquisition is unaffected either
+    /// way; this pins the common case against regression.
+    #[test]
+    fn a_4d_volume_series_is_unchanged() {
+        let tmp = TempDir::new("4d-full");
+        let path = write_nifti(&tmp.0, "full.nii", &[4, 5, 6, 3]);
+        let (arr, _) = read_4d_nifti(&path).unwrap();
+        assert_eq!(arr.dim(), (4, 5, 6, 3));
+        assert_eq!(arr[[1, 2, 3, 2]], (((1 * 5 + 2) * 6 + 3) * 3 + 2) as f64);
+    }
+}
