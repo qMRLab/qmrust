@@ -4,7 +4,7 @@
 // sidecars supply must not be presented as editable.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeSurface, sameStructure } from "../../docs/playground/surface.js";
+import { mergeSurface } from "../../docs/playground/surface.js";
 
 const flat = (rows) => Object.fromEntries(rows.map((r) => [r.path.join("."), r]));
 
@@ -94,51 +94,4 @@ test("the reserved model key is never a row", () => {
     protocolKeys: [], readOnly: false,
   });
   assert.deepEqual(rows.map((r) => r.key), ["fit_type"]);
-});
-
-// `sameStructure` is what lets the form patch an edit in place instead of
-// rebuilding — rebuilding a widget out from under the reader who just typed
-// into it (or Tab-ed away from it) steals focus. It must say "same" whenever
-// nothing that touches presence, grouping, or locking has changed, and "not
-// the same" whenever anything the form must re-render around has.
-test("identical shape, differing only in isSet/value, is the same structure", () => {
-  const a = mergeSurface({ fit_type: "linear", repetition_time: 0.015 }, {}, {
-    protocolKeys: [], readOnly: false,
-  });
-  const b = mergeSurface({ fit_type: "linear", repetition_time: 0.03 }, { fit_type: "nonlinear" }, {
-    protocolKeys: [], readOnly: false,
-  });
-  assert.ok(sameStructure(a, b));
-});
-
-test("a key appearing or disappearing is not the same structure", () => {
-  const a = mergeSurface({ fit_type: "linear" }, {}, { protocolKeys: [], readOnly: false });
-  const b = mergeSurface({ fit_type: "linear", offset_term: false }, {}, {
-    protocolKeys: [], readOnly: false,
-  });
-  assert.equal(sameStructure(a, b), false);
-  assert.equal(sameStructure(b, a), false);
-});
-
-test("a lock flipping is not the same structure", () => {
-  const surface = { flip_angles: [3, 20] };
-  const locked = mergeSurface(surface, {}, { protocolKeys: ["flip_angles"], readOnly: true });
-  const unlocked = mergeSurface(surface, {}, { protocolKeys: ["flip_angles"], readOnly: false });
-  assert.equal(sameStructure(locked, unlocked), false);
-});
-
-test("a leaf becoming a group at the same key is not the same structure", () => {
-  const a = mergeSurface({ mtw: 6 }, {}, { protocolKeys: [], readOnly: false });
-  const b = mergeSurface({ mtw: { flip_angle: 6 } }, {}, { protocolKeys: [], readOnly: false });
-  assert.equal(sameStructure(a, b), false);
-});
-
-test("a change nested inside a group is not the same structure", () => {
-  const a = mergeSurface({ qmt_spgr: { lineshape: "gaussian" } }, {}, {
-    protocolKeys: [], readOnly: false,
-  });
-  const b = mergeSurface({ qmt_spgr: { lineshape: "gaussian", fit: { r1f: 1 } } }, {}, {
-    protocolKeys: [], readOnly: false,
-  });
-  assert.equal(sameStructure(a, b), false);
 });

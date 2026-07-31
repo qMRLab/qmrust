@@ -14,7 +14,7 @@ import hljsYaml from "./vendor/highlight-yaml.js";
 import hljsJson from "./vendor/highlight-json.js";
 import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
-import { mergeSurface, sameStructure } from "./surface.js";
+import { mergeSurface } from "./surface.js";
 import { debounce } from "./debounce.js";
 
 hljs.registerLanguage("yaml", hljsYaml);
@@ -240,6 +240,16 @@ function buildRows(container, rows) {
       widget.disabled = true;
       widget.title = "supplied by the dataset's sidecars";
     }
+    // The actual focusable control — the widget itself for every shape except
+    // a checkbox, whose returned element is the `<label>` wrapping it. Stamped
+    // once, here, rather than in every `buildWidget` branch: a rebuild is a
+    // fresh set of nodes, and `renderForm` needs a way to find "the same row"
+    // in the new tree that doesn't depend on the old (about to be destroyed)
+    // node's identity.
+    const focusable = widget.matches("input, select, textarea")
+      ? widget
+      : widget.querySelector("input, select, textarea");
+    if (focusable) focusable.dataset.path = row.path.join(".");
     const el = fieldRow(row.key, row.path, widget);
     if (!row.isSet) el.classList.add("unset");
     if (row.readOnly) {
@@ -253,21 +263,46 @@ function buildRows(container, rows) {
   }
 }
 
-// The last tree actually rendered, and the error rendered alongside it — the
-// baseline `renderForm` diffs the next render against to decide whether an
-// edit can be patched in place. `null` means the next render must build from
-// scratch (nothing to compare yet, or the last render held no rows).
-let lastRows = null;
-let lastError;
+// What a rebuild must not disturb: which row held focus, and — for a text
+// control — where the cursor/selection sat within it. Read by dotted path
+// rather than DOM identity, since the node itself is about to be replaced.
+function captureFocus(container) {
+  const active = document.activeElement;
+  if (!active || !container.contains(active)) return null;
+  const target = active.closest("[data-path]");
+  if (!target) return null;
+  const snapshot = { path: target.dataset.path };
+  if (typeof target.selectionStart === "number") {
+    snapshot.selectionStart = target.selectionStart;
+    snapshot.selectionEnd = target.selectionEnd;
+  }
+  return snapshot;
+}
+
+// Re-applies a `captureFocus` snapshot to whichever new node now carries the
+// same path, if any still does — a key the edit just removed (or locked into
+// a disabled control) simply has nowhere to restore to.
+function restoreFocus(container, snapshot) {
+  if (!snapshot) return;
+  const target = Array.from(container.querySelectorAll("[data-path]"))
+    .find((el) => el.dataset.path === snapshot.path);
+  if (!target) return;
+  target.focus({ preventScroll: true });
+  if (snapshot.selectionStart == null || typeof target.setSelectionRange !== "function") return;
+  try {
+    target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+  } catch {
+    // A control that reports a `selectionStart` but rejects a matching range
+    // (e.g. a differently-typed input after a shape change) keeps its focus;
+    // losing the caret position alone is not worth surfacing.
+  }
+}
 
 function renderForm() {
-  const error = app.surface?.error ?? null;
-  showConfigError(error);
+  showConfigError(app.surface?.error ?? null);
   const container = $("form-fields");
   if (!editor.obj || typeof editor.obj !== "object") {
     container.replaceChildren();
-    lastRows = null;
-    lastError = undefined;
     return;
   }
 
@@ -279,39 +314,19 @@ function renderForm() {
     readOnly: app.protocolResolved,
   });
 
-  // Editing one field normally changes neither the key set, the read-only
-  // flags, nor the model's own error — so in the common case nothing needs
-  // rebuilding: patch the `unset` class row by row and leave every DOM node
-  // (including whichever one still holds focus, e.g. a select or checkbox
-  // that fires `onchange` immediately, or a text/number input whose blur
-  // fires it just before the browser finishes a Tab-driven focus move) right
-  // where it is. A structural change — a key appearing or disappearing
-  // because e.g. `fit_type` changed what else is valid, a lock flipping, or
-  // the model's own error changing — still gets a full rebuild, which is the
-  // only way any of those show up at all.
-  if (lastRows && error === lastError && sameStructure(lastRows, rows)) {
-    patchRows(container, rows);
-  } else {
-    container.replaceChildren();
-    buildRows(container, rows);
-  }
-  lastRows = rows;
-  lastError = error;
-}
-
-// Walks `rows` against the DOM `buildRows` produced for the previous render of
-// the same shape (guaranteed by `sameStructure`), toggling only the `unset`
-// class — never touching a widget's value, its listeners, or its identity.
-function patchRows(container, rows) {
-  const nodes = container.children;
-  rows.forEach((row, i) => {
-    const el = nodes[i];
-    if (row.children) {
-      patchRows(el.querySelector(":scope > .form-fields"), row.children);
-      return;
-    }
-    el.classList.toggle("unset", !row.isSet);
-  });
+  // Every render rebuilds the whole subtree from the merged rows — the only
+  // way every widget's displayed value, not just its `unset` styling, is
+  // guaranteed to match what the recipe and the model's own surface now say.
+  // What a rebuild must not do is drop keyboard focus out of the panel: a
+  // text/number input's `onchange` fires at blur, just before the browser
+  // finishes a Tab-driven focus move onto the next control, and this same
+  // function also runs from a debounced refresh that can land after the
+  // reader has since focused a different field entirely. Captured and
+  // restored by path, across every rebuild, regardless of what triggered it.
+  const focus = captureFocus(container);
+  container.replaceChildren();
+  buildRows(container, rows);
+  restoreFocus(container, focus);
 }
 
 function showConfigError(message) {
