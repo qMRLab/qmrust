@@ -14,7 +14,7 @@
 #
 #   ds-irt1     inversion_recovery   IRT1      ds-mts      mt_sat      MTS
 #   ds-mese     mono_t2              MESE      ds-qmtspgr  qmt_spgr    QMTSPGR
-#   ds-mtr      mt_ratio             MTR
+#   ds-mtr      mt_ratio             MTR       ds-vfa      vfa_t1      VFA
 #
 # plus `ds-mts-b1`, the MTS + TB1map dataset the B1-correction path consumes.
 # It is a synthetic phantom rather than OSF data (see its section below).
@@ -82,6 +82,7 @@ fetch qmt      "https://osf.io/pzqyn/download?version=2"
 fetch mono_t2  "https://osf.io/kujp3/download?version=3"
 fetch mtr      "https://osf.io/erm2s/download?version=2"
 fetch mtsat    "https://osf.io/c5wdb/download?version=4"
+fetch vfa_t1   "https://osf.io/7wcvh/download?version=3"
 
 # ─── ds-irt1 — inversion_recovery (IRT1) ───────────────────────────────────
 # Stacked .mat measurement (9 inversion times) + a separate Mask.mat.
@@ -156,6 +157,24 @@ echo "Building $OUT/ds-qmtspgr ..."
 "$BIN" fit --bids-dir "$OUT/ds-qmtspgr" \
   --config recipes/bids/qmt_config_ramani.yaml --output-dir "$OUT/ds-qmtspgr/derivatives"
 assert_maps "$OUT/ds-qmtspgr" Fmap kRmap R1Fmap R1Rmap T2Fmap T2Rmap
+
+# ─── ds-vfa — vfa_t1 (VFA) ─────────────────────────────────────────────────
+# A 4D VFAData.nii.gz (2 flip angles) + Mask.nii.gz + B1map.nii.gz. A NIfTI
+# source has no directory convention to discover aux from, so the transmit map
+# is named explicitly with --aux; it lands in `derivatives/preprocessed` as the
+# TB1map the model's optional B1map input resolves to.
+
+VFA_DATA="$(locate vfa_t1 'VFAData.nii.gz')"
+VFA_MASK="$(locate vfa_t1 'Mask.nii.gz')"
+VFA_B1="$(locate vfa_t1 'B1map.nii.gz')"
+
+echo "Building $OUT/ds-vfa ..."
+"$BIN" bidsify --model vfa_t1 --nii-data "$VFA_DATA" --nii-mask "$VFA_MASK" \
+  --aux "B1map=$VFA_B1" \
+  --config recipes/non-bids/vfa_t1_config.yaml --subject 01 --out "$OUT/ds-vfa"
+"$BIN" fit --bids-dir "$OUT/ds-vfa" \
+  --config recipes/bids/vfa_t1_config.yaml --output-dir "$OUT/ds-vfa/derivatives"
+assert_maps "$OUT/ds-vfa" T1map M0map
 
 # ─── ds-mts-b1 — mt_sat with a B1 map, for the B1-correction path ──────────
 # The only dataset here that is not OSF-derived: a synthetic concentric phantom
