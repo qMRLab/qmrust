@@ -9,7 +9,7 @@ use anyhow::Result;
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
 pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
 pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
-pub type Effective = fn(&serde_yaml::Value) -> Result<EffectiveConfig>;
+pub type Effective = fn(&serde_yaml::Value, &Protocol) -> Result<EffectiveConfig>;
 
 /// Method family a model belongs to. Determines its documentation directory,
 /// so the generated URL is derived from the registry, never hand-chosen. Add a

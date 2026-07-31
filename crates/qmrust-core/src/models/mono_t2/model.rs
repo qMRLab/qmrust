@@ -125,6 +125,7 @@ impl Model for MonoT2Model {
             name: "EchoTime",
             source: Source::Field("EchoTime"),
             scope: Scope::PerVolume,
+            required: true,
         }]
     }
     fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
@@ -187,8 +188,11 @@ pub fn dump(v: &serde_yaml::Value) -> Result<String> {
 /// Registry option-surface entry point (see
 /// [`effective_model`](crate::core::model::effective_model)): every option this
 /// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(v: &serde_yaml::Value) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<MonoT2Config>(v)
+pub fn effective(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> Result<crate::core::model::EffectiveConfig> {
+    crate::core::model::effective_model::<MonoT2Config>(v, proto)
 }
 
 #[cfg(test)]

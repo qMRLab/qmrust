@@ -231,11 +231,13 @@ impl Model for QmtModel {
                 name: "Angle",
                 source: Source::Field("Angle"),
                 scope: Scope::PerVolume,
+                required: true,
             },
             ProtoParam {
                 name: "Offset",
                 source: Source::Field("Offset"),
                 scope: Scope::PerVolume,
+                required: true,
             },
         ]
     }
@@ -308,8 +310,11 @@ pub fn dump(v: &serde_yaml::Value) -> Result<String> {
 /// Registry option-surface entry point (see
 /// [`effective_model`](crate::core::model::effective_model)): every option this
 /// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(v: &serde_yaml::Value) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<QmtSpgrConfig>(v)
+pub fn effective(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> Result<crate::core::model::EffectiveConfig> {
+    crate::core::model::effective_model::<QmtSpgrConfig>(v, proto)
 }
 
 #[cfg(test)]

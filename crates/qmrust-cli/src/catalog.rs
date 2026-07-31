@@ -548,7 +548,9 @@ mod tests {
         for entry in qmrust_core::registry::all() {
             let v: serde_yaml::Value =
                 serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
-            let keys = (entry.effective)(&v).unwrap().protocol_keys;
+            let keys = (entry.effective)(&v, &qmrust_core::core::model::Protocol::default())
+                .unwrap()
+                .protocol_keys;
             if keys.is_empty() {
                 continue;
             }

@@ -219,15 +219,23 @@ pub struct EffectiveConfig {
     pub protocol_keys: Vec<String>,
 }
 
-/// Serialize `v` as `C`'s full option surface, with serde defaults materialized,
-/// plus whatever `validate_options` makes of it.
+/// Serialize `v` as `C`'s full option surface, with the resolved `proto`
+/// folded in and serde defaults materialized, plus whatever `validate_options`
+/// makes of it.
 ///
-/// Validation runs against a **clone**. `ModelConfig::validate_options` takes
-/// `&mut self` and several models normalize as they go, so validating the
-/// original would serialize state left half-normalized by a validator that
-/// failed partway. Cloning makes the surface depend only on what was parsed.
-pub fn effective_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<EffectiveConfig> {
-    let cfg = parse_model_config::<C>(v)?;
+/// Order: parse, then `ingest_protocol` — so a protocol-sourced key's row
+/// shows the real resolved value rather than the struct default — then
+/// validate a **clone**. `ModelConfig::validate_options` takes `&mut self` and
+/// several models normalize as they go, so validating the original would
+/// serialize state left half-normalized by a validator that failed partway.
+/// Cloning makes the surface depend only on what was parsed and ingested.
+pub fn effective_model<C: ModelConfig>(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> AnyResult<EffectiveConfig> {
+    let mut cfg = parse_model_config::<C>(v)?;
+    cfg.ingest_protocol(proto)
+        .with_context(|| format!("{}: ingesting BIDS protocol", C::NAME))?;
     let error = cfg
         .clone()
         .validate_options()
@@ -461,6 +469,11 @@ pub struct ProtoParam {
     pub name: &'static str,
     pub source: Source,
     pub scope: Scope,
+    /// Whether an unresolvable value is a hard error. `false` means the
+    /// fitter does not need this param — `resolve_protocol` silently omits it
+    /// from the `Protocol` rather than bailing, so a dataset whose sidecars
+    /// lack it still fits.
+    pub required: bool,
 }
 
 /// The single surface a model contributor implements. Object-safe so the
@@ -722,7 +735,7 @@ mod tests {
         use crate::models::mono_t2::config::MonoT2Config;
         let v: serde_yaml::Value =
             serde_yaml::from_str("model: mono_t2\necho_times: [0.01, 0.02, 0.03]\n").unwrap();
-        let eff = effective_model::<MonoT2Config>(&v).unwrap();
+        let eff = effective_model::<MonoT2Config>(&v, &Protocol::default()).unwrap();
         // Every option appears, including ones the recipe never mentioned.
         assert!(eff.yaml.contains("fit_type:"), "{}", eff.yaml);
         assert!(eff.yaml.contains("drop_first_echo:"), "{}", eff.yaml);
@@ -739,7 +752,7 @@ mod tests {
             "model: mono_t2\necho_times: [0.01, 0.02, 0.03]\nfit_type: linear\noffset_term: true\n",
         )
         .unwrap();
-        let eff = effective_model::<MonoT2Config>(&v).unwrap();
+        let eff = effective_model::<MonoT2Config>(&v, &Protocol::default()).unwrap();
         assert!(
             eff.yaml.contains("offset_term:"),
             "surface withheld: {}",
@@ -756,7 +769,7 @@ mod tests {
         // before failing must not leak half-normalized state into the surface, so
         // the surface is serialized from the config validation never touched.
         let v: serde_yaml::Value = serde_yaml::from_str("model: inversion_recovery\n").unwrap();
-        let eff = effective_model::<IrConfig>(&v).unwrap();
+        let eff = effective_model::<IrConfig>(&v, &Protocol::default()).unwrap();
         assert!(eff.yaml.contains("t1_range:"), "{}", eff.yaml);
         assert!(
             eff.error.is_some(),
@@ -768,9 +781,38 @@ mod tests {
     fn effective_config_nests_under_a_subkey() {
         use crate::models::qmt_spgr::config::QmtSpgrConfig;
         let v: serde_yaml::Value = serde_yaml::from_str("model: qmt_spgr\n").unwrap();
-        let eff = effective_model::<QmtSpgrConfig>(&v).unwrap();
+        let eff = effective_model::<QmtSpgrConfig>(&v, &Protocol::default()).unwrap();
         assert!(
             eff.yaml.starts_with("model: qmt_spgr\nqmt_spgr:\n"),
+            "{}",
+            eff.yaml
+        );
+    }
+
+    #[test]
+    fn effective_config_shows_the_protocol_ingested_value_for_a_locked_key() {
+        use crate::models::vfa_t1::config::VfaT1Config;
+        // The BIDS recipe omits the acquisition; the surface must show what
+        // ingest_protocol actually resolved, not the struct default.
+        let v: serde_yaml::Value = serde_yaml::from_str("model: vfa_t1\n").unwrap();
+        let proto = Protocol {
+            volumes: vec![
+                BTreeMap::from([("FlipAngle".to_string(), 3.0)]),
+                BTreeMap::from([("FlipAngle".to_string(), 20.0)]),
+            ],
+            global: BTreeMap::from([("RepetitionTimeExcitation".to_string(), 0.015)]),
+        };
+        let eff = effective_model::<VfaT1Config>(&v, &proto).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&eff.yaml).unwrap();
+        assert_eq!(
+            parsed["flip_angles"],
+            serde_yaml::to_value(vec![3.0, 20.0]).unwrap(),
+            "{}",
+            eff.yaml
+        );
+        assert_eq!(
+            parsed["repetition_time"],
+            serde_yaml::to_value(0.015).unwrap(),
             "{}",
             eff.yaml
         );
@@ -781,7 +823,7 @@ mod tests {
         for entry in crate::registry::all() {
             let v: serde_yaml::Value =
                 serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
-            let eff = (entry.effective)(&v)
+            let eff = (entry.effective)(&v, &Protocol::default())
                 .unwrap_or_else(|e| panic!("{}: effective failed: {e:#}", entry.name));
             assert!(
                 eff.yaml.contains(&format!("model: {}", entry.name)),
@@ -799,7 +841,7 @@ mod tests {
         for entry in crate::registry::all() {
             let v: serde_yaml::Value =
                 serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
-            let eff = (entry.effective)(&v).unwrap();
+            let eff = (entry.effective)(&v, &Protocol::default()).unwrap();
             for key in &eff.protocol_keys {
                 assert!(
                     states_key(&eff.yaml, key),
@@ -854,7 +896,10 @@ mod tests {
                 .protocol_schema()
                 .iter()
                 .any(|p| matches!(p.scope, Scope::PerVolume));
-            let declared = !(entry.effective)(&v).unwrap().protocol_keys.is_empty();
+            let declared = !(entry.effective)(&v, &Protocol::default())
+                .unwrap()
+                .protocol_keys
+                .is_empty();
             assert_eq!(
                 per_volume, declared,
                 "{}: per-volume protocol params and PROTOCOL_KEYS must agree",

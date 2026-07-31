@@ -16,11 +16,14 @@ pub fn list_models() -> Result<JsValue, JsError> {
 }
 
 /// `{ yaml, error, protocol_keys }` for the recipe's model: every option it
-/// accepts at its effective value, whatever `validate_options` makes of it, and
-/// the keys a resolved protocol supplies.
+/// accepts at its effective value — with `protocol_json` ingested first, so a
+/// protocol-sourced row shows the real resolved value — whatever
+/// `validate_options` makes of it, and the keys a resolved protocol supplies.
+/// `protocol_json` as for [`fit_voxel`]: empty means the recipe carries the
+/// protocol.
 #[wasm_bindgen]
-pub fn effective_config(cfg_yaml: &str) -> Result<JsValue, JsError> {
-    let eff = api::effective_config(cfg_yaml).map_err(|e| JsError::new(&e))?;
+pub fn effective_config(cfg_yaml: &str, protocol_json: &str) -> Result<JsValue, JsError> {
+    let eff = api::effective_config(cfg_yaml, protocol_json).map_err(|e| JsError::new(&e))?;
     serde_wasm_bindgen::to_value(&eff).map_err(|e| JsError::new(&e.to_string()))
 }
 
