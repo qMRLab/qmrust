@@ -59,6 +59,9 @@ async function loadModelFromBids(name, meta) {
 
   const resolved = ds.collections[0];
   app.dataset = { ...ds, resolved };
+  // A resolved collection means the sidecars supply the acquisition, so the
+  // model's protocol keys are context, not controls.
+  app.protocolResolved = Boolean(resolved.protocol_json);
   // The recipe for BIDS input carries options only; the acquisition comes from
   // the sidecars, via `resolved.protocol_json`.
   setEditorText(meta.config_bids);
@@ -220,6 +223,7 @@ export async function loadModel(name) {
   app.enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
   app.wheelAccum = 0;
   app.dataset = null;
+  app.protocolResolved = false;
 
   // The full BIDS dataset is the real thing: fetched, resolved in the browser,
   // and fitted with the acquisition its own sidecars declare. The pre-baked

@@ -521,6 +521,28 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .field-row input, .field-row textarea { width: 100%; }
 .field-row textarea { min-height: 44px; resize: vertical; }
 
+.cfg-error {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.7rem;
+  border-left: 3px solid var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+  color: var(--bad);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+/* A row whose value comes from the model's default rather than the recipe. */
+.field-row.unset .field-label { opacity: 0.72; }
+/* A row the sidecars supply: shown for context, not for editing. */
+.field-row.locked { opacity: 0.6; }
+.field-row.locked input,
+.field-row.locked select,
+.field-row.locked textarea { pointer-events: none; }
+.field-row .field-source {
+  margin-left: 0.4rem;
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
 .switch { position: relative; display: inline-block; width: 38px; height: 22px; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .switch .slider {

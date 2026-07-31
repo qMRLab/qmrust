@@ -14,6 +14,7 @@ import hljsYaml from "./vendor/highlight-yaml.js";
 import hljsJson from "./vendor/highlight-json.js";
 import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
+import { mergeSurface } from "./surface.js";
 
 hljs.registerLanguage("yaml", hljsYaml);
 hljs.registerLanguage("json", hljsJson);
@@ -28,10 +29,6 @@ function setAtPath(root, path, value) {
   let node = root;
   for (const k of path.slice(0, -1)) node = node[k];
   node[path.at(-1)] = value;
-}
-
-function isPlainObject(v) {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
 function isNumberArray(v) {
@@ -59,6 +56,21 @@ function commitObjEdit() {
   // a reader actually reads, so leaving it unpainted shows them the previous YAML.
   paintYaml();
   setYamlPill(true);
+  refreshSurface();
+  renderForm();
+}
+
+// Re-reads the model's option surface for the current recipe text. Cheap — a
+// parse and a serialize, no fitting — so it runs after every committed edit.
+// A failure (no wasm, unknown model) clears the surface, and `renderForm` then
+// falls back to mirroring the recipe rather than blanking the panel.
+export function refreshSurface() {
+  if (!app.wasm || !editor.valid) return;
+  try {
+    app.surface = app.wasm.effective_config(editor.text);
+  } catch (e) {
+    app.surface = null;
+  }
 }
 
 function fieldRow(label, path, widget) {
@@ -164,9 +176,23 @@ function buildWidget(value, path) {
     };
     return ta;
   }
+  if (value === null) {
+    // An unset optional: a plain input whose text is read as YAML, so "0.015"
+    // becomes a number, a word stays a string, and empty stays unset — the same
+    // reading the recipe itself would get.
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = "";
+    input.onchange = () => {
+      const text = input.value.trim();
+      setAtPath(editor.obj, path, text === "" ? null : yamlLoad(text));
+      commitObjEdit();
+    };
+    return input;
+  }
   // Fallback for shapes a compact widget can't represent (array of arrays of
-  // differing lengths, array of objects, null): a small YAML textarea for
-  // just that subtree.
+  // differing lengths, array of objects): a small YAML textarea for just
+  // that subtree.
   const ta = document.createElement("textarea");
   ta.value = value == null ? "" : yamlDump(value).trimEnd();
   ta.onchange = () => {
@@ -182,36 +208,59 @@ function buildWidget(value, path) {
   return ta;
 }
 
-function buildGroup(container, entries, path) {
-  for (const [key, value] of entries) {
-    // `model` at the config root is the reserved key that selects the model
-    // itself — part of the config format, not a per-model field — and the
-    // model dropdown above the recipe editor already owns it, so a form row
-    // for it here would just be a redundant, editable duplicate.
-    if (path.length === 0 && key === "model") continue;
-    const childPath = [...path, key];
-    if (isPlainObject(value)) {
+function buildRows(container, rows) {
+  for (const row of rows) {
+    if (row.children) {
       const group = document.createElement("div");
       group.className = "group";
       const title = document.createElement("div");
       title.className = "group-title";
-      title.textContent = key;
+      title.textContent = row.key;
       const fields = document.createElement("div");
       fields.className = "form-fields";
       group.append(title, fields);
-      buildGroup(fields, Object.entries(value), childPath);
+      buildRows(fields, row.children);
       container.append(group);
-    } else {
-      container.append(fieldRow(key, childPath, buildWidget(value, childPath)));
+      continue;
     }
+    const widget = buildWidget(row.value, row.path);
+    if (row.readOnly) {
+      widget.disabled = true;
+      widget.title = "supplied by the dataset's sidecars";
+    }
+    const el = fieldRow(row.key, row.path, widget);
+    if (!row.isSet) el.classList.add("unset");
+    if (row.readOnly) {
+      el.classList.add("locked");
+      const note = document.createElement("span");
+      note.className = "field-source";
+      note.textContent = "from sidecars";
+      el.querySelector(".field-key")?.after(note);
+    }
+    container.append(el);
   }
 }
 
 function renderForm() {
   const container = $("form-fields");
   container.replaceChildren();
+  showConfigError(app.surface?.error ?? null);
   if (!editor.obj || typeof editor.obj !== "object") return;
-  buildGroup(container, Object.entries(editor.obj), []);
+
+  // Without a surface (no wasm, or a model the registry does not know) fall
+  // back to mirroring the recipe — the panel degrades, it does not vanish.
+  const surface = app.surface ? yamlLoad(app.surface.yaml) : editor.obj;
+  const rows = mergeSurface(surface, editor.obj, {
+    protocolKeys: app.surface?.protocol_keys ?? [],
+    readOnly: app.protocolResolved,
+  });
+  buildRows(container, rows);
+}
+
+function showConfigError(message) {
+  const box = $("cfg-error");
+  box.textContent = message ?? "";
+  box.hidden = !message;
 }
 
 function setYamlPill(valid) {
@@ -232,6 +281,7 @@ export function setEditorText(text) {
     editor.obj = yamlLoad(text);
     editor.valid = true;
     setYamlPill(true);
+    refreshSurface();
     renderForm();
   } catch (e) {
     editor.valid = false;
