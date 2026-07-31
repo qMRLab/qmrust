@@ -428,6 +428,14 @@ mod tests {
             .iter()
             .map(|s| s["params"]["InversionTime"].as_f64().unwrap())
             .collect();
+        // Checked before zipping: `zip` stops at the shorter side, so a
+        // dropped sample would leave the loop below comparing only a prefix
+        // and passing.
+        assert_eq!(
+            ti.len(),
+            got.len(),
+            "forward must emit one sample per inversion time"
+        );
         for (expected, actual) in ti.iter().zip(&got) {
             assert_eq!(
                 expected.to_bits(),
