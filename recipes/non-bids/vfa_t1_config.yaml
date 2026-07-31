@@ -1,0 +1,14 @@
+model: vfa_t1
+
+# non-BIDS: protocol from this file; mask via --mask
+# Flip angles in degrees (BIDS-MRI convention), times in seconds (BIDS/SI).
+# The linearization assumes one repetition time for the whole series.
+flip_angles:
+- 3
+- 20
+repetition_time: 0.015
+
+# Fit algorithm. `linear` (default) is qMRLab's closed-form Fram linearization;
+# `nonlinear` refines it with Levenberg-Marquardt on the signal equation, which
+# avoids the bias the linearizing transform puts into the noise at low SNR.
+fit_type: linear
