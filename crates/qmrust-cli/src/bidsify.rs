@@ -207,8 +207,8 @@ fn read_aux_args(specs: &[String], model: &dyn Model) -> Result<Vec<(String, Arr
 /// Read a 4D NIfTI measurement (+ optional NIfTI mask), preserving its spatial
 /// header. Auxiliary maps come from `--aux` for a NIfTI source; there is no
 /// directory convention to discover them from.
-fn read_nifti_source(nii: &Path, nii_mask: Option<&Path>, _model: &dyn Model) -> Result<Source> {
-    let (data, header) = io::nifti::read_4d_nifti(nii)?;
+fn read_nifti_source(nii: &Path, nii_mask: Option<&Path>, model: &dyn Model) -> Result<Source> {
+    let (data, header) = io::nifti::read_4d_nifti(nii, model.n_volumes())?;
     let mask = match nii_mask {
         Some(p) => Some(io::nifti::read_mask_nifti(p)?),
         None => None,
