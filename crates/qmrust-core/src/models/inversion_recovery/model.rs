@@ -146,6 +146,7 @@ impl Model for IrModel {
 impl crate::core::model::ModelConfig for IrConfig {
     const NAME: &'static str = "inversion_recovery";
     const SUBKEY: Option<&'static str> = None;
+    const PROTOCOL_KEYS: &'static [&'static str] = &["inversion_times"];
 
     fn validate_options(&mut self) -> Result<()> {
         IrConfig::validate_options(self)

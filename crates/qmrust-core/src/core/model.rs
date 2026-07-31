@@ -108,6 +108,21 @@ pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default + Clone {
     /// to read the top-level document (e.g. inversion_recovery).
     const SUBKEY: Option<&'static str>;
 
+    /// Config paths whose value `ingest_protocol` sources from the resolved
+    /// protocol. A UI must not offer these as editable when a protocol is
+    /// present: `ingest_protocol` overwrites them, so a typed value is
+    /// discarded, and a value that does survive duplicates into the output
+    /// provenance the per-volume axis `Protocol` already records.
+    ///
+    /// Dotted paths **relative to this config struct**, not to the emitted
+    /// document — `"protocol.mtdata"`, not `"qmt_spgr.protocol.mtdata"`.
+    /// `effective_model` prefixes `SUBKEY` so the emitted paths match the YAML
+    /// it emits. A path may name an object (`mt_sat`'s `"mtw"`), which locks
+    /// everything under it.
+    ///
+    /// Empty for a model with no acquisition axis (e.g. `mt_ratio`).
+    const PROTOCOL_KEYS: &'static [&'static str] = &[];
+
     /// Config-intrinsic validation — checks that need no protocol.
     fn validate_options(&mut self) -> AnyResult<()>;
 
@@ -221,7 +236,13 @@ pub fn effective_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<Effec
     Ok(EffectiveConfig {
         yaml: serialize_effective::<C>(&cfg)?,
         error,
-        protocol_keys: Vec::new(),
+        protocol_keys: C::PROTOCOL_KEYS
+            .iter()
+            .map(|k| match C::SUBKEY {
+                Some(sub) => format!("{sub}.{k}"),
+                None => (*k).to_string(),
+            })
+            .collect(),
     })
 }
 
@@ -757,6 +778,55 @@ mod tests {
                 "{}: {}",
                 entry.name,
                 eff.yaml
+            );
+        }
+    }
+
+    #[test]
+    fn protocol_keys_travel_with_the_surface_and_name_real_fields() {
+        // Every declared key must exist in the serialized config, or the UI would
+        // be told to treat a key that does not exist as protocol-sourced.
+        for entry in crate::registry::all() {
+            let v: serde_yaml::Value =
+                serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
+            let eff = (entry.effective)(&v).unwrap();
+            for key in &eff.protocol_keys {
+                // A dotted path nests across separate YAML lines (e.g.
+                // "qmt_spgr.protocol.mtdata" appears as "mtdata:" indented under
+                // "protocol:" indented under "qmt_spgr:"), so only the leaf
+                // segment can ever match a single line verbatim.
+                let leaf = key.rsplit('.').next().unwrap();
+                assert!(
+                    eff.yaml.contains(&format!("{leaf}:")),
+                    "{}: declares protocol key '{key}', absent from its config: {}",
+                    entry.name,
+                    eff.yaml
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn models_with_an_acquisition_axis_declare_it() {
+        // A model whose protocol_schema has per-volume params folds them into some
+        // config key; leaving PROTOCOL_KEYS empty would make the UI offer an
+        // editable field whose value ingest_protocol discards.
+        use crate::core::model::Scope;
+        for entry in crate::registry::all() {
+            let v: serde_yaml::Value =
+                serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
+            let Ok(model) = (entry.describe)(&v) else {
+                continue;
+            }; // needs options; skip
+            let per_volume = model
+                .protocol_schema()
+                .iter()
+                .any(|p| matches!(p.scope, Scope::PerVolume));
+            let declared = !(entry.effective)(&v).unwrap().protocol_keys.is_empty();
+            assert_eq!(
+                per_volume, declared,
+                "{}: per-volume protocol params and PROTOCOL_KEYS must agree",
+                entry.name
             );
         }
     }

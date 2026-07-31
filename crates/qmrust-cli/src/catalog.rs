@@ -538,4 +538,49 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn bids_recipes_omit_the_acquisition_and_non_bids_recipes_carry_it() {
+        // The recipe split is a rule enforced today only by review: a BIDS recipe
+        // must not restate an acquisition the sidecars supply, or the output
+        // provenance records the per-volume axis twice. Mechanize it.
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        for entry in qmrust_core::registry::all() {
+            let v: serde_yaml::Value =
+                serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
+            let keys = (entry.effective)(&v).unwrap().protocol_keys;
+            if keys.is_empty() {
+                continue;
+            }
+            let read = |p: &str| {
+                std::fs::read_to_string(format!("{root}/{p}"))
+                    .unwrap_or_else(|e| panic!("{}: cannot read {p}: {e}", entry.name))
+            };
+            let bids = read(entry.doc.recipes.bids);
+            let non_bids = read(entry.doc.recipes.non_bids);
+            for key in &keys {
+                // A dotted path nests across separate YAML lines (e.g.
+                // "qmt_spgr.protocol.mtdata" appears as "mtdata:" indented under
+                // "protocol:" indented under "qmt_spgr:"), so only the leaf
+                // segment can ever match a single line verbatim.
+                let leaf = key.rsplit('.').next().unwrap();
+                let stated = |text: &str| {
+                    text.lines()
+                        .any(|l| l.trim_start().starts_with(&format!("{leaf}:")))
+                };
+                assert!(
+                    !stated(&bids),
+                    "{}: BIDS recipe {} states '{key}', which the sidecars supply",
+                    entry.name,
+                    entry.doc.recipes.bids
+                );
+                assert!(
+                    stated(&non_bids),
+                    "{}: non-BIDS recipe {} must carry '{key}'",
+                    entry.name,
+                    entry.doc.recipes.non_bids
+                );
+            }
+        }
+    }
 }

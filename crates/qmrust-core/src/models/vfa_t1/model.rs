@@ -176,6 +176,7 @@ impl Model for VfaT1Model {
 impl crate::core::model::ModelConfig for VfaT1Config {
     const NAME: &'static str = "vfa_t1";
     const SUBKEY: Option<&'static str> = None;
+    const PROTOCOL_KEYS: &'static [&'static str] = &["flip_angles", "repetition_time"];
 
     fn validate_options(&mut self) -> Result<()> {
         VfaT1Config::validate_options(self)

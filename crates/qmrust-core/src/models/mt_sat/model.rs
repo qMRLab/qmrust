@@ -239,6 +239,7 @@ impl Model for MtSatModel {
 impl crate::core::model::ModelConfig for MtSatConfig {
     const NAME: &'static str = "mt_sat";
     const SUBKEY: Option<&'static str> = None;
+    const PROTOCOL_KEYS: &'static [&'static str] = &["mtw", "pdw", "t1w"];
 
     fn validate_options(&mut self) -> Result<()> {
         MtSatConfig::validate_options(self)

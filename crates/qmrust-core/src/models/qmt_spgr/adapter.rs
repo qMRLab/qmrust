@@ -256,6 +256,7 @@ impl Model for QmtModel {
 impl crate::core::model::ModelConfig for QmtSpgrConfig {
     const NAME: &'static str = "qmt_spgr";
     const SUBKEY: Option<&'static str> = Some("qmt_spgr");
+    const PROTOCOL_KEYS: &'static [&'static str] = &["protocol.mtdata"];
 
     fn validate_options(&mut self) -> Result<()> {
         QmtSpgrConfig::validate_options(self)

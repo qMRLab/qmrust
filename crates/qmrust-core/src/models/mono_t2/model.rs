@@ -138,6 +138,7 @@ impl Model for MonoT2Model {
 impl crate::core::model::ModelConfig for MonoT2Config {
     const NAME: &'static str = "mono_t2";
     const SUBKEY: Option<&'static str> = None;
+    const PROTOCOL_KEYS: &'static [&'static str] = &["echo_times"];
 
     fn validate_options(&mut self) -> Result<()> {
         MonoT2Config::validate_options(self)
