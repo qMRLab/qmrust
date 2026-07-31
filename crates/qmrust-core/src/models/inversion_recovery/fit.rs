@@ -69,29 +69,68 @@ impl IrFitter {
 
     /// Fit a single voxel. Returns values in `output_names()` order.
     pub fn fit_voxel(&self, data: &Array1<f64>) -> Vec<f64> {
-        let r = match self.method {
+        self.fit_block(std::slice::from_ref(data))
+            .pop()
+            .expect("fit_block returns one result per input")
+    }
+
+    /// Fit a block of voxels, returning one `output_names()`-ordered result per
+    /// input in order. Blocking amortizes the coarse grid sweep over the block;
+    /// each voxel's result is identical to fitting it alone.
+    pub fn fit_block(&self, data: &[Array1<f64>]) -> Vec<Vec<f64>> {
+        let results = match self.method {
             FitMethod::Complex => rd_nls(data, &self.nls),
             FitMethod::Magnitude => rd_nls_pr(data, &self.nls),
         };
-        let mut v = vec![r.t1, r.b, r.a, r.residual];
-        if let Some(idx) = r.idx {
-            v.push(idx as f64);
-        }
-        v
+        results
+            .into_iter()
+            .map(|r| {
+                let mut v = vec![r.t1, r.b, r.a, r.residual];
+                if let Some(idx) = r.idx {
+                    v.push(idx as f64);
+                }
+                v
+            })
+            .collect()
     }
 }
 
 // ─── RD-NLS internals ───────────────────────────────────────────────────────
 
 /// Pre-computed search grid (equivalent to MATLAB's nlsS struct).
+///
+/// Every field is voxel-independent, so the struct is built once per fit and
+/// shared read-only across the parallel engine. `col_sum` holds the per-T1
+/// column sums of `the_exp`, pre-multiplied by `1/n`; it is hoisted here because
+/// the coarse search would otherwise recompute the same vector for every voxel.
+///
+/// The `sorted_*` fields are the ascending-TI view used by the magnitude path.
+/// `sorted_scaled_col_sum` is summed over the rows of `sorted_exp` rather than
+/// reused from `scaled_col_sum`: floating-point addition is order-dependent, so
+/// a permuted row order is not guaranteed to give the same bits.
 struct NlsStruct {
     t_vec: Array1<f64>,
     n: usize,
     t1_vec: Array1<f64>,
     the_exp: Array2<f64>,
+    scaled_col_sum: Array1<f64>,
     rho_norm_vec: Array1<f64>,
+    order: Vec<usize>,
+    sorted_t: Array1<f64>,
+    sorted_exp: Array2<f64>,
+    sorted_scaled_col_sum: Array1<f64>,
     nbr_of_zoom: usize,
     t1_len_z: usize,
+}
+
+/// A zoom pass's refined grid, superseding the coarse grid for the passes that
+/// follow it and for parameter extraction. Held in an `Option` so that a fit
+/// configured with `iterations == 1` borrows the coarse grid instead of copying
+/// it per voxel.
+struct ZoomGrid {
+    t1_vec: Array1<f64>,
+    the_exp: Array2<f64>,
+    rho_norm_vec: Array1<f64>,
 }
 
 struct FitResult {
@@ -110,7 +149,13 @@ fn linspace(start: f64, stop: f64, n: usize) -> Array1<f64> {
     Array1::from_iter((0..n).map(|i| start + step * i as f64))
 }
 
-fn compute_exp_and_norm(t_vec: &Array1<f64>, t1_vec: &Array1<f64>) -> (Array2<f64>, Array1<f64>) {
+/// Build `exp(-TI/T1)` over the TI × T1 grid, together with the per-T1 column
+/// sums scaled by `1/n` (the form the mean-centering term needs) and the
+/// norm-squared of each mean-centered column.
+fn compute_exp_and_norm(
+    t_vec: &Array1<f64>,
+    t1_vec: &Array1<f64>,
+) -> (Array2<f64>, Array1<f64>, Array1<f64>) {
     let n = t_vec.len();
     let t1_len = t1_vec.len();
     let n_f = n as f64;
@@ -123,6 +168,8 @@ fn compute_exp_and_norm(t_vec: &Array1<f64>, t1_vec: &Array1<f64>) -> (Array2<f6
         }
     }
 
+    let scale = 1.0 / n_f;
+    let mut scaled_col_sum = Array1::<f64>::zeros(t1_len);
     let mut rho_norm_vec = Array1::<f64>::zeros(t1_len);
     for j in 0..t1_len {
         let mut sum_sq = 0.0;
@@ -132,10 +179,30 @@ fn compute_exp_and_norm(t_vec: &Array1<f64>, t1_vec: &Array1<f64>) -> (Array2<f6
             sum_sq += v * v;
             sum_val += v;
         }
+        scaled_col_sum[j] = scale * sum_val;
         rho_norm_vec[j] = sum_sq - (1.0 / n_f) * sum_val * sum_val;
     }
 
-    (the_exp, rho_norm_vec)
+    (the_exp, scaled_col_sum, rho_norm_vec)
+}
+
+/// Per-T1 column sums scaled by `1/n`, summed over rows in index order.
+///
+/// The `1/n` factor is folded in here because the mean-centering term is
+/// evaluated as `(scale * col_sum[j]) * y_sum`; hoisting the left product out
+/// of the per-voxel loop preserves the association and therefore the result.
+fn scaled_column_sums(the_exp: &Array2<f64>) -> Array1<f64> {
+    let (n, t1_len) = the_exp.dim();
+    let scale = 1.0 / n as f64;
+    let mut scaled_col_sum = Array1::<f64>::zeros(t1_len);
+    for j in 0..t1_len {
+        let mut sum_val = 0.0;
+        for i in 0..n {
+            sum_val += the_exp[[i, j]];
+        }
+        scaled_col_sum[j] = scale * sum_val;
+    }
+    scaled_col_sum
 }
 
 /// Build the RD-NLS search grid. `ti_values` and the T1 grid
@@ -156,76 +223,194 @@ fn build_nls_struct(
     // spaced by t1_step (rounded to the nearest integer point count).
     let n_t1 = ((t1_stop - t1_start) / t1_step).round() as usize + 1;
     let t1_vec = Array1::from_iter((0..n_t1).map(|i| t1_start + i as f64 * t1_step));
-    let (the_exp, rho_norm_vec) = compute_exp_and_norm(&t_vec, &t1_vec);
+    let (the_exp, scaled_col_sum, rho_norm_vec) = compute_exp_and_norm(&t_vec, &t1_vec);
+
+    // Ascending-TI view for the magnitude path's polarity restoration. The
+    // permutation is fixed by the protocol, so it is applied once here.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| t_vec[a].partial_cmp(&t_vec[b]).unwrap());
+    let sorted_t = Array1::from_iter(order.iter().map(|&i| t_vec[i]));
+    let mut sorted_exp = Array2::<f64>::zeros((n, the_exp.ncols()));
+    for (new_i, &orig_i) in order.iter().enumerate() {
+        for j in 0..the_exp.ncols() {
+            sorted_exp[[new_i, j]] = the_exp[[orig_i, j]];
+        }
+    }
+    let sorted_scaled_col_sum = scaled_column_sums(&sorted_exp);
 
     NlsStruct {
         t_vec,
         n,
         t1_vec,
         the_exp,
+        scaled_col_sum,
         rho_norm_vec,
+        order,
+        sorted_t,
+        sorted_exp,
+        sorted_scaled_col_sum,
         nbr_of_zoom,
         t1_len_z,
     }
 }
 
-/// Grid search: argmax_j |rhoTyVec[j]|² / rhoNormVec[j].
-fn grid_search(
-    data: &Array1<f64>,
-    the_exp: &Array2<f64>,
+/// Reduce a filled `rho` row to `(rho[argmax], argmax)` under the maximizing
+/// criterion `|rho[j]|² / rhoNormVec[j]`, applying the mean-centering term in
+/// the same pass. Only the winning entry is ever read downstream.
+fn centre_and_argmax(
+    rho: &mut [f64],
+    scaled_col_sum: &Array1<f64>,
     rho_norm_vec: &Array1<f64>,
-    n: usize,
-) -> (Array1<f64>, usize) {
-    let n_f = n as f64;
-    let y_sum: f64 = data.sum();
-    let t1_len = rho_norm_vec.len();
-
-    let mut rho_ty_vec = Array1::<f64>::zeros(t1_len);
-    for j in 0..t1_len {
-        let mut dot = 0.0;
-        let mut col_sum = 0.0;
-        for i in 0..n {
-            dot += data[i] * the_exp[[i, j]];
-            col_sum += the_exp[[i, j]];
-        }
-        rho_ty_vec[j] = dot - (1.0 / n_f) * col_sum * y_sum;
+    y_sum: f64,
+) -> (f64, usize) {
+    for j in 0..rho.len() {
+        rho[j] -= scaled_col_sum[j] * y_sum;
     }
+    argmax_ratio(rho, rho_norm_vec)
+}
 
+/// Reduce a centered `rho` to `(rho[argmax], argmax)` under the maximizing
+/// criterion `|rho[j]|² / rhoNormVec[j]`. Ties keep the lowest index, since the
+/// update is on strict `>`.
+fn argmax_ratio(rho: &[f64], rho_norm_vec: &Array1<f64>) -> (f64, usize) {
     let mut best_ind = 0;
     let mut best_val = f64::NEG_INFINITY;
-    for j in 0..t1_len {
+    for j in 0..rho.len() {
         if rho_norm_vec[j] > 0.0 {
-            let val = rho_ty_vec[j] * rho_ty_vec[j] / rho_norm_vec[j];
+            let val = rho[j] * rho[j] / rho_norm_vec[j];
             if val > best_val {
                 best_val = val;
                 best_ind = j;
             }
         }
     }
+    (rho[best_ind], best_ind)
+}
 
-    (rho_ty_vec, best_ind)
+/// Grid search: argmax_j |rhoTyVec[j]|² / rhoNormVec[j], returning the winning
+/// `rhoTyVec` entry and its index.
+///
+/// `scaled_col_sum` must be the `1/n`-scaled column sums of `the_exp`, summed in
+/// row-index order (see [`scaled_column_sums`]).
+fn grid_search(
+    data: &Array1<f64>,
+    the_exp: &Array2<f64>,
+    scaled_col_sum: &Array1<f64>,
+    rho_norm_vec: &Array1<f64>,
+    n: usize,
+) -> (f64, usize) {
+    let y_sum: f64 = data.sum();
+    let mut rho = vec![0.0f64; rho_norm_vec.len()];
+    accumulate_rho(&mut rho, data, the_exp, n);
+    centre_and_argmax(&mut rho, scaled_col_sum, rho_norm_vec, y_sum)
+}
+
+/// Accumulate `rho[j] += Σᵢ data[i]·the_exp[i][j]`.
+///
+/// The loop nest is (i, j) rather than (j, i) so the inner loop walks a row of
+/// `the_exp` contiguously and vectorizes. Each `rho[j]` still accumulates `i` in
+/// ascending order, so every partial sum — and hence the result — is
+/// bit-identical to the scalar (j, i) form.
+fn accumulate_rho(rho: &mut [f64], data: &Array1<f64>, the_exp: &Array2<f64>, n: usize) {
+    for i in 0..n {
+        let d = data[i];
+        let row = the_exp.row(i);
+        let row = row
+            .as_slice()
+            .expect("the_exp is row-major, so its rows are contiguous");
+        for (r, &e) in rho.iter_mut().zip(row) {
+            *r += d * e;
+        }
+    }
+}
+
+/// Coarse grid search over a block of voxels sharing one grid.
+///
+/// Results are identical to calling [`grid_search`] on each entry: per voxel the
+/// accumulation over `i` is unchanged. Blocking exists so each row of `the_exp`
+/// is read once per tile and reused across the tile's voxels out of L1, rather
+/// than being re-streamed from L2 for every voxel. The `rho` scratch is
+/// allocated once and reused across tiles.
+fn grid_search_block(
+    data: &[Array1<f64>],
+    the_exp: &Array2<f64>,
+    scaled_col_sum: &Array1<f64>,
+    rho_norm_vec: &Array1<f64>,
+    n: usize,
+) -> Vec<(f64, usize)> {
+    /// Voxels per tile. One `the_exp` row (t1_len × 8 bytes) must stay resident
+    /// across a tile's inner loops for the reuse to pay off.
+    const LANES: usize = 8;
+
+    assert!(n >= 1, "a grid search needs at least one sample");
+    let t1_len = rho_norm_vec.len();
+    let mut out = Vec::with_capacity(data.len());
+    let mut scratch = vec![0.0f64; LANES * t1_len];
+    let last = n - 1;
+
+    for tile in data.chunks(LANES) {
+        let lanes = tile.len();
+        scratch[..lanes * t1_len].fill(0.0);
+
+        for i in 0..last {
+            let row = the_exp.row(i);
+            let row = row
+                .as_slice()
+                .expect("the_exp is row-major, so its rows are contiguous");
+            for (k, voxel) in tile.iter().enumerate() {
+                let d = voxel[i];
+                let rho = &mut scratch[k * t1_len..(k + 1) * t1_len];
+                for (r, &e) in rho.iter_mut().zip(row) {
+                    *r += d * e;
+                }
+            }
+        }
+
+        // The final row's accumulation is fused with the mean-centering, so
+        // `rho` is written once rather than read-modify-written again in a
+        // separate centering pass. Both operations are branch-free, so the loop
+        // still vectorizes; the reduction stays separate because its
+        // data-dependent branch would otherwise inhibit that. Per `j` the
+        // operation sequence is unchanged — accumulate, then centre — so the
+        // values entering the reduction are bit-identical.
+        let row = the_exp.row(last);
+        let row = row
+            .as_slice()
+            .expect("the_exp is row-major, so its rows are contiguous");
+        for (k, voxel) in tile.iter().enumerate() {
+            let d = voxel[last];
+            let y_sum: f64 = voxel.sum();
+            let rho = &mut scratch[k * t1_len..(k + 1) * t1_len];
+            for j in 0..t1_len {
+                rho[j] = rho[j] + d * row[j] - scaled_col_sum[j] * y_sum;
+            }
+            out.push(argmax_ratio(rho, rho_norm_vec));
+        }
+    }
+    out
 }
 
 // Compute the fit parameters at the chosen T1-grid index. Returns
 // `(T1, b, a, residual)`: the T1 estimate, the exponential amplitude `b`, the
-// offset `a`, and the normalized RMS residual. Preconditions: `ind` is a valid
-// index into `t1_vec`/`rho_ty_vec`/`rho_norm_vec`; `n` is within the sample
-// range of `data`/`t_vec` and of `the_exp`'s rows; and `rho_norm_vec[ind]` is
-// nonzero, since it divides `rho_ty_vec[ind]`.
+// offset `a`, and the normalized RMS residual. `rho_ty` is the winning
+// `rhoTyVec` entry from the search that produced `ind`. Preconditions: `ind` is
+// a valid index into `t1_vec`/`rho_norm_vec`; `n` is within the sample range of
+// `data`/`t_vec` and of `the_exp`'s rows; and `rho_norm_vec[ind]` is nonzero,
+// since it divides `rho_ty`.
 #[allow(clippy::too_many_arguments)]
 fn extract_params(
     data: &Array1<f64>,
     t_vec: &Array1<f64>,
     t1_vec: &Array1<f64>,
     the_exp: &Array2<f64>,
-    rho_ty_vec: &Array1<f64>,
+    rho_ty: f64,
     rho_norm_vec: &Array1<f64>,
     ind: usize,
     n: usize,
 ) -> (f64, f64, f64, f64) {
     let n_f = n as f64;
     let t1 = t1_vec[ind];
-    let b = rho_ty_vec[ind] / rho_norm_vec[ind];
+    let b = rho_ty / rho_norm_vec[ind];
 
     let y_sum: f64 = data.sum();
     let exp_col_sum: f64 = (0..n).map(|i| the_exp[[i, ind]]).sum();
@@ -256,135 +441,159 @@ fn zoom_bounds(t1_vec: &Array1<f64>, ind: usize) -> (f64, f64) {
     }
 }
 
-/// Complex data: S(TI) = a + b * exp(-TI / T1). Equivalent to rdNls.m.
-fn rd_nls(data: &Array1<f64>, nls: &NlsStruct) -> FitResult {
-    assert_eq!(data.len(), nls.n);
-
-    let (mut last_rty, mut ind) = grid_search(data, &nls.the_exp, &nls.rho_norm_vec, nls.n);
-    let mut t1_vec = nls.t1_vec.clone();
-    let mut last_exp = nls.the_exp.clone();
-    let mut last_norm = nls.rho_norm_vec.clone();
+/// Run the zoom passes from a coarse-grid winner, then extract the parameters.
+///
+/// `t_vec` and `coarse_exp` select the TI ordering: the complex path works in
+/// protocol order, the magnitude path in ascending-TI order. `coarse_exp` is
+/// read only when no zoom pass runs (`iterations == 1`), which is why the
+/// coarse grid is borrowed rather than copied.
+fn refine_and_extract(
+    data: &Array1<f64>,
+    nls: &NlsStruct,
+    t_vec: &Array1<f64>,
+    coarse_exp: &Array2<f64>,
+    coarse: (f64, usize),
+) -> (f64, f64, f64, f64) {
+    let (mut rho_ty, mut ind) = coarse;
+    let mut zoomed: Option<ZoomGrid> = None;
 
     for _ in 1..nls.nbr_of_zoom {
-        let (lo, hi) = zoom_bounds(&t1_vec, ind);
-        t1_vec = linspace(lo, hi, nls.t1_len_z);
-        let (exp_new, norm_new) = compute_exp_and_norm(&nls.t_vec, &t1_vec);
-        let (rty, best) = grid_search(data, &exp_new, &norm_new, nls.n);
-        ind = best;
-        last_exp = exp_new;
-        last_rty = rty;
-        last_norm = norm_new;
+        let t1_vec = {
+            let prev = zoomed.as_ref().map_or(&nls.t1_vec, |z| &z.t1_vec);
+            let (lo, hi) = zoom_bounds(prev, ind);
+            linspace(lo, hi, nls.t1_len_z)
+        };
+        let (the_exp, scaled_col_sum, rho_norm_vec) = compute_exp_and_norm(t_vec, &t1_vec);
+        (rho_ty, ind) = grid_search(data, &the_exp, &scaled_col_sum, &rho_norm_vec, nls.n);
+        zoomed = Some(ZoomGrid {
+            t1_vec,
+            the_exp,
+            rho_norm_vec,
+        });
     }
 
-    let (t1, b, a, residual) = extract_params(
-        data, &nls.t_vec, &t1_vec, &last_exp, &last_rty, &last_norm, ind, nls.n,
-    );
-    FitResult {
-        t1,
-        b,
-        a,
-        residual,
-        idx: None,
-    }
+    let (t1_vec, the_exp, rho_norm_vec) = match &zoomed {
+        Some(z) => (&z.t1_vec, &z.the_exp, &z.rho_norm_vec),
+        None => (&nls.t1_vec, coarse_exp, &nls.rho_norm_vec),
+    };
+    extract_params(
+        data,
+        t_vec,
+        t1_vec,
+        the_exp,
+        rho_ty,
+        rho_norm_vec,
+        ind,
+        nls.n,
+    )
+}
+
+/// Complex data: S(TI) = a + b * exp(-TI / T1). Equivalent to rdNls.m.
+fn rd_nls(data: &[Array1<f64>], nls: &NlsStruct) -> Vec<FitResult> {
+    debug_assert!(data.iter().all(|d| d.len() == nls.n));
+
+    grid_search_block(
+        data,
+        &nls.the_exp,
+        &nls.scaled_col_sum,
+        &nls.rho_norm_vec,
+        nls.n,
+    )
+    .into_iter()
+    .zip(data)
+    .map(|(coarse, d)| {
+        let (t1, b, a, residual) = refine_and_extract(d, nls, &nls.t_vec, &nls.the_exp, coarse);
+        FitResult {
+            t1,
+            b,
+            a,
+            residual,
+            idx: None,
+        }
+    })
+    .collect()
 }
 
 /// Magnitude data with polarity restoration. Equivalent to rdNlsPr.m.
-fn rd_nls_pr(data: &Array1<f64>, nls: &NlsStruct) -> FitResult {
-    assert_eq!(data.len(), nls.n);
-    let n = nls.n;
+fn rd_nls_pr(data: &[Array1<f64>], nls: &NlsStruct) -> Vec<FitResult> {
+    debug_assert!(data.iter().all(|d| d.len() == nls.n));
 
-    // Sort by TI ascending
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| nls.t_vec[a].partial_cmp(&nls.t_vec[b]).unwrap());
-
-    let sorted_t = Array1::from_iter(order.iter().map(|&i| nls.t_vec[i]));
-    let sorted_data = Array1::from_iter(order.iter().map(|&i| data[i].abs()));
-
-    let sorted_exp = {
-        let mut exp = Array2::<f64>::zeros((n, nls.the_exp.ncols()));
-        for (new_i, &orig_i) in order.iter().enumerate() {
-            for j in 0..nls.the_exp.ncols() {
-                exp[[new_i, j]] = nls.the_exp[[orig_i, j]];
-            }
-        }
-        exp
-    };
-
-    // rho_norm_vec is invariant to row permutation
-    let sorted_norm = nls.rho_norm_vec.clone();
-
-    // Find signal minimum
-    let (min_ind, _) = sorted_data
+    // The ascending-TI grid is pre-permuted in `nls`; only the data needs
+    // reordering per voxel. `rho_norm_vec` is invariant to row permutation.
+    let sorted: Vec<Array1<f64>> = data
         .iter()
-        .enumerate()
-        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .unwrap();
+        .map(|d| Array1::from_iter(nls.order.iter().map(|&i| d[i].abs())))
+        .collect();
 
-    let mut best = FitResult {
-        t1: 0.0,
-        b: 0.0,
-        a: 0.0,
-        residual: f64::INFINITY,
-        idx: None,
-    };
-    let mut best_scenario = 0;
+    // Signal minimum per voxel — the null crossing is adjacent to it.
+    let min_inds: Vec<usize> = sorted
+        .iter()
+        .map(|s| {
+            s.iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .unwrap()
+                .0
+        })
+        .collect();
+
+    let mut best: Vec<FitResult> = (0..data.len())
+        .map(|_| FitResult {
+            t1: 0.0,
+            b: 0.0,
+            a: 0.0,
+            residual: f64::INFINITY,
+            idx: None,
+        })
+        .collect();
+    let mut best_scenario = vec![0usize; data.len()];
 
     for scenario in 0..2 {
         // Polarity restoration: negate points before the null crossing
-        let mut data_tmp = sorted_data.clone();
-        let negate_up_to = if scenario == 0 { min_ind + 1 } else { min_ind };
-        for i in 0..negate_up_to {
-            data_tmp[i] = -data_tmp[i];
-        }
+        let restored: Vec<Array1<f64>> = sorted
+            .iter()
+            .zip(&min_inds)
+            .map(|(s, &min_ind)| {
+                let mut d = s.clone();
+                let negate_up_to = if scenario == 0 { min_ind + 1 } else { min_ind };
+                for i in 0..negate_up_to {
+                    d[i] = -d[i];
+                }
+                d
+            })
+            .collect();
 
-        let (mut last_rty, mut ind) = grid_search(&data_tmp, &sorted_exp, &sorted_norm, n);
-        let mut t1_vec = nls.t1_vec.clone();
-        let mut last_exp_z = sorted_exp.clone();
-        let mut last_norm_z = sorted_norm.clone();
-
-        for k in 1..nls.nbr_of_zoom {
-            let (lo, hi) = zoom_bounds(&t1_vec, ind);
-            t1_vec = linspace(lo, hi, nls.t1_len_z);
-            let (exp_new, norm_new) = compute_exp_and_norm(&sorted_t, &t1_vec);
-            let (rty, b) = grid_search(&data_tmp, &exp_new, &norm_new, n);
-            ind = b;
-            last_exp_z = exp_new;
-            last_rty = rty;
-            last_norm_z = norm_new;
-
-            // Only extract on last zoom iteration
-            if k < nls.nbr_of_zoom - 1 {
-                continue;
-            }
-        }
-
-        let (t1, b, a, residual) = extract_params(
-            &data_tmp,
-            &sorted_t,
-            &t1_vec,
-            &last_exp_z,
-            &last_rty,
-            &last_norm_z,
-            ind,
-            n,
+        let coarse = grid_search_block(
+            &restored,
+            &nls.sorted_exp,
+            &nls.sorted_scaled_col_sum,
+            &nls.rho_norm_vec,
+            nls.n,
         );
-        if residual < best.residual {
-            best = FitResult {
-                t1,
-                b,
-                a,
-                residual,
-                idx: None,
-            };
-            best_scenario = scenario;
+
+        for (v, (c, d)) in coarse.into_iter().zip(&restored).enumerate() {
+            let (t1, b, a, residual) =
+                refine_and_extract(d, nls, &nls.sorted_t, &nls.sorted_exp, c);
+            if residual < best[v].residual {
+                best[v] = FitResult {
+                    t1,
+                    b,
+                    a,
+                    residual,
+                    idx: None,
+                };
+                best_scenario[v] = scenario;
+            }
         }
     }
 
-    best.idx = Some(if best_scenario == 0 {
-        min_ind + 1
-    } else {
-        min_ind
-    });
+    for (v, r) in best.iter_mut().enumerate() {
+        r.idx = Some(if best_scenario[v] == 0 {
+            min_inds[v] + 1
+        } else {
+            min_inds[v]
+        });
+    }
     best
 }
 
@@ -403,6 +612,17 @@ mod tests {
 
     fn ir_signal(ti: &[f64], t1: f64, a: f64, b: f64) -> Array1<f64> {
         Array1::from_iter(ti.iter().map(|&t| a + b * (-t / t1).exp()))
+    }
+
+    /// Fit a lone voxel through a block entry point.
+    fn fit_one(
+        f: fn(&[Array1<f64>], &NlsStruct) -> Vec<FitResult>,
+        data: &Array1<f64>,
+        nls: &NlsStruct,
+    ) -> FitResult {
+        f(std::slice::from_ref(data), nls)
+            .pop()
+            .expect("one result per input")
     }
 
     #[test]
@@ -435,7 +655,7 @@ mod tests {
         let ti = default_ti();
         let data = ir_signal(&ti, 0.9, 500.0, -1000.0);
         let nls = build_nls_struct(&ti, T1_START, T1_STOP, T1_STEP, 2, 21);
-        let r = rd_nls(&data, &nls);
+        let r = fit_one(rd_nls, &data, &nls);
 
         assert!((r.t1 - 0.9).abs() < 1e-3, "T1: {}", r.t1);
         assert!((r.a - 500.0).abs() < 1.0, "a: {}", r.a);
@@ -452,7 +672,7 @@ mod tests {
                 .map(|&t| (500.0 + -1000.0 * (-t / 0.9).exp()).abs()),
         );
         let nls = build_nls_struct(&ti, T1_START, T1_STOP, T1_STEP, 2, 21);
-        let r = rd_nls_pr(&data, &nls);
+        let r = fit_one(rd_nls_pr, &data, &nls);
 
         assert!((r.t1 - 0.9).abs() < 5e-3, "T1: {}", r.t1);
         assert!(r.idx.is_some());
@@ -465,7 +685,7 @@ mod tests {
 
         for &true_t1 in &[0.2, 0.5, 1.0, 2.0, 4.0] {
             let data = ir_signal(&ti, true_t1, 500.0, -1000.0);
-            let r = rd_nls(&data, &nls);
+            let r = fit_one(rd_nls, &data, &nls);
             assert!(
                 (r.t1 - true_t1).abs() < 1e-3,
                 "T1={}: got {}",
@@ -480,8 +700,46 @@ mod tests {
         let ti = default_ti();
         let nls = build_nls_struct(&ti, T1_START, T1_STOP, T1_STEP, 1, 21);
         let data = ir_signal(&ti, 0.9, 500.0, -1000.0);
-        let r = rd_nls(&data, &nls);
+        let r = fit_one(rd_nls, &data, &nls);
         assert!((r.t1 - 0.9).abs() < 2e-3, "T1: {}", r.t1);
+    }
+
+    /// Blocking must be invisible: a voxel's result may not depend on which
+    /// block it landed in, or on where in that block it sat. The sizes span
+    /// partial, exact and multiple tiles so tile boundaries are exercised.
+    #[test]
+    fn fit_block_matches_fit_voxel() {
+        for method in [FitMethod::Complex, FitMethod::Magnitude] {
+            let cfg = crate::models::inversion_recovery::config::IrConfig {
+                inversion_times: default_ti(),
+                method: Some(method.clone()),
+                t1_range: Default::default(),
+                zoom: Default::default(),
+                repetition_time: None,
+            };
+            let fitter = IrFitter::new(&cfg);
+            let ti = default_ti();
+            // Distinct T1/a/b per voxel so no two share a search path.
+            let voxels: Vec<Array1<f64>> = (0..37)
+                .map(|k| {
+                    let t1 = 0.2 + 0.1 * k as f64;
+                    let sig = ir_signal(&ti, t1, 400.0 + 7.0 * k as f64, -1000.0 - 3.0 * k as f64);
+                    match method {
+                        FitMethod::Magnitude => sig.mapv(f64::abs),
+                        FitMethod::Complex => sig,
+                    }
+                })
+                .collect();
+
+            let alone: Vec<Vec<f64>> = voxels.iter().map(|v| fitter.fit_voxel(v)).collect();
+            for size in [1, 3, 8, 9, 16, 37] {
+                let blocked: Vec<Vec<f64>> = voxels
+                    .chunks(size)
+                    .flat_map(|c| fitter.fit_block(c))
+                    .collect();
+                assert_eq!(blocked, alone, "method {method:?}, block size {size}");
+            }
+        }
     }
 
     #[test]

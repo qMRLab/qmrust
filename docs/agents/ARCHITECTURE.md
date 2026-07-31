@@ -125,6 +125,7 @@ pub trait Model: Send + Sync {
 
     fn forward(&self, params: &[f64], aux: &Aux) -> Measurement;   // noise-free, identity-tagged
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;         // identity-keyed measurement → outputs
+    fn fit_block(&self, ms: &[Measurement], aux: &[Aux]) -> Vec<Vec<f64>>   // block fit; defaults to per-voxel fit()
 
     fn n_volumes(&self) -> usize;                 // volumes this model's protocol describes
     fn bids_volume(&self, index: usize) -> BidsVolume;   // BIDS write descriptor for the i-th volume
@@ -252,8 +253,16 @@ YAML config ─► config::parse_config ─► (Config, raw Value)
 `engine::run` dispatches on `model.strategy()`; `run_voxelwise` fits masked, non-empty
 voxels in parallel (`rayon`), assembling each voxel's per-volume values and their
 `VolumeId`s into an identity-keyed `Measurement` (matching `model.measurement()`), building
-a per-voxel `Aux`, and calling `model.fit`. There is no positional signal slice anywhere
-in this path — a reordered volume list produces the same `Measurement` and the same fit.
+a per-voxel `Aux`, and calling `model.fit_block` on blocks of voxels. There is no positional
+signal slice anywhere in this path — a reordered volume list produces the same `Measurement`
+and the same fit.
+
+Blocking is a performance seam, not a semantic one: `fit_block` defaults to calling `fit`
+per voxel, and a model that overrides it must return exactly what `fit` would. Its purpose
+is to let a model amortize a shared read-only structure — a search grid, a dictionary —
+across the block instead of re-sweeping it per voxel. If a block panics the engine re-runs
+it voxel by voxel, so a single bad voxel is recorded as a failed fit rather than taking its
+neighbours down with it.
 
 ### Fit from a BIDS dataset (CLI)
 

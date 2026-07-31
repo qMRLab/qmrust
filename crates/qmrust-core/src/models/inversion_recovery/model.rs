@@ -40,6 +40,27 @@ impl IrModel {
             repetition_time,
         }
     }
+
+    /// Assemble a measurement's signal in the fitter's own TI order by matching
+    /// each expected TI to its sample by value. Identities must match: assembly
+    /// is never positional. A TI with no matching sample is a mislabeled
+    /// measurement → panic (the engine records the voxel as a failed fit).
+    /// TIs are assumed unique; first match wins (values pass through
+    /// unmodified, so a duplicate TI is a misconfiguration, not a hazard).
+    fn assemble(&self, m: &Measurement) -> ndarray::Array1<f64> {
+        let samples = m.series();
+        self.fitter
+            .ti()
+            .iter()
+            .map(|&ti| {
+                samples
+                    .iter()
+                    .find(|s| s.params.get("InversionTime") == Some(&ti))
+                    .map(|s| s.value)
+                    .unwrap_or_else(|| panic!("measurement has no sample with InversionTime={ti}"))
+            })
+            .collect()
+    }
 }
 
 const IR_ENTITIES: &[EntityRole] = &[EntityRole::Inv];
@@ -84,26 +105,11 @@ impl Model for IrModel {
         Measurement::Series(samples)
     }
     fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
-        // Assemble the signal in the fitter's own TI order by matching each
-        // expected TI to its sample by value. Identities must match: assembly
-        // is never positional. A TI with no matching sample is a mislabeled
-        // measurement → panic (the engine records the voxel as a failed fit).
-        // TIs are assumed unique; first match wins (values pass through
-        // unmodified, so a duplicate TI is a misconfiguration, not a hazard).
-        let samples = m.series();
-        let signal: Vec<f64> = self
-            .fitter
-            .ti()
-            .iter()
-            .map(|&ti| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("InversionTime") == Some(&ti))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| panic!("measurement has no sample with InversionTime={ti}"))
-            })
-            .collect();
-        self.fitter.fit_voxel(&ndarray::Array1::from_vec(signal))
+        self.fitter.fit_voxel(&self.assemble(m))
+    }
+    fn fit_block(&self, ms: &[Measurement], _aux: &[Aux]) -> Vec<Vec<f64>> {
+        let signals: Vec<ndarray::Array1<f64>> = ms.iter().map(|m| self.assemble(m)).collect();
+        self.fitter.fit_block(&signals)
     }
     fn n_volumes(&self) -> usize {
         self.fitter.ti().len()
