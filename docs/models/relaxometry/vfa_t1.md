@@ -76,8 +76,8 @@ Auxiliary maps and the mask applied to this fit.
 
 | Map | BIDS suffix | Unit | Fit bounds | Fitted |
 |---|---|---|---|---|
-| `M0` | `M0map` | — | 0 … 6000 | free |
 | `T1` | `T1map` | s | 1e-05 … 5 | free |
+| `M0` | `M0map` | — | 0 … 6000 | free |
 
 ```{figure} ../../figures/vfa_t1/outputs.webp
 :label: fig-vfa_t1-outputs
@@ -118,10 +118,10 @@ Fitted maps are written as BIDS derivatives:
 
 ```text
 out/derivatives/qmrust/sub-01/anat/
-  sub-01_M0map.nii.gz
-  sub-01_M0map.json
   sub-01_T1map.nii.gz
   sub-01_T1map.json
+  sub-01_M0map.nii.gz
+  sub-01_M0map.json
 ```
 :::
 
