@@ -14,7 +14,7 @@ import hljsYaml from "./vendor/highlight-yaml.js";
 import hljsJson from "./vendor/highlight-json.js";
 import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
-import { mergeSurface } from "./surface.js";
+import { mergeSurface, withProtocolComments, stripProtocolComments } from "./surface.js";
 import { debounce } from "./debounce.js";
 
 hljs.registerLanguage("yaml", hljsYaml);
@@ -52,13 +52,44 @@ function isNumberMatrix(v) {
 function commitObjEdit() {
   editor.text = yamlDump(editor.obj);
   editor.valid = true;
-  $("cfg-yaml").value = editor.text;
-  // The textarea's own text is transparent — the highlight layer behind it is what
-  // a reader actually reads, so leaving it unpainted shows them the previous YAML.
-  paintYaml();
   setYamlPill(true);
   refreshSurface();
+  updateYamlView();
   renderForm();
+}
+
+// Sets the YAML textarea's displayed text to `editor.text` (the parse/commit
+// source of truth) plus the protocol-context block for the current mode, and
+// repaints the highlight layer to match. The appended block is a display
+// artifact only — `editor.text` never carries it — so it is regenerated here
+// from the latest surface on every call rather than being part of any stored
+// state. Preserves the textarea's own caret/selection across the rewrite: a
+// background surface refresh lands mid-typing-pause, and resetting `.value`
+// unconditionally would otherwise yank the cursor out from under a reader who
+// resumes typing.
+function updateYamlView() {
+  const ta = $("cfg-yaml");
+  const displayed =
+    app.protocolResolved && app.surface
+      ? withProtocolComments(editor.text, yamlLoad(app.surface.yaml), app.surface.protocol_keys)
+      : editor.text;
+  if (ta.value !== displayed) {
+    const focused = document.activeElement === ta;
+    const { selectionStart, selectionEnd } = ta;
+    ta.value = displayed;
+    if (focused) {
+      ta.focus({ preventScroll: true });
+      try {
+        ta.setSelectionRange(selectionStart, selectionEnd);
+      } catch {
+        // A selection range invalid for the new (shorter/longer) text is not
+        // worth surfacing; the caret simply lands wherever the browser puts it.
+      }
+    }
+  }
+  // The textarea's own text is transparent — the highlight layer behind it is
+  // what a reader actually reads, so leaving it unpainted shows them stale YAML.
+  paintYaml();
 }
 
 // The message from the last `effective_config` call that threw outright
@@ -79,7 +110,7 @@ let surfaceThrow = null;
 function refreshSurface() {
   if (!app.wasm || !editor.valid) return;
   try {
-    app.surface = app.wasm.effective_config(editor.text);
+    app.surface = app.wasm.effective_config(editor.text, app.current?.meta?.protocol_json ?? "");
     surfaceThrow = null;
   } catch (e) {
     app.surface = null;
@@ -95,6 +126,7 @@ function refreshSurface() {
 // delay) and coalesces the rest into one more run once typing pauses.
 const scheduleSurfaceRefresh = debounce(() => {
   refreshSurface();
+  updateYamlView();
   renderForm();
 }, 150);
 
@@ -233,7 +265,12 @@ function buildWidget(value, path) {
   return ta;
 }
 
-function buildRows(container, rows) {
+// `parentLocked` is true while recursing into a group whose own row already
+// carried the "from sidecars" note — mergeSurface's `inherited` flag marks
+// every descendant of a locked group as protocol-sourced too (ingest_protocol
+// replaces the whole object), so without this a reader would see the same
+// note once on the group and again on every one of its children.
+function buildRows(container, rows, parentLocked = false) {
   for (const row of rows) {
     if (row.children) {
       const group = document.createElement("div");
@@ -244,14 +281,16 @@ function buildRows(container, rows) {
       const fields = document.createElement("div");
       fields.className = "form-fields";
       group.append(title, fields);
-      buildRows(fields, row.children);
+      buildRows(fields, row.children, parentLocked || row.readOnly);
       container.append(group);
       if (row.readOnly) {
         group.classList.add("locked");
-        const note = document.createElement("span");
-        note.className = "field-source";
-        note.textContent = "from sidecars";
-        title.after(note);
+        if (!parentLocked) {
+          const note = document.createElement("span");
+          note.className = "field-source";
+          note.textContent = "from sidecars";
+          title.after(note);
+        }
       }
       continue;
     }
@@ -266,6 +305,10 @@ function buildRows(container, rows) {
       ? widget
       : widget.querySelector("input, select, textarea");
     if (focusable) focusable.dataset.path = row.path.join(".");
+    // A protocol-sourced control gets a distinct border regardless of mode —
+    // editable in the non-BIDS case, disabled in the BIDS one — so a reader
+    // can tell an acquisition field from an ordinary option at a glance.
+    if (row.isProtocol) (focusable ?? widget).classList.add("protocol-field");
     if (row.readOnly) {
       // Disabled on the focusable control itself, not the wrapping `<label
       // class="switch">` a checkbox returns — disabling the label is a no-op:
@@ -278,10 +321,12 @@ function buildRows(container, rows) {
     if (!row.isSet) el.classList.add("unset");
     if (row.readOnly) {
       el.classList.add("locked");
-      const note = document.createElement("span");
-      note.className = "field-source";
-      note.textContent = "from sidecars";
-      el.querySelector(".field-key")?.after(note);
+      if (!parentLocked) {
+        const note = document.createElement("span");
+        note.className = "field-source";
+        note.textContent = "from sidecars";
+        el.querySelector(".field-key")?.after(note);
+      }
     }
     container.append(el);
   }
@@ -367,12 +412,15 @@ function setYamlPill(valid) {
 }
 
 // Sets the editor from a fresh string (model load, or typed into the YAML
-// view). Rebuilds the form only when the text parses, so a reader mid-typo
-// in the YAML view doesn't have the form yanked out from under them.
+// view, already stripped of any protocol-comment block — see
+// `stripProtocolComments`). Rebuilds the form only when the text parses, so a
+// reader mid-typo in the YAML view doesn't have the form yanked out from
+// under them. `scheduleSurfaceRefresh` (on its synchronous leading call, e.g.
+// a model load or the first keystroke of a burst) is what actually rewrites
+// the textarea via `updateYamlView`; this still repaints the highlight layer
+// on every call so it never lags behind what the reader is looking at.
 export function setEditorText(text) {
   editor.text = text;
-  $("cfg-yaml").value = text;
-  paintYaml();
   try {
     editor.obj = yamlLoad(text);
     editor.valid = true;
@@ -382,6 +430,7 @@ export function setEditorText(text) {
     editor.valid = false;
     setYamlPill(false);
   }
+  paintYaml();
 }
 
 // Repaint the layer behind the textarea and keep the two scrolled together.

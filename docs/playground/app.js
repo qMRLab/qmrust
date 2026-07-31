@@ -13,6 +13,7 @@ import { $, status } from "./dom.js";
 import { app, editor, nvIn, nvOut } from "./state.js";
 import { loadBundle, fetchOrThrow, loadWasm } from "./bundles.js";
 import { setEditorText, showTab, syncYamlScroll } from "./recipe.js";
+import { stripProtocolComments } from "./surface.js";
 import {
   onFilesClick,
   onFrameChange,
@@ -219,7 +220,9 @@ function wireRecipeControls() {
     showTab($("tab-form").classList.contains("active") ? "yaml" : "form");
   $("tab-form").onclick = toggleRecipeView;
   $("tab-yaml").onclick = toggleRecipeView;
-  $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
+  // The textarea's own text may carry a generated protocol-comment block
+  // (see `withProtocolComments`); it must never reach the recipe parser.
+  $("cfg-yaml").oninput = (e) => setEditorText(stripProtocolComments(e.target.value));
   $("cfg-yaml").addEventListener("scroll", syncYamlScroll);
 }
 

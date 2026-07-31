@@ -4,7 +4,7 @@
 // sidecars supply must not be presented as editable.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeSurface } from "../../docs/playground/surface.js";
+import { mergeSurface, withProtocolComments, stripProtocolComments } from "../../docs/playground/surface.js";
 
 const flat = (rows) => Object.fromEntries(rows.map((r) => [r.path.join("."), r]));
 
@@ -72,10 +72,10 @@ test("a nested protocol path locks, matched on its full dotted path", () => {
   assert.equal(inner["qmt_spgr.lineshape"].readOnly, false, "only the acquisition locks");
 });
 
-test("a locked row carries no displayed value", () => {
-  // The BIDS recipe omits a protocol-sourced key, so its only candidate value
-  // is the surface's struct default — showing that under a "from sidecars"
-  // label would assert a specific dataset value that was never resolved.
+test("a locked row shows the value the surface carries (ingested from the sidecars)", () => {
+  // `effective_config` runs `ingest_protocol` before serializing, so the
+  // surface itself already carries the resolved value — the merge must show
+  // it, not blank it, on a locked row.
   const rows = mergeSurface(
     { mtw: { flip_angle: 6.0 } },
     {},
@@ -83,7 +83,7 @@ test("a locked row carries no displayed value", () => {
   );
   const leaves = flat(rows.find((r) => r.key === "mtw").children);
   assert.equal(leaves["mtw.flip_angle"].readOnly, true);
-  assert.equal(leaves["mtw.flip_angle"].value, null);
+  assert.equal(leaves["mtw.flip_angle"].value, 6.0);
 });
 
 test("locking an object locks everything under it", () => {
@@ -141,6 +141,73 @@ test("surface-derived rows come first, override-only rows after", () => {
     { protocolKeys: [], readOnly: false },
   );
   assert.deepEqual(rows.map((r) => r.key), ["fit_type", "mask"]);
+});
+
+test("an unsettable optional (null surface value, not protocol-sourced) is omitted while unset", () => {
+  const rows = flat(mergeSurface(
+    { b1_correction: null, export_mtr: true },
+    {},
+    { protocolKeys: [], readOnly: true },
+  ));
+  assert.equal(rows.b1_correction, undefined, "must not render a box for an unproducible value");
+  assert.ok(rows.export_mtr, "an ordinary field must still render");
+});
+
+test("an unsettable optional renders read-only when a recipe does carry a value", () => {
+  const rows = flat(mergeSurface(
+    { b1_correction: null },
+    { b1_correction: { m0b_vs_r1: { slope: 0.05 } } },
+    { protocolKeys: [], readOnly: false },
+  ));
+  assert.equal(rows.b1_correction.isSet, true);
+  assert.equal(rows.b1_correction.readOnly, true, "still read-only even in non-BIDS mode");
+});
+
+test("a protocol-sourced null value is unaffected by the unsettable-optional rule", () => {
+  // inversion_recovery's repetition_time: not producible by hand, but IS
+  // protocol-sourced, so it must follow the normal locked-row treatment
+  // (shown, not omitted) rather than being hidden.
+  const rows = flat(mergeSurface(
+    { repetition_time: null, inversion_times: [] },
+    {},
+    { protocolKeys: ["repetition_time"], readOnly: true },
+  ));
+  assert.ok(rows.repetition_time, "protocol-sourced key must still render");
+  assert.equal(rows.repetition_time.readOnly, true);
+});
+
+test("withProtocolComments appends one commented line per resolved protocol key", () => {
+  const text = "model: vfa_t1\nfit_type: linear\n";
+  const surface = { flip_angles: [3, 20], repetition_time: 0.015, fit_type: "linear" };
+  const out = withProtocolComments(text, surface, ["flip_angles", "repetition_time"]);
+  assert.ok(out.startsWith(text.trimEnd()), "original text is preserved");
+  assert.match(out, /# flip_angles: \[3, 20\]\s+# from sidecars/);
+  assert.match(out, /# repetition_time: 0\.015\s+# from sidecars/);
+});
+
+test("withProtocolComments is a no-op with no protocol keys", () => {
+  const text = "model: mt_ratio\n";
+  assert.equal(withProtocolComments(text, {}, []), text);
+});
+
+test("withProtocolComments skips a declared key absent from the surface", () => {
+  const text = "model: vfa_t1\n";
+  const out = withProtocolComments(text, { flip_angles: [3, 20] }, ["flip_angles", "nonexistent"]);
+  assert.match(out, /flip_angles/);
+  assert.doesNotMatch(out, /nonexistent/);
+});
+
+test("stripProtocolComments removes an appended block and is idempotent", () => {
+  const text = "model: vfa_t1\nfit_type: linear\n";
+  const withComments = withProtocolComments(text, { flip_angles: [3, 20] }, ["flip_angles"]);
+  const stripped = stripProtocolComments(withComments);
+  assert.equal(stripped, text);
+  assert.equal(stripProtocolComments(stripped), stripped, "stripping twice is a no-op");
+});
+
+test("stripProtocolComments is a no-op on text with no comment block", () => {
+  const text = "model: vfa_t1\nfit_type: linear\n";
+  assert.equal(stripProtocolComments(text), text);
 });
 
 test("isSet is true for an override that is explicitly false, 0, or null", () => {

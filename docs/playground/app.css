@@ -550,6 +550,13 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   font-size: 0.72rem;
   opacity: 0.75;
 }
+/* A control sourced from the model's acquisition protocol (editable in
+   non-BIDS mode, disabled once BIDS mode locks it) — the accent border reads
+   as "this is the acquisition" even when `.locked`'s opacity dims the whole
+   row uniformly alongside it. */
+.protocol-field {
+  border-color: var(--accent) !important;
+}
 
 .switch { position: relative; display: inline-block; width: 38px; height: 22px; }
 .switch input { opacity: 0; width: 0; height: 0; }

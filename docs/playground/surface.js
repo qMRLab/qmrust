@@ -41,15 +41,37 @@ export function mergeSurface(surface, overrides, { protocolKeys = [], readOnly =
       const override = has ? overrideNode[key] : undefined;
       const isProtocol = inherited || protocol.has(childPath.join("."));
       const locked = isProtocol && readOnly;
-      // A locked row's only candidate value is the surface default — the BIDS
-      // recipe omits the key by design — and displaying that default under a
-      // "from sidecars" label would assert a specific dataset value that was
-      // never actually resolved. `null` renders as a blank, honestly
-      // unopinionated control instead.
+      // A non-protocol key whose surface value is `null` is an optional the
+      // reader has no way to produce (e.g. mt_sat's `b1_correction`, a
+      // sequence-simulation artifact the CLI inlines from a file path) —
+      // *not* a settable scalar that merely defaults to unset. An editable
+      // box there can only mislead, so it is omitted while unset and
+      // rendered read-only if a recipe happens to carry a value for it.
+      // Known limitation: this also hides a genuine settable optional scalar
+      // that serializes to `null` by default; a per-field declaration would
+      // be the precise fix if one is ever added.
+      if (value === null && !isProtocol) {
+        if (!has) continue;
+        rows.push({
+          path: childPath,
+          key,
+          value: isPlainObject(override) ? null : override,
+          isSet: true,
+          isProtocol: false,
+          readOnly: true,
+          children: isPlainObject(override) ? walk(override, override, childPath, true) : null,
+        });
+        continue;
+      }
+      // The surface is built from `effective_config`, which runs
+      // `ingest_protocol` before serializing — so a locked row's `value` is
+      // already the real value resolved from the sidecars, not a struct
+      // default. The BIDS recipe omits the key by design, so a locked row's
+      // only source is ever the surface.
       rows.push({
         path: childPath,
         key,
-        value: isPlainObject(value) ? null : locked ? null : has ? override : value,
+        value: isPlainObject(value) ? null : has ? override : value,
         isSet: has,
         isProtocol,
         readOnly: locked,
@@ -83,4 +105,56 @@ export function mergeSurface(surface, overrides, { protocolKeys = [], readOnly =
     return rows;
   };
   return walk(surface, overrides, [], false);
+}
+
+// The YAML view's trailing context block: one commented line per
+// protocol-sourced key, showing the value `effective_config` resolved for it.
+// A BIDS recipe omits these keys entirely, so there is nothing in the text to
+// comment out — the lines are generated for display, never parsed or
+// committed. `PROTOCOL_COMMENT_HEADER` is the marker `stripProtocolComments`
+// looks for; it must not occur in an ordinary recipe.
+const PROTOCOL_COMMENT_HEADER = "# resolved from sidecars (read-only)";
+
+function getByDottedPath(obj, dottedPath) {
+  return dottedPath
+    .split(".")
+    .reduce((node, key) => (isPlainObject(node) ? node[key] : undefined), obj);
+}
+
+function formatProtocolValue(value) {
+  if (Array.isArray(value)) return `[${value.join(", ")}]`;
+  if (isPlainObject(value)) return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * Appends the protocol-context block to `text` (the recipe as typed/dumped),
+ * one line per key in `protocolKeys` that `surface` (the parsed
+ * `effective_config` YAML, already ingested with the resolved protocol)
+ * carries a value for. A no-op — returns `text` unchanged — when there are no
+ * protocol keys to show (non-BIDS mode, or a model with no acquisition axis).
+ */
+export function withProtocolComments(text, surface, protocolKeys) {
+  const lines = protocolKeys
+    .map((key) => {
+      const value = getByDottedPath(surface, key);
+      return value === undefined
+        ? null
+        : `# ${key}: ${formatProtocolValue(value)}   # from sidecars`;
+    })
+    .filter((line) => line !== null);
+  if (lines.length === 0) return text;
+  return `${text.replace(/\s+$/, "")}\n\n${PROTOCOL_COMMENT_HEADER}\n${lines.join("\n")}\n`;
+}
+
+/**
+ * Removes a `withProtocolComments` block, if present. Idempotent, and a
+ * no-op on text carrying none. Must run on the textarea's content wherever it
+ * is read back — the generated lines must never reach the YAML parser or the
+ * committed recipe/provenance.
+ */
+export function stripProtocolComments(text) {
+  const idx = text.indexOf(PROTOCOL_COMMENT_HEADER);
+  if (idx === -1) return text;
+  return `${text.slice(0, idx).replace(/\s+$/, "")}\n`;
 }
