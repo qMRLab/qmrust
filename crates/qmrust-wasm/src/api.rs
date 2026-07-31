@@ -150,6 +150,21 @@ pub fn build_model(cfg_yaml: &str) -> Result<Box<dyn Model>, String> {
     build_model_with_protocol(cfg_yaml, &Protocol::default())
 }
 
+/// Every option the recipe's model accepts, at its effective value, plus the
+/// model's own validation complaint and its protocol-sourced keys.
+///
+/// Registry-dispatched off `model:`, like every other entry point here. The
+/// surface is returned even when the config does not validate — a panel that
+/// blanks mid-edit cannot be used to fix the config it is complaining about.
+pub fn effective_config(
+    cfg_yaml: &str,
+) -> Result<qmrust_core::core::model::EffectiveConfig, String> {
+    let (cfg, raw) = qmrust_core::config::parse_config(cfg_yaml).map_err(|e| e.to_string())?;
+    let entry = qmrust_core::registry::by_name(&cfg.model)
+        .ok_or_else(|| format!("Unknown model: '{}'", cfg.model))?;
+    (entry.effective)(&raw).map_err(|e| format!("{e:#}"))
+}
+
 /// Parse the JSON encoding of a [`Protocol`]:
 /// `{"volumes": [{"InversionTime": 0.35}, ...], "global": {...}}`. An empty
 /// string is an empty protocol. Both keys are optional.
@@ -466,5 +481,24 @@ mod tests {
     #[test]
     fn sim_unknown_mode_errs() {
         assert!(sim("bogus", RAMANI_SIM_YAML).is_err());
+    }
+
+    #[test]
+    fn effective_config_returns_the_surface_for_a_registered_model() {
+        let eff = effective_config("model: vfa_t1\nflip_angles: [3, 20]\nrepetition_time: 0.015\n")
+            .unwrap();
+        assert!(eff.yaml.contains("fit_type:"), "{}", eff.yaml);
+        assert!(eff.error.is_none(), "{:?}", eff.error);
+        assert!(
+            eff.protocol_keys.iter().any(|k| k == "flip_angles"),
+            "{:?}",
+            eff.protocol_keys
+        );
+    }
+
+    #[test]
+    fn effective_config_rejects_an_unknown_model_by_name() {
+        let err = effective_config("model: not_a_real_model\n").unwrap_err();
+        assert!(err.contains("not_a_real_model"), "{err}");
     }
 }

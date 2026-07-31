@@ -15,6 +15,15 @@ pub fn list_models() -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(&api::list_models()).map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// `{ yaml, error, protocol_keys }` for the recipe's model: every option it
+/// accepts at its effective value, whatever `validate_options` makes of it, and
+/// the keys a resolved protocol supplies.
+#[wasm_bindgen]
+pub fn effective_config(cfg_yaml: &str) -> Result<JsValue, JsError> {
+    let eff = api::effective_config(cfg_yaml).map_err(|e| JsError::new(&e))?;
+    serde_wasm_bindgen::to_value(&eff).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// `measurement_json` is the identity-keyed measurement: a `{ role: value }`
 /// object for `Named` models, or a `[{ params, value }, ...]` array for
 /// `Series` models. Returns values in the model's `output_names` order.
