@@ -101,7 +101,7 @@ pub enum MeasurementKind {
 /// these config-shaped hooks. Protocol ingestion lives in [`build_model`] alone,
 /// so every model sources its acquisition from BIDS identically and none can be
 /// built without it.
-pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default {
+pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default + Clone {
     /// Model name, used for error context.
     const NAME: &'static str;
     /// YAML sub-key this config lives under (e.g. `Some("qmt_spgr")`), or `None`
@@ -183,7 +183,52 @@ pub fn dump_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<String> {
     let mut cfg = parse_model_config::<C>(v)?;
     cfg.validate_options()
         .with_context(|| format!("{}: invalid config", C::NAME))?;
-    let body = serde_yaml::to_string(&cfg)?;
+    serialize_effective::<C>(&cfg)
+}
+
+/// A model's full option surface, for a UI that must show what is adjustable
+/// rather than what a recipe happens to mention.
+///
+/// `dump_model` cannot serve this: it refuses to emit anything when validation
+/// fails, and a config is routinely invalid mid-edit (and some are invalid by
+/// default — `inversion_recovery` has no `method` until one is chosen). A panel
+/// that blanks whenever the config is momentarily wrong is unusable, so the
+/// surface is emitted regardless of validity and the error travels beside it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EffectiveConfig {
+    /// Every key the model accepts, at its effective value, as YAML.
+    pub yaml: String,
+    /// The model's own `validate_options` message, verbatim, or `None`.
+    pub error: Option<String>,
+    /// Config keys this model sources from the resolved protocol.
+    pub protocol_keys: Vec<String>,
+}
+
+/// Serialize `v` as `C`'s full option surface, with serde defaults materialized,
+/// plus whatever `validate_options` makes of it.
+///
+/// Validation runs against a **clone**. `ModelConfig::validate_options` takes
+/// `&mut self` and several models normalize as they go, so validating the
+/// original would serialize state left half-normalized by a validator that
+/// failed partway. Cloning makes the surface depend only on what was parsed.
+pub fn effective_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<EffectiveConfig> {
+    let cfg = parse_model_config::<C>(v)?;
+    let error = cfg
+        .clone()
+        .validate_options()
+        .err()
+        .map(|e| format!("{e:#}"));
+    Ok(EffectiveConfig {
+        yaml: serialize_effective::<C>(&cfg)?,
+        error,
+        protocol_keys: Vec::new(),
+    })
+}
+
+/// `model: <name>` plus the config body, nested under `C::SUBKEY` when it has
+/// one. Shared with `dump_model`, so both emit the same shape.
+fn serialize_effective<C: ModelConfig>(cfg: &C) -> AnyResult<String> {
+    let body = serde_yaml::to_string(cfg)?;
     let mut out = format!("model: {}\n", C::NAME);
     // A fieldless config serializes to the flow mapping `{}`; appending that
     // after `model: <name>` would be invalid YAML, so emit just the model line.
@@ -639,5 +684,80 @@ mod tests {
         let bad = proto_with_tis(&[1.0, 2.0]);
         let err = validate_against_protocol(&kind, &bad).unwrap_err();
         assert!(err.to_string().contains("3 roles"), "{err}");
+    }
+
+    #[test]
+    fn effective_config_fills_defaults_and_reports_no_error_when_valid() {
+        use crate::models::mono_t2::config::MonoT2Config;
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: mono_t2\necho_times: [0.01, 0.02, 0.03]\n").unwrap();
+        let eff = effective_model::<MonoT2Config>(&v).unwrap();
+        // Every option appears, including ones the recipe never mentioned.
+        assert!(eff.yaml.contains("fit_type:"), "{}", eff.yaml);
+        assert!(eff.yaml.contains("drop_first_echo:"), "{}", eff.yaml);
+        assert!(eff.yaml.contains("offset_term:"), "{}", eff.yaml);
+        assert!(eff.error.is_none(), "{:?}", eff.error);
+    }
+
+    #[test]
+    fn effective_config_returns_the_surface_and_the_error_when_invalid() {
+        use crate::models::mono_t2::config::MonoT2Config;
+        // `offset_term` is rejected with the linear fit_type — but the reader still
+        // needs to see every field in order to fix it, so the surface must survive.
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: mono_t2\necho_times: [0.01, 0.02, 0.03]\nfit_type: linear\noffset_term: true\n",
+        )
+        .unwrap();
+        let eff = effective_model::<MonoT2Config>(&v).unwrap();
+        assert!(
+            eff.yaml.contains("offset_term:"),
+            "surface withheld: {}",
+            eff.yaml
+        );
+        let msg = eff.error.expect("expected a validation error");
+        assert!(msg.contains("offset_term"), "{msg}");
+    }
+
+    #[test]
+    fn effective_config_is_unaffected_by_validation_mutating_the_config() {
+        use crate::models::inversion_recovery::config::IrConfig;
+        // IR's validate_options bails without a `method`. A validator that mutates
+        // before failing must not leak half-normalized state into the surface, so
+        // the surface is serialized from the config validation never touched.
+        let v: serde_yaml::Value = serde_yaml::from_str("model: inversion_recovery\n").unwrap();
+        let eff = effective_model::<IrConfig>(&v).unwrap();
+        assert!(eff.yaml.contains("t1_range:"), "{}", eff.yaml);
+        assert!(
+            eff.error.is_some(),
+            "IR with no method must report its error"
+        );
+    }
+
+    #[test]
+    fn effective_config_nests_under_a_subkey() {
+        use crate::models::qmt_spgr::config::QmtSpgrConfig;
+        let v: serde_yaml::Value = serde_yaml::from_str("model: qmt_spgr\n").unwrap();
+        let eff = effective_model::<QmtSpgrConfig>(&v).unwrap();
+        assert!(
+            eff.yaml.starts_with("model: qmt_spgr\nqmt_spgr:\n"),
+            "{}",
+            eff.yaml
+        );
+    }
+
+    #[test]
+    fn every_registered_model_yields_a_surface() {
+        for entry in crate::registry::all() {
+            let v: serde_yaml::Value =
+                serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
+            let eff = (entry.effective)(&v)
+                .unwrap_or_else(|e| panic!("{}: effective failed: {e:#}", entry.name));
+            assert!(
+                eff.yaml.contains(&format!("model: {}", entry.name)),
+                "{}: {}",
+                entry.name,
+                eff.yaml
+            );
+        }
     }
 }
