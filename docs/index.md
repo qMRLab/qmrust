@@ -65,6 +65,14 @@ Fits the longitudinal relaxation time T1 from a series of inversion-recovery ima
 
 `IRT1` · `T1map`
 :::
+:::{card}
+:header: Variable flip angle T1
+:link: models/relaxometry/vfa_t1.md
+
+Fits the longitudinal relaxation time T1 from spoiled gradient-echo images acquired at two or more excitation flip angles and a single repetition time.
+
+`VFA` · `M0map`, `T1map`
+:::
 ::::
 <!-- END generated: model gallery -->
 
