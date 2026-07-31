@@ -195,12 +195,13 @@ function that builds it:
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
 pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
 pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
+pub type Effective = fn(&serde_yaml::Value) -> Result<EffectiveConfig>;
 
-pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder, pub describe: Describer, pub dump: Dumper }
+pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder, pub describe: Describer, pub dump: Dumper, pub effective: Effective }
 
 pub fn all() -> &'static [ModelEntry] { &[
-    ModelEntry { name: "inversion_recovery", bids_suffix: "IRT1", build: models::inversion_recovery::build, describe: models::inversion_recovery::describe, dump: models::inversion_recovery::dump },
-    ModelEntry { name: "qmt_spgr",           bids_suffix: "QMTSPGR", build: models::qmt_spgr::build, describe: models::qmt_spgr::describe, dump: models::qmt_spgr::dump },
+    ModelEntry { name: "inversion_recovery", bids_suffix: "IRT1", build: models::inversion_recovery::build, describe: models::inversion_recovery::describe, dump: models::inversion_recovery::dump, effective: models::inversion_recovery::effective },
+    ModelEntry { name: "qmt_spgr",           bids_suffix: "QMTSPGR", build: models::qmt_spgr::build, describe: models::qmt_spgr::describe, dump: models::qmt_spgr::dump, effective: models::qmt_spgr::effective },
 ]}
 
 pub fn by_name(name: &str) -> Option<&'static ModelEntry>;
@@ -358,14 +359,19 @@ fn protocol_schema(&self) -> Vec<ProtoParam> {
     vec![ProtoParam { name: "InversionTime", source: Source::Field("InversionTime"), scope: Scope::PerVolume }]
 }
 
-// The config implements ModelConfig; build/describe delegate to the shared
-// pipeline (core::model::build_model / describe_model). ingest_protocol is the
-// only model-specific step — it folds the BIDS-resolved Protocol into the
-// config's acquisition array; the shared driver handles the rest (validate
-// options → ingest → validate protocol → construct → validate_against_protocol).
+// The config implements ModelConfig; build/describe/effective delegate to the
+// shared pipeline (core::model::build_model / describe_model /
+// effective_model). ingest_protocol is the only model-specific step — it
+// folds the BIDS-resolved Protocol into the config's acquisition array; the
+// shared driver handles the rest (validate options → ingest → validate
+// protocol → construct → validate_against_protocol).
 impl ModelConfig for IrConfig {
     const NAME: &'static str = "inversion_recovery";
     const SUBKEY: Option<&'static str> = None;                 // IR reads top-level keys
+    // The config keys ingest_protocol overwrites, so a UI can lock them: a
+    // resolved protocol always wins, so offering them as editable would
+    // discard whatever the reader typed.
+    const PROTOCOL_KEYS: &'static [&'static str] = &["inversion_times"];
     fn validate_options(&mut self) -> Result<()> { /* method, t1_range, zoom */ }
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
         // BIDS sidecars supply the InversionTimes here.
@@ -380,6 +386,9 @@ pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> 
 }
 pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
     crate::core::model::describe_model::<IrConfig>(v)
+}
+pub fn effective(v: &serde_yaml::Value) -> Result<EffectiveConfig> {
+    crate::core::model::effective_model::<IrConfig>(v)
 }
 ```
 
@@ -405,7 +414,10 @@ fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
    `model.rs` (`impl Model` + `pub fn build`).
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` (name + BIDS suffix + `build` +
-   `describe` + `dump`).
+   `describe` + `dump` + `effective`). If the config has an acquisition axis
+   `ingest_protocol` overwrites, declare it in `PROTOCOL_KEYS` too — otherwise
+   the playground's recipe form offers it as editable and a resolved protocol
+   silently discards whatever value was typed there.
 4. If the model introduces a new BIDS suffix, add a grouping block for it to
    `crates/rust-bids/src/default_grouping.yaml` (`sequential_set` or `named_set`)
    so `qmrust fit --bids-dir` can assemble its volumes; without it a fit of the

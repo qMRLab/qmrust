@@ -541,9 +541,9 @@ mod tests {
 
     #[test]
     fn bids_recipes_omit_the_acquisition_and_non_bids_recipes_carry_it() {
-        // The recipe split is a rule enforced today only by review: a BIDS recipe
-        // must not restate an acquisition the sidecars supply, or the output
-        // provenance records the per-volume axis twice. Mechanize it.
+        // The recipe split is a rule enforced by this test: a BIDS recipe must
+        // not restate an acquisition the sidecars supply, or the output
+        // provenance records the per-volume axis twice.
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
         for entry in qmrust_core::registry::all() {
             let v: serde_yaml::Value =
@@ -559,23 +559,14 @@ mod tests {
             let bids = read(entry.doc.recipes.bids);
             let non_bids = read(entry.doc.recipes.non_bids);
             for key in &keys {
-                // A dotted path nests across separate YAML lines (e.g.
-                // "qmt_spgr.protocol.mtdata" appears as "mtdata:" indented under
-                // "protocol:" indented under "qmt_spgr:"), so only the leaf
-                // segment can ever match a single line verbatim.
-                let leaf = key.rsplit('.').next().unwrap();
-                let stated = |text: &str| {
-                    text.lines()
-                        .any(|l| l.trim_start().starts_with(&format!("{leaf}:")))
-                };
                 assert!(
-                    !stated(&bids),
+                    !qmrust_core::core::model::states_key(&bids, key),
                     "{}: BIDS recipe {} states '{key}', which the sidecars supply",
                     entry.name,
                     entry.doc.recipes.bids
                 );
                 assert!(
-                    stated(&non_bids),
+                    qmrust_core::core::model::states_key(&non_bids, key),
                     "{}: non-BIDS recipe {} must carry '{key}'",
                     entry.name,
                     entry.doc.recipes.non_bids

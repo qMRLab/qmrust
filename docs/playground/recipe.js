@@ -61,16 +61,29 @@ function commitObjEdit() {
   renderForm();
 }
 
+// The message from the last `effective_config` call that threw outright
+// (as opposed to returning a surface with `.error` set) — a recipe that
+// parses as YAML but does not deserialize into the config, e.g. a wrong type
+// or a misspelled enum. Kept apart from `app.surface`, which becomes `null` in
+// this case so `renderForm` falls back to mirroring the recipe.
+let surfaceThrow = null;
+
 // Re-reads the model's option surface for the current recipe text. Cheap — a
 // parse and a serialize, no fitting — so it runs after every committed edit.
-// A failure (no wasm, unknown model) clears the surface, and `renderForm` then
-// falls back to mirroring the recipe rather than blanking the panel.
-export function refreshSurface() {
+// No wasm, or invalid YAML, leaves the previous surface untouched — there is
+// nothing new to read yet. A recipe that parses as YAML but fails to
+// deserialize into the config (unknown model, wrong type, misspelled enum)
+// clears the surface, so `renderForm` falls back to mirroring the recipe
+// rather than blanking the panel, and keeps the thrown message so the fallback
+// is explained rather than merely survived.
+function refreshSurface() {
   if (!app.wasm || !editor.valid) return;
   try {
     app.surface = app.wasm.effective_config(editor.text);
+    surfaceThrow = null;
   } catch (e) {
     app.surface = null;
+    surfaceThrow = e?.message ?? String(e);
   }
 }
 
@@ -233,13 +246,16 @@ function buildRows(container, rows) {
       group.append(title, fields);
       buildRows(fields, row.children);
       container.append(group);
+      if (row.readOnly) {
+        group.classList.add("locked");
+        const note = document.createElement("span");
+        note.className = "field-source";
+        note.textContent = "from sidecars";
+        title.after(note);
+      }
       continue;
     }
     const widget = buildWidget(row.value, row.path);
-    if (row.readOnly) {
-      widget.disabled = true;
-      widget.title = "supplied by the dataset's sidecars";
-    }
     // The actual focusable control — the widget itself for every shape except
     // a checkbox, whose returned element is the `<label>` wrapping it. Stamped
     // once, here, rather than in every `buildWidget` branch: a rebuild is a
@@ -250,6 +266,14 @@ function buildRows(container, rows) {
       ? widget
       : widget.querySelector("input, select, textarea");
     if (focusable) focusable.dataset.path = row.path.join(".");
+    if (row.readOnly) {
+      // Disabled on the focusable control itself, not the wrapping `<label
+      // class="switch">` a checkbox returns — disabling the label is a no-op:
+      // the checkbox inside stays keyboard-focusable and space-togglable.
+      const target = focusable ?? widget;
+      target.disabled = true;
+      target.title = "supplied by the dataset's sidecars";
+    }
     const el = fieldRow(row.key, row.path, widget);
     if (!row.isSet) el.classList.add("unset");
     if (row.readOnly) {
@@ -299,7 +323,7 @@ function restoreFocus(container, snapshot) {
 }
 
 function renderForm() {
-  showConfigError(app.surface?.error ?? null);
+  showConfigError(app.surface?.error ?? surfaceThrow);
   const container = $("form-fields");
   if (!editor.obj || typeof editor.obj !== "object") {
     container.replaceChildren();

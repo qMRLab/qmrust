@@ -2,14 +2,14 @@
 //! grouping suffix) to the builder that constructs it. Adding a model means a
 //! new module implementing `Model` plus one entry here.
 
-use crate::core::model::{Model, Protocol};
+use crate::core::model::{EffectiveConfig, Model, Protocol};
 use crate::models;
 use anyhow::Result;
 
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
 pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
 pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
-pub type Effective = fn(&serde_yaml::Value) -> Result<crate::core::model::EffectiveConfig>;
+pub type Effective = fn(&serde_yaml::Value) -> Result<EffectiveConfig>;
 
 /// Method family a model belongs to. Determines its documentation directory,
 /// so the generated URL is derived from the registry, never hand-chosen. Add a

@@ -246,6 +246,16 @@ pub fn effective_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<Effec
     })
 }
 
+/// Whether `text` (YAML) declares `key`'s leaf segment as a mapping key on its
+/// own line. A dotted path (`"qmt_spgr.protocol.mtdata"`) nests across
+/// separate YAML lines, so only the leaf segment can ever match a single line
+/// verbatim.
+pub fn states_key(text: &str, key: &str) -> bool {
+    let leaf = key.rsplit('.').next().unwrap();
+    text.lines()
+        .any(|l| l.trim_start().starts_with(&format!("{leaf}:")))
+}
+
 /// `model: <name>` plus the config body, nested under `C::SUBKEY` when it has
 /// one. Shared with `dump_model`, so both emit the same shape.
 fn serialize_effective<C: ModelConfig>(cfg: &C) -> AnyResult<String> {
@@ -791,13 +801,8 @@ mod tests {
                 serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
             let eff = (entry.effective)(&v).unwrap();
             for key in &eff.protocol_keys {
-                // A dotted path nests across separate YAML lines (e.g.
-                // "qmt_spgr.protocol.mtdata" appears as "mtdata:" indented under
-                // "protocol:" indented under "qmt_spgr:"), so only the leaf
-                // segment can ever match a single line verbatim.
-                let leaf = key.rsplit('.').next().unwrap();
                 assert!(
-                    eff.yaml.contains(&format!("{leaf}:")),
+                    states_key(&eff.yaml, key),
                     "{}: declares protocol key '{key}', absent from its config: {}",
                     entry.name,
                     eff.yaml
@@ -806,18 +811,45 @@ mod tests {
         }
     }
 
+    fn set_nested(v: &mut serde_yaml::Value, dotted_key: &str, new_value: &str) {
+        let parts: Vec<&str> = dotted_key.split('.').collect();
+        let mut node = v;
+        for part in &parts[..parts.len() - 1] {
+            node = node
+                .as_mapping_mut()
+                .unwrap()
+                .entry(serde_yaml::Value::String(part.to_string()))
+                .or_insert(serde_yaml::Value::Mapping(Default::default()));
+        }
+        node.as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String(parts.last().unwrap().to_string()),
+            serde_yaml::Value::String(new_value.to_string()),
+        );
+    }
+
     #[test]
     fn models_with_an_acquisition_axis_declare_it() {
         // A model whose protocol_schema has per-volume params folds them into some
         // config key; leaving PROTOCOL_KEYS empty would make the UI offer an
         // editable field whose value ingest_protocol discards.
         use crate::core::model::Scope;
+        let mut skipped = Vec::new();
         for entry in crate::registry::all() {
-            let v: serde_yaml::Value =
+            let mut v: serde_yaml::Value =
                 serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
-            let Ok(model) = (entry.describe)(&v) else {
-                continue;
-            }; // needs options; skip
+            // Some models (inversion_recovery's `method`) have no valid default and
+            // only describe once an enum-constrained option is set; seed the first
+            // declared value for each so a bare `model: <name>` still describes.
+            for (key, values) in entry.doc.enums {
+                set_nested(&mut v, key, values[0]);
+            }
+            let model = match (entry.describe)(&v) {
+                Ok(model) => model,
+                Err(_) => {
+                    skipped.push(entry.name);
+                    continue;
+                }
+            };
             let per_volume = model
                 .protocol_schema()
                 .iter()
@@ -829,5 +861,10 @@ mod tests {
                 entry.name
             );
         }
+        assert!(
+            skipped.is_empty(),
+            "describe still failed after seeding declared enums, so per-volume \
+             coverage for these models went unchecked: {skipped:?}"
+        );
     }
 }

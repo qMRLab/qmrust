@@ -84,8 +84,8 @@ export const app = {
   computedMask: null,
 
   // The selected model's full option surface from `effective_config`, or null
-  // when wasm is unavailable — in which case the form falls back to mirroring
-  // the recipe, which is what it did before the surface existed.
+  // when wasm is unavailable or the recipe fails to deserialize — in which
+  // case the form falls back to mirroring the recipe.
   surface: null,
   // Whether a resolved BIDS protocol is supplying the acquisition, which locks
   // the model's protocol keys. Read from the loaded dataset, never from the

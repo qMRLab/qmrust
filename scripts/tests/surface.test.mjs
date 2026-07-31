@@ -72,6 +72,20 @@ test("a nested protocol path locks, matched on its full dotted path", () => {
   assert.equal(inner["qmt_spgr.lineshape"].readOnly, false, "only the acquisition locks");
 });
 
+test("a locked row carries no displayed value", () => {
+  // The BIDS recipe omits a protocol-sourced key, so its only candidate value
+  // is the surface's struct default — showing that under a "from sidecars"
+  // label would assert a specific dataset value that was never resolved.
+  const rows = mergeSurface(
+    { mtw: { flip_angle: 6.0 } },
+    {},
+    { protocolKeys: ["mtw.flip_angle"], readOnly: true },
+  );
+  const leaves = flat(rows.find((r) => r.key === "mtw").children);
+  assert.equal(leaves["mtw.flip_angle"].readOnly, true);
+  assert.equal(leaves["mtw.flip_angle"].value, null);
+});
+
 test("locking an object locks everything under it", () => {
   // mt_sat's ingest_protocol replaces whole weighting objects, so naming the
   // object must lock its leaves — otherwise flip_angle stays editable and is
@@ -94,4 +108,51 @@ test("the reserved model key is never a row", () => {
     protocolKeys: [], readOnly: false,
   });
   assert.deepEqual(rows.map((r) => r.key), ["fit_type"]);
+});
+
+test("a recipe key absent from the surface still produces a row", () => {
+  // mt_ratio's surface is `model: mt_ratio` alone, so a BIDS recipe's `mask`
+  // key names something no model config knows about — it must still render,
+  // editable, or it silently stops governing the fit from the reader's view.
+  const rows = flat(mergeSurface({}, { mask: { desc: "brain" } }, {
+    protocolKeys: [], readOnly: true,
+  }));
+  assert.ok(rows.mask, "mask row missing entirely");
+  assert.equal(rows.mask.isSet, true);
+  assert.equal(rows.mask.readOnly, false);
+});
+
+test("a nested override-only object produces a group with its child", () => {
+  const rows = mergeSurface({}, { mask: { desc: "brain" } }, {
+    protocolKeys: [], readOnly: true,
+  });
+  const group = rows.find((r) => r.key === "mask");
+  assert.ok(group.children, "mask did not render as a group");
+  const inner = flat(group.children);
+  assert.equal(inner["mask.desc"].value, "brain");
+  assert.equal(inner["mask.desc"].isSet, true);
+  assert.equal(inner["mask.desc"].readOnly, false);
+});
+
+test("surface-derived rows come first, override-only rows after", () => {
+  const rows = mergeSurface(
+    { fit_type: "linear" },
+    { fit_type: "nonlinear", mask: { desc: "brain" } },
+    { protocolKeys: [], readOnly: false },
+  );
+  assert.deepEqual(rows.map((r) => r.key), ["fit_type", "mask"]);
+});
+
+test("isSet is true for an override that is explicitly false, 0, or null", () => {
+  const rows = flat(mergeSurface(
+    { a: true, b: 1, c: "x" },
+    { a: false, b: 0, c: null },
+    { protocolKeys: [], readOnly: false },
+  ));
+  assert.equal(rows.a.isSet, true);
+  assert.equal(rows.a.value, false);
+  assert.equal(rows.b.isSet, true);
+  assert.equal(rows.b.value, 0);
+  assert.equal(rows.c.isSet, true);
+  assert.equal(rows.c.value, null);
 });
