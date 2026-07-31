@@ -14,7 +14,8 @@ import hljsYaml from "./vendor/highlight-yaml.js";
 import hljsJson from "./vendor/highlight-json.js";
 import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
-import { mergeSurface } from "./surface.js";
+import { mergeSurface, sameStructure } from "./surface.js";
+import { debounce } from "./debounce.js";
 
 hljs.registerLanguage("yaml", hljsYaml);
 hljs.registerLanguage("json", hljsJson);
@@ -72,6 +73,17 @@ export function refreshSurface() {
     app.surface = null;
   }
 }
+
+// The YAML view's textarea fires `oninput` per keystroke, and each keystroke
+// reaches here — but typing lands in the textarea itself, never in a form
+// widget, so there is no focus to lose; the only cost worth avoiding is
+// calling into wasm once per character. `debounce` runs the first keystroke
+// of a burst immediately (so a single edit, or a model load, updates without
+// delay) and coalesces the rest into one more run once typing pauses.
+const scheduleSurfaceRefresh = debounce(() => {
+  refreshSurface();
+  renderForm();
+}, 150);
 
 function fieldRow(label, path, widget) {
   const row = document.createElement("div");
@@ -241,11 +253,23 @@ function buildRows(container, rows) {
   }
 }
 
+// The last tree actually rendered, and the error rendered alongside it — the
+// baseline `renderForm` diffs the next render against to decide whether an
+// edit can be patched in place. `null` means the next render must build from
+// scratch (nothing to compare yet, or the last render held no rows).
+let lastRows = null;
+let lastError;
+
 function renderForm() {
+  const error = app.surface?.error ?? null;
+  showConfigError(error);
   const container = $("form-fields");
-  container.replaceChildren();
-  showConfigError(app.surface?.error ?? null);
-  if (!editor.obj || typeof editor.obj !== "object") return;
+  if (!editor.obj || typeof editor.obj !== "object") {
+    container.replaceChildren();
+    lastRows = null;
+    lastError = undefined;
+    return;
+  }
 
   // Without a surface (no wasm, or a model the registry does not know) fall
   // back to mirroring the recipe — the panel degrades, it does not vanish.
@@ -254,7 +278,40 @@ function renderForm() {
     protocolKeys: app.surface?.protocol_keys ?? [],
     readOnly: app.protocolResolved,
   });
-  buildRows(container, rows);
+
+  // Editing one field normally changes neither the key set, the read-only
+  // flags, nor the model's own error — so in the common case nothing needs
+  // rebuilding: patch the `unset` class row by row and leave every DOM node
+  // (including whichever one still holds focus, e.g. a select or checkbox
+  // that fires `onchange` immediately, or a text/number input whose blur
+  // fires it just before the browser finishes a Tab-driven focus move) right
+  // where it is. A structural change — a key appearing or disappearing
+  // because e.g. `fit_type` changed what else is valid, a lock flipping, or
+  // the model's own error changing — still gets a full rebuild, which is the
+  // only way any of those show up at all.
+  if (lastRows && error === lastError && sameStructure(lastRows, rows)) {
+    patchRows(container, rows);
+  } else {
+    container.replaceChildren();
+    buildRows(container, rows);
+  }
+  lastRows = rows;
+  lastError = error;
+}
+
+// Walks `rows` against the DOM `buildRows` produced for the previous render of
+// the same shape (guaranteed by `sameStructure`), toggling only the `unset`
+// class — never touching a widget's value, its listeners, or its identity.
+function patchRows(container, rows) {
+  const nodes = container.children;
+  rows.forEach((row, i) => {
+    const el = nodes[i];
+    if (row.children) {
+      patchRows(el.querySelector(":scope > .form-fields"), row.children);
+      return;
+    }
+    el.classList.toggle("unset", !row.isSet);
+  });
 }
 
 function showConfigError(message) {
@@ -281,8 +338,7 @@ export function setEditorText(text) {
     editor.obj = yamlLoad(text);
     editor.valid = true;
     setYamlPill(true);
-    refreshSurface();
-    renderForm();
+    scheduleSurfaceRefresh();
   } catch (e) {
     editor.valid = false;
     setYamlPill(false);

@@ -53,3 +53,24 @@ export function mergeSurface(surface, overrides, { protocolKeys = [], readOnly =
   };
   return walk(surface, overrides, [], false);
 }
+
+/**
+ * Whether two merged row trees have the same shape: the same paths, in the
+ * same order, with the same group/leaf split and the same `readOnly` flags —
+ * ignoring `isSet` and `value`. A row-driven form can only reuse its existing
+ * DOM when this holds; if it does, no key was added or removed and nothing
+ * newly locked or unlocked, so patching `isSet` in place is enough and the
+ * node the reader is focused in never needs replacing.
+ */
+export function sameStructure(a, b) {
+  if (a.length !== b.length) return false;
+  return a.every((rowA, i) => {
+    const rowB = b[i];
+    if (rowA.path.join(".") !== rowB.path.join(".")) return false;
+    if (rowA.readOnly !== rowB.readOnly) return false;
+    const aHasChildren = rowA.children != null;
+    const bHasChildren = rowB.children != null;
+    if (aHasChildren !== bHasChildren) return false;
+    return aHasChildren ? sameStructure(rowA.children, rowB.children) : true;
+  });
+}
