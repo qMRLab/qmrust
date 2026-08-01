@@ -140,11 +140,12 @@ fn load_input(
     data_path: Option<&PathBuf>,
     mat_path: Option<&PathBuf>,
     mask_path: Option<&PathBuf>,
+    expected_volumes: usize,
 ) -> Result<InputData> {
     match (data_path, mat_path) {
         (Some(nii_path), None) => {
             eprintln!("Loading NIfTI data from {:?}...", nii_path);
-            let (data, header) = io::nifti::read_4d_nifti(nii_path)?;
+            let (data, header) = io::nifti::read_4d_nifti(nii_path, expected_volumes)?;
             let (nx, ny, nz, nt) = data.dim();
             eprintln!("  Volume: {}x{}x{}, {} timepoints", nx, ny, nz, nt);
 
@@ -329,10 +330,11 @@ pub fn run_fit(
     if cfg.model == "mt_sat" {
         inject_mt_sat_b1_correction(&mut raw)?;
     }
-    let input = load_input(data_path.as_ref(), mat_path.as_ref(), mask_path.as_ref())?;
-
     // The mat/NIfTI path carries no BIDS sidecar metadata — the model reads
-    // its whole acquisition (TIs, flip angles, …) from `--config` directly.
+    // its whole acquisition (TIs, flip angles, …) from `--config` directly,
+    // so it can be built before the data is read. That order matters: a 3D
+    // NIfTI is ambiguous (see `io::nifti::read_4d_nifti`) and only the model
+    // knows how many volumes it expects.
     let proto = Protocol::default();
 
     let entry = qmrust_core::registry::by_name(&cfg.model).ok_or_else(|| {
@@ -347,6 +349,13 @@ pub fn run_fit(
         )
     })?;
     let model = (entry.build)(&raw, &proto)?;
+
+    let input = load_input(
+        data_path.as_ref(),
+        mat_path.as_ref(),
+        mask_path.as_ref(),
+        model.n_volumes(),
+    )?;
 
     let n_volumes = input.data.dim().3;
     eprintln!("Model: {}, {} volumes", cfg.model, n_volumes);

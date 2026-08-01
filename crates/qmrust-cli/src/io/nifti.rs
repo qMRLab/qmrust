@@ -19,11 +19,21 @@ fn read_nifti_raw(path: &Path) -> Result<(ndarray::ArrayD<f64>, NiftiHeader)> {
     Ok((data, header))
 }
 
-/// Read a 4D NIfTI file (IR data). Returns (data, header).
-/// The 4th dimension corresponds to different TI volumes.
-pub fn read_4d_nifti(path: &Path) -> Result<(Array4<f64>, NiftiHeader)> {
+/// Read a measurement NIfTI as `(x, y, z, volume)`, given how many volumes the
+/// model expects (`Model::n_volumes()`).
+///
+/// A 4D file is unambiguous and is used as-is. A 3D file is not: NIfTI's
+/// `dim[0] = 3` declares three *spatial* axes, but the convention this tool
+/// grew up with also stores a single-slice series that way, with the series
+/// axis third. The file alone cannot say which it is, so the model decides —
+/// it is the only party that knows whether it fits one volume or many:
+///
+/// - expecting one volume  → `(x, y, z, 1)`, a genuine 3D acquisition;
+/// - expecting `n` volumes → `(x, y, 1, n)`, a single slice sampled `n` times,
+///   and the third extent must actually be `n`.
+pub fn read_4d_nifti(path: &Path, expected_volumes: usize) -> Result<(Array4<f64>, NiftiHeader)> {
     let (data, header) = read_nifti_raw(path)?;
-    let shape = data.shape();
+    let shape = data.shape().to_vec();
     match shape.len() {
         4 => {
             let arr = data
@@ -32,14 +42,39 @@ pub fn read_4d_nifti(path: &Path) -> Result<(Array4<f64>, NiftiHeader)> {
             Ok((arr, header))
         }
         3 => {
-            // Treat 3D as 4D with z=1: (x, y, n_ti) with no z slice -> (x, y, 1, n_ti).
             // `into_ndarray` returns Fortran-ordered memory (see the `nifti`
             // crate's doc note); pulling the raw buffer and re-wrapping it
             // with `from_shape_vec` (which assumes C order) would silently
             // transpose non-square data. `insert_axis` adds the singleton
-            // dimension by logical index instead, so it's layout-agnostic.
+            // dimension by logical index instead, so it's layout-agnostic
+            // wherever it goes.
+            let axis = if expected_volumes == 1 {
+                // Three spatial axes and one volume: append the volume axis.
+                3
+            } else {
+                // Single-slice series: the third extent is the series, so the
+                // singleton z goes before it.
+                if shape[2] != expected_volumes {
+                    bail!(
+                        "{:?} is a 3D NIfTI of {}x{}x{}, but the model expects {} volumes. \
+                         Read as a single-slice series its third dimension would have to be \
+                         {}; read as one 3D volume the model would have to expect 1. Store a \
+                         single-slice series as 4D ({}x{}x1x{}) to say which is meant.",
+                        path,
+                        shape[0],
+                        shape[1],
+                        shape[2],
+                        expected_volumes,
+                        expected_volumes,
+                        shape[0],
+                        shape[1],
+                        expected_volumes
+                    );
+                }
+                2
+            };
             let arr = data
-                .insert_axis(ndarray::Axis(2))
+                .insert_axis(ndarray::Axis(axis))
                 .into_dimensionality::<ndarray::Ix4>()
                 .map_err(|e| anyhow::anyhow!("Failed to reshape 3D NIfTI to 4D: {}", e))?;
             Ok((arr, header))
@@ -214,4 +249,132 @@ pub fn write_map_nifti(
             .with_context(|| format!("Failed to write NIfTI to {:?}", output_path))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array;
+    use std::path::PathBuf;
+
+    /// A unique tempdir, removed on drop.
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "qmrust-nifti-test-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The value `write_nifti` stores at a voxel: its C-order flat index.
+    fn c_index(coords: &[usize], shape: &[usize]) -> f64 {
+        let mut idx = 0usize;
+        for (c, s) in coords.iter().zip(shape) {
+            idx = idx * s + c;
+        }
+        idx as f64
+    }
+
+    /// Write a NIfTI of the given shape; values are the C-order index, so a
+    /// transposed read is detectable and not just a shape mismatch.
+    fn write_nifti(dir: &std::path::Path, name: &str, shape: &[usize]) -> PathBuf {
+        let n: usize = shape.iter().product();
+        let data = Array::from_iter((0..n).map(|i| i as f64))
+            .into_shape_with_order(shape.to_vec())
+            .unwrap();
+        let path = dir.join(name);
+        WriterOptions::new(&path).write_nifti(&data).unwrap();
+        path
+    }
+
+    /// NIfTI's `dim[0]` counts dimensions, and a value of 3 declares three
+    /// *spatial* axes — there is no temporal axis in the file at all. Reading
+    /// the third one as time turns a 143x218x220 brain into one slice imaged
+    /// 220 times, which is what a single-volume model (mp2rage, mt_ratio's
+    /// individual inputs) is handed.
+    #[test]
+    fn a_3d_volume_keeps_its_third_axis_spatial() {
+        let tmp = TempDir::new("3d-spatial");
+        let path = write_nifti(&tmp.0, "vol.nii", &[4, 5, 6]);
+        let (arr, _) = read_4d_nifti(&path, 1).unwrap();
+        assert_eq!(
+            arr.dim(),
+            (4, 5, 6, 1),
+            "a 3D NIfTI is one volume of 3D data, not 6 timepoints of a single slice"
+        );
+    }
+
+    /// The voxel at a known spatial position must survive the read. If the
+    /// third axis is silently reinterpreted as time, this lands somewhere
+    /// else entirely.
+    #[test]
+    fn a_3d_volume_keeps_its_voxels_where_they_were() {
+        let tmp = TempDir::new("3d-voxels");
+        let path = write_nifti(&tmp.0, "vol.nii", &[4, 5, 6]);
+        let (arr, _) = read_4d_nifti(&path, 1).unwrap();
+        assert_eq!(arr[[1, 2, 3, 0]], c_index(&[1, 2, 3], &[4, 5, 6]));
+    }
+
+    /// The case the 3D branch was written for is properly a *4D* file with a
+    /// singleton z — which is exactly how every dataset qmrust ships is
+    /// stored (e.g. inversion_recovery.nii.gz is 128x128x1x9). This must keep
+    /// working unchanged.
+    #[test]
+    fn a_single_slice_series_is_stored_4d_and_still_loads() {
+        let tmp = TempDir::new("4d-series");
+        let path = write_nifti(&tmp.0, "series.nii", &[4, 5, 1, 9]);
+        let (arr, _) = read_4d_nifti(&path, 9).unwrap();
+        assert_eq!(arr.dim(), (4, 5, 1, 9));
+    }
+
+    /// A genuine multi-slice, multi-volume acquisition is unaffected either
+    /// way; this pins the common case against regression.
+    #[test]
+    fn a_4d_volume_series_is_unchanged() {
+        let tmp = TempDir::new("4d-full");
+        let path = write_nifti(&tmp.0, "full.nii", &[4, 5, 6, 3]);
+        let (arr, _) = read_4d_nifti(&path, 3).unwrap();
+        assert_eq!(arr.dim(), (4, 5, 6, 3));
+        assert_eq!(arr[[1, 2, 3, 2]], c_index(&[1, 2, 3, 2], &[4, 5, 6, 3]));
+    }
+
+    /// The historical reading stays available for a model that wants it: a 3D
+    /// file whose third extent matches the expected volume count is a
+    /// single-slice series.
+    #[test]
+    fn a_3d_file_is_a_single_slice_series_when_the_model_expects_several() {
+        let tmp = TempDir::new("3d-series");
+        let path = write_nifti(&tmp.0, "series.nii", &[4, 5, 6]);
+        let (arr, _) = read_4d_nifti(&path, 6).unwrap();
+        assert_eq!(arr.dim(), (4, 5, 1, 6));
+    }
+
+    /// A 3D file that matches neither reading is rejected where the shape is
+    /// known, naming both the file and the count the model wanted — rather
+    /// than being reshaped into something the engine rejects later with a
+    /// volume count that is itself an artefact of the read.
+    #[test]
+    fn a_3d_file_matching_neither_reading_is_rejected_at_load() {
+        let tmp = TempDir::new("3d-mismatch");
+        let path = write_nifti(&tmp.0, "vol.nii", &[4, 5, 6]);
+        let err = read_4d_nifti(&path, 3).unwrap_err().to_string();
+        assert!(err.contains("4x5x6"), "error should name the shape: {err}");
+        assert!(
+            err.contains("expects 3 volumes"),
+            "error should name the count: {err}"
+        );
+    }
 }
