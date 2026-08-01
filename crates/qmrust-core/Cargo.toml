@@ -28,6 +28,3 @@ matfile = { workspace = true }
 # Dev-only, and off the wasm target: the core's purity check builds the library
 # alone, and a property runner has no business in a browser bundle.
 proptest = { workspace = true }
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
