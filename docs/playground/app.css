@@ -1105,6 +1105,11 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .override {
   --p: 0;                       /* knob travel, 0..1, set from the slider */
   --knob: 40px;
+  /* Leaving the dataset behind is a warning; coming back to it is not. The
+     two states carry the palette's own warning and accent tones rather than a
+     fixed red and teal, so every theme dresses the control in its own scheme. */
+  --tone: var(--bad);
+  --tone-ink: var(--on-action);
   position: relative;
   width: min(320px, 100%);
   margin: 18px auto 4px;
@@ -1112,12 +1117,12 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   border-radius: 999px;
   background:
     linear-gradient(180deg,
-      color-mix(in srgb, var(--bad) 26%, var(--field)),
-      color-mix(in srgb, var(--bad) 13%, var(--field)));
+      color-mix(in srgb, var(--tone) 26%, var(--field)),
+      color-mix(in srgb, var(--tone) 13%, var(--field)));
   box-shadow:
     inset 0 2px 5px rgb(0 0 0 / 0.45),
-    inset 0 -1px 0 color-mix(in srgb, var(--bad) 22%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--bad) 34%, transparent);
+    inset 0 -1px 0 color-mix(in srgb, var(--tone) 22%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--tone) 34%, transparent);
   overflow: hidden;
   isolation: isolate;
 }
@@ -1148,7 +1153,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .override-slider:focus-visible + .override-knob {
   box-shadow:
     0 2px 6px rgb(0 0 0 / 0.5),
-    0 0 0 3px color-mix(in srgb, var(--bad) 50%, transparent);
+    0 0 0 3px color-mix(in srgb, var(--tone) 50%, transparent);
 }
 .override-slider::-webkit-slider-runnable-track { background: transparent; height: 100%; }
 .override-slider::-moz-range-track { background: transparent; height: 100%; }
@@ -1171,9 +1176,9 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   /* Lit from above, with a rim highlight and a contact shadow: the two cues
      that read as a physical knob sitting in the recess. */
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--bad) 82%, var(--ink)),
-    var(--bad) 55%,
-    color-mix(in srgb, var(--bad) 88%, #000));
+    color-mix(in srgb, var(--tone) 82%, var(--ink)),
+    var(--tone) 55%,
+    color-mix(in srgb, var(--tone) 88%, #000));
   box-shadow:
     0 2px 5px rgb(0 0 0 / 0.5),
     0 1px 0 color-mix(in srgb, var(--ink) 28%, transparent) inset,
@@ -1191,7 +1196,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   width: 19px;
   height: 19px;
   /* The palette's own ink for action-coloured surfaces. */
-  color: var(--on-action);
+  color: var(--tone-ink);
 }
 
 .override-label {
@@ -1204,16 +1209,20 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   z-index: 1;
   font: 600 12.5px var(--font-ui);
   letter-spacing: 0.015em;
-  color: color-mix(in srgb, var(--bad) 88%, var(--ink));
+  color: color-mix(in srgb, var(--tone) 88%, var(--ink));
   text-shadow: 0 1px 1px rgb(0 0 0 / 0.35);
   transition: opacity 80ms linear;
 }
 
-/* Unlocked: the same pill, the sweep now running the other way. */
+/* Unlocked: the same pill in the accent tone, the sweep running the other way.
+   Returning to the dataset's own values is the safe direction, so it should not
+   wear the warning colour. */
 .override.unlocked {
+  --tone: var(--accent);
+  --tone-ink: var(--on-accent);
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--bad) 34%, var(--field)),
-    color-mix(in srgb, var(--bad) 20%, var(--field)));
+    color-mix(in srgb, var(--tone) 34%, var(--field)),
+    color-mix(in srgb, var(--tone) 20%, var(--field)));
 }
 .override.unlocked .override-label {
   padding-left: 0;
