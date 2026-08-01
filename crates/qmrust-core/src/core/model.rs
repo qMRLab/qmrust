@@ -167,13 +167,71 @@ pub fn describe_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<Box<dy
     Ok(cfg.into_model())
 }
 
-/// The one build pipeline every model runs: parse → validate options → ingest
-/// the resolved BIDS protocol → validate protocol completeness → construct →
-/// check against the protocol. Returns a fit-ready model.
+/// Whether `root` carries a value at the dotted `path`.
+fn states_path(root: &serde_yaml::Value, path: &str) -> bool {
+    let mut node = root;
+    for segment in path.split('.') {
+        match node.get(segment) {
+            Some(next) => node = next,
+            None => return false,
+        }
+    }
+    !node.is_null()
+}
+
+/// Reject a recipe that states an acquisition the dataset already supplies.
+///
+/// `ingest_protocol` gives the resolved protocol the last word, so such a value
+/// is discarded before the fit — but the output provenance echoes the recipe
+/// verbatim, so the record would claim an acquisition that was never used. A
+/// map whose `Parameters` and `Protocol` disagree is worse than a failed fit:
+/// the fit is silently right and the record is silently wrong, and nothing
+/// about the output says so.
+///
+/// Only reached when a protocol was resolved; the non-BIDS path is where a
+/// recipe is *supposed* to carry the acquisition.
+fn reject_protocol_overrides<C: ModelConfig>(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> AnyResult<()> {
+    if proto.is_empty() || C::PROTOCOL_KEYS.is_empty() {
+        return Ok(());
+    }
+    let Some(root) = (match C::SUBKEY {
+        Some(key) => v.get(key),
+        None => Some(v),
+    }) else {
+        return Ok(());
+    };
+    let stated: Vec<&str> = C::PROTOCOL_KEYS
+        .iter()
+        .copied()
+        .filter(|path| states_path(root, path))
+        .collect();
+    if stated.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "{}: the recipe states {} but the acquisition was resolved from the dataset's \
+         sidecars, which take precedence — the recipe's value would be discarded from the \
+         fit while still being recorded in the output's Parameters. Remove {} from the \
+         recipe, or fit the data outside a BIDS dataset where the recipe carries the \
+         acquisition.",
+        C::NAME,
+        stated.join(", "),
+        if stated.len() == 1 { "it" } else { "them" },
+    )
+}
+
+/// The one build pipeline every model runs: reject a recipe that restates a
+/// resolved acquisition → parse → validate options → ingest the resolved BIDS
+/// protocol → validate protocol completeness → construct → check against the
+/// protocol. Returns a fit-ready model.
 pub fn build_model<C: ModelConfig>(
     v: &serde_yaml::Value,
     proto: &Protocol,
 ) -> AnyResult<Box<dyn Model>> {
+    reject_protocol_overrides::<C>(v, proto)?;
     let mut cfg = parse_model_config::<C>(v)?;
     cfg.validate_options()
         .with_context(|| format!("{}: invalid config", C::NAME))?;
@@ -728,6 +786,79 @@ mod tests {
         let bad = proto_with_tis(&[1.0, 2.0]);
         let err = validate_against_protocol(&kind, &bad).unwrap_err();
         assert!(err.to_string().contains("3 roles"), "{err}");
+    }
+
+    #[test]
+    fn a_recipe_may_not_restate_an_acquisition_the_sidecars_supply() {
+        // The fit would use the sidecars and the output's Parameters would echo
+        // the recipe, so the record would claim an acquisition that was never
+        // used — silently right map, silently wrong provenance.
+        use crate::models::vfa_t1::config::VfaT1Config;
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: vfa_t1\nflip_angles: [4, 25]\nrepetition_time: 0.030\n")
+                .unwrap();
+        let proto = Protocol {
+            volumes: vec![
+                BTreeMap::from([("FlipAngle".to_string(), 3.0)]),
+                BTreeMap::from([("FlipAngle".to_string(), 20.0)]),
+            ],
+            global: BTreeMap::from([("RepetitionTimeExcitation".to_string(), 0.015)]),
+        };
+        let err = match build_model::<VfaT1Config>(&v, &proto) {
+            Ok(_) => panic!("expected the recipe's acquisition to be rejected"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains("flip_angles"), "{err}");
+        assert!(err.contains("repetition_time"), "{err}");
+    }
+
+    #[test]
+    fn the_same_recipe_is_fine_when_nothing_was_resolved() {
+        // The non-BIDS path is where a recipe is *supposed* to carry the
+        // acquisition; the guard must not touch it.
+        use crate::models::vfa_t1::config::VfaT1Config;
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: vfa_t1\nflip_angles: [4, 25]\nrepetition_time: 0.030\n")
+                .unwrap();
+        build_model::<VfaT1Config>(&v, &Protocol::default()).unwrap();
+    }
+
+    #[test]
+    fn a_bids_recipe_still_builds_against_a_resolved_protocol() {
+        use crate::models::vfa_t1::config::VfaT1Config;
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: vfa_t1\nfit_type: linear\n").unwrap();
+        let proto = Protocol {
+            volumes: vec![
+                BTreeMap::from([("FlipAngle".to_string(), 3.0)]),
+                BTreeMap::from([("FlipAngle".to_string(), 20.0)]),
+            ],
+            global: BTreeMap::from([("RepetitionTimeExcitation".to_string(), 0.015)]),
+        };
+        build_model::<VfaT1Config>(&v, &proto).unwrap();
+    }
+
+    #[test]
+    fn the_guard_reaches_a_nested_acquisition_under_a_subkey() {
+        // qmt_spgr's is `protocol.mtdata`, nested under `qmt_spgr:` — a
+        // top-level-only check would miss it entirely.
+        use crate::models::qmt_spgr::config::QmtSpgrConfig;
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: qmt_spgr\nqmt_spgr:\n  protocol:\n    mtdata: [[142, 443]]\n",
+        )
+        .unwrap();
+        let proto = Protocol {
+            volumes: vec![BTreeMap::from([
+                ("Angle".to_string(), 142.0),
+                ("Offset".to_string(), 443.0),
+            ])],
+            global: BTreeMap::new(),
+        };
+        let err = match build_model::<QmtSpgrConfig>(&v, &proto) {
+            Ok(_) => panic!("expected the nested acquisition to be rejected"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains("protocol.mtdata"), "{err}");
     }
 
     #[test]

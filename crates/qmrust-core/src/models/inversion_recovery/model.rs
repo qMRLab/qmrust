@@ -221,6 +221,14 @@ pub fn effective(
 mod tests {
     use super::*;
 
+    /// A BIDS recipe: options only, the acquisition left to the sidecars. The
+    /// build pipeline rejects a recipe that restates an acquisition a resolved
+    /// protocol already supplies, so every protocol-driven test below starts
+    /// from this rather than from `ir_value`.
+    fn ir_bids_value() -> serde_yaml::Value {
+        serde_yaml::from_str("model: inversion_recovery\nmethod: complex\n").unwrap()
+    }
+
     fn ir_value() -> serde_yaml::Value {
         serde_yaml::from_str(
             "model: inversion_recovery\nmethod: complex\ninversion_times: [0.350, 0.500, 0.650, 0.800, 0.950, 1.100, 1.250, 1.400, 1.700]\n",
@@ -242,9 +250,9 @@ mod tests {
     #[test]
     fn build_rejects_protocol_with_missing_identity_key() {
         // Four protocol volumes, but only three carry `InversionTime` (the
-        // fourth is some unrelated key); the build overrides
-        // `cfg.inversion_times` from the three matching values (enough to
-        // pass the fitter's own minimum-TI-count check), so the model would
+        // fourth is some unrelated key); the build takes `cfg.inversion_times`
+        // from the three matching values (enough to pass the fitter's own
+        // minimum-TI-count check), so the model would
         // expect 3 volumes while the protocol supplies 4 — an inconsistency
         // that must fail loudly at build, not per voxel.
         let proto = Protocol {
@@ -256,7 +264,7 @@ mod tests {
             ],
             global: BTreeMap::new(),
         };
-        let err = match build(&ir_value(), &proto) {
+        let err = match build(&ir_bids_value(), &proto) {
             Ok(_) => panic!("expected build to reject an inconsistent protocol"),
             Err(e) => e,
         };
@@ -306,14 +314,14 @@ mod tests {
     }
 
     #[test]
-    fn mat_protocol_overrides_tis() {
+    fn a_resolved_protocol_supplies_the_inversion_times() {
         let mut proto = Protocol::default();
         for ti in [0.350, 0.500, 0.650] {
             let mut mm = std::collections::BTreeMap::new();
             mm.insert("InversionTime".to_string(), ti);
             proto.volumes.push(mm);
         }
-        let m = build(&ir_value(), &proto).unwrap();
+        let m = build(&ir_bids_value(), &proto).unwrap();
         let sig = m.forward(&[0.9, 500.0, -1000.0], &Aux::new());
         assert_eq!(sig.series().len(), 3);
     }
@@ -359,7 +367,7 @@ mod tests {
             proto.volumes.push(mm);
         }
         proto.global.insert("RepetitionTime".to_string(), 3.5);
-        let m = build(&ir_value(), &proto).unwrap();
+        let m = build(&ir_bids_value(), &proto).unwrap();
         let vol = m.bids_volume(0);
         assert_eq!(vol.sidecar["RepetitionTime"], json!(3.5));
     }
@@ -374,7 +382,7 @@ mod tests {
             mm.insert("InversionTime".to_string(), ti);
             proto.volumes.push(mm);
         }
-        let m = build(&ir_value(), &proto).unwrap();
+        let m = build(&ir_bids_value(), &proto).unwrap();
         let vol = m.bids_volume(0);
         assert!(!vol.sidecar.contains_key("RepetitionTime"));
     }

@@ -199,6 +199,11 @@ pub fn effective(
 mod tests {
     use super::*;
 
+    /// A BIDS recipe: options only, the echo times left to the sidecars.
+    fn mono_t2_bids_value() -> serde_yaml::Value {
+        serde_yaml::from_str("model: mono_t2\nfit_type: exponential\n").unwrap()
+    }
+
     fn mono_t2_value() -> serde_yaml::Value {
         serde_yaml::from_str(
             "model: mono_t2\necho_times: [0.0128, 0.0256, 0.0384, 0.0512, 0.064, 0.0768, 0.0896, 0.1024]\n",
@@ -252,14 +257,14 @@ mod tests {
     }
 
     #[test]
-    fn mat_protocol_overrides_echo_times() {
+    fn a_resolved_protocol_supplies_the_echo_times() {
         let mut proto = Protocol::default();
         for te in [0.0128, 0.0256, 0.0384] {
             proto
                 .volumes
                 .push(BTreeMap::from([("EchoTime".to_string(), te)]));
         }
-        let m = build(&mono_t2_value(), &proto).unwrap();
+        let m = build(&mono_t2_bids_value(), &proto).unwrap();
         let sig = m.forward(&[0.08, 1000.0], &Aux::new());
         assert_eq!(sig.series().len(), 3);
     }

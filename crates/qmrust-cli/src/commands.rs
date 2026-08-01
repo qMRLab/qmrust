@@ -1056,11 +1056,11 @@ mod tests {
         }
 
         let config_path = tmp.0.join("ir.yaml");
-        std::fs::write(
-            &config_path,
-            "model: inversion_recovery\nmethod: complex\ninversion_times: [0.35, 0.50, 0.65, 0.80, 0.95, 1.10, 1.25]\n",
-        )
-        .unwrap();
+        // A BIDS recipe carries options only: the sidecars written above are the
+        // acquisition, and restating it here is rejected precisely because the
+        // recipe's copy would be discarded from the fit while still appearing in
+        // the output's Parameters.
+        std::fs::write(&config_path, "model: inversion_recovery\nmethod: complex\n").unwrap();
 
         let out_dir = tmp.0.join("out");
         (bids_dir, config_path, out_dir, tmp)
