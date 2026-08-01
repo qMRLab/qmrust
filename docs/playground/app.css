@@ -1238,8 +1238,27 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 
 /* "Cite this work". The citation strings are pre-rendered into
-   data/citation.json, so this dialog only picks between them. */
-.cite-body { display: grid; gap: 10px; padding: 12px 14px 14px; max-width: 62ch; }
+   data/citation.json, so this dialog only picks between them.
+
+   The shared `.modal-card` is a fixed viewer-sized box — right for a volume or
+   a file listing, far too big for a paragraph of text. This one sizes to its
+   content instead, capped so a long BibTeX entry scrolls rather than growing
+   past the viewport. */
+#cite-modal .modal-card {
+  width: auto;
+  height: auto;
+  max-width: min(92vw, 640px);
+  max-height: 86vh;
+}
+#cite-modal .modal-body { flex: 0 1 auto; }
+.cite-body {
+  display: grid;
+  gap: 10px;
+  /* Rows take their content's height rather than splitting the card between
+     them, which is what left the citation box mostly empty. */
+  align-content: start;
+  padding: 4px 4px 8px;
+}
 .cite-lead { margin: 0; color: var(--ink-2); font: 12.5px var(--font-ui); line-height: 1.5; }
 .cite-controls { display: flex; gap: 8px; align-items: center; }
 .cite-controls select { flex: 0 0 auto; }
@@ -1247,6 +1266,9 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .cite-text {
   margin: 0;
   padding: 10px 12px;
+  /* A floor so switching between a two-line style and a long BibTeX entry does
+     not make the dialog jump, and a ceiling so the long ones scroll. */
+  min-height: 5.5em;
   max-height: 42vh;
   overflow: auto;
   background: var(--field);
