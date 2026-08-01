@@ -1290,3 +1290,15 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .cite-doi:hover { text-decoration: underline; }
 /* A button in the navbar link row: same footprint and colour as its <a> siblings. */
 button.navbar-link { background: none; border: none; padding: 0; cursor: pointer; }
+
+/* A term named in a message: a config key, a field, a filename. Set apart from
+   the prose without shouting, and it must not break the line box height. */
+.notice-body code {
+  font: 0.94em var(--font-mono);
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--field);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  white-space: nowrap;
+}

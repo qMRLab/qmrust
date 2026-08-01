@@ -211,11 +211,12 @@ fn reject_protocol_overrides<C: ModelConfig>(
     if stated.is_empty() {
         return Ok(());
     }
+    let quoted: Vec<String> = stated.iter().map(|k| format!("`{k}`")).collect();
     bail!(
         "This dataset's sidecars already supply {}, so the recipe must not set {}. \
          The sidecars win, and the recipe's value would be dropped from the fit while \
-         still appearing in the output's Parameters. Remove {} from the recipe.",
-        stated.join(", "),
+         still appearing in the output's `Parameters`. Remove {} from the recipe.",
+        quoted.join(", "),
         if stated.len() == 1 { "it" } else { "them" },
         if stated.len() == 1 { "it" } else { "them" },
     )
