@@ -18,6 +18,10 @@ import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers,
 import { debounce } from "./debounce.js";
 import { fieldLabel, groupLabel } from "./labels.js";
 
+// Knob diameter in px, mirrored in `.override-knob`; the pointer guard and the
+// knob's travel both need it as a number.
+const KNOB_PX = 34;
+
 hljs.registerLanguage("yaml", hljsYaml);
 hljs.registerLanguage("json", hljsJson);
 
@@ -438,60 +442,106 @@ function renderForm() {
 // acquisition said so. Built on a range input, so it is keyboard- and
 // screen-reader-operable without reimplementing a drag; a sweep that stops
 // short springs back, so only a full travel counts.
-function overrideControl() {
-  const wrap = document.createElement("div");
-  wrap.className = "override";
-  const apply = () => {
-    refreshSurface();
-    updateYamlView();
-    renderForm();
-  };
+function lockIcon(locked) {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const body = document.createElementNS(NS, "rect");
+  body.setAttribute("x", "4");
+  body.setAttribute("y", "11");
+  body.setAttribute("width", "16");
+  body.setAttribute("height", "10");
+  body.setAttribute("rx", "2");
+  const shackle = document.createElementNS(NS, "path");
+  // Closed: the shackle sits centred over the body. Open: it is pushed right
+  // and its near leg is gone, the shape everyone reads as "unlocked".
+  shackle.setAttribute(
+    "d",
+    locked ? "M8 11V7a4 4 0 0 1 8 0v4" : "M12 11V7a4 4 0 0 1 8 0v2",
+  );
+  shackle.setAttribute("fill", "none");
+  shackle.setAttribute("stroke", "currentColor");
+  shackle.setAttribute("stroke-width", "2");
+  shackle.setAttribute("stroke-linecap", "round");
+  svg.append(shackle, body);
+  return svg;
+}
 
-  if (app.overrideProtocol) {
-    wrap.classList.add("unlocked");
-    const msg = document.createElement("span");
-    msg.className = "override-msg";
-    msg.textContent = "Protocol unlocked — edits override the dataset";
-    const relock = document.createElement("button");
-    relock.type = "button";
-    relock.className = "override-relock";
-    relock.textContent = "Re-lock";
-    relock.onclick = () => {
-      app.overrideProtocol = false;
-      apply();
-    };
-    wrap.append(msg, relock);
-    return wrap;
-  }
+// Slide to override: a deliberate sweep rather than a click, because unlocking
+// these fields lets the recipe contradict the dataset it is fitted against —
+// and a value typed here is recorded in the output provenance as if the
+// acquisition said so. The same control slides back to re-lock, so the gesture
+// reads the same in both directions.
+//
+// A range input carries the interaction, so the control is keyboard- and
+// screen-reader-operable without a hand-rolled drag; the visible knob and
+// track are drawn separately, since a native thumb cannot hold an icon.
+function overrideControl() {
+  const unlocked = app.overrideProtocol;
+  const wrap = document.createElement("div");
+  wrap.className = unlocked ? "override unlocked" : "override";
 
   const slider = document.createElement("input");
   slider.type = "range";
   slider.className = "override-slider";
   slider.min = "0";
   slider.max = "100";
-  slider.value = "0";
-  slider.setAttribute("aria-label", "Slide to override BIDS protocol");
+  slider.value = unlocked ? "100" : "0";
+  slider.setAttribute(
+    "aria-label",
+    unlocked ? "Slide to re-lock the BIDS protocol" : "Slide to override the BIDS protocol",
+  );
+
+  const knob = document.createElement("span");
+  knob.className = "override-knob";
+  knob.append(lockIcon(unlocked));
+
   const label = document.createElement("span");
   label.className = "override-label";
-  label.textContent = "Slide to Override BIDS Protocol";
-  const commit = () => {
-    if (Number(slider.value) >= 100) {
-      app.overrideProtocol = true;
-      apply();
-    } else {
-      // Sprung back: the gesture was abandoned, so the prompt returns.
-      slider.value = "0";
-      label.style.opacity = "1";
-    }
+  label.textContent = unlocked ? "Slide to Re-lock" : "Slide to Override BIDS Protocol";
+
+  const setProgress = (v) => {
+    // Travel drives the knob's position and fades the prompt, so a partial
+    // sweep reads as progress rather than as a control ignoring the drag.
+    wrap.style.setProperty("--p", String(v / 100));
+    const reached = unlocked ? 1 - v / 100 : v / 100;
+    label.style.opacity = String(Math.max(0, 1 - reached * 1.6));
   };
+  setProgress(Number(slider.value));
+
+  const commit = () => {
+    const v = Number(slider.value);
+    const done = unlocked ? v <= 0 : v >= 100;
+    if (done) {
+      app.overrideProtocol = !unlocked;
+      refreshSurface();
+      updateYamlView();
+      renderForm();
+      return;
+    }
+    // Abandoned mid-sweep: spring back to where it started.
+    slider.value = unlocked ? "100" : "0";
+    setProgress(Number(slider.value));
+  };
+
+  // A range input jumps to wherever the track is clicked, which would turn a
+  // safety gesture into a single click at the far end. Only a press that
+  // starts on the knob may move it; keyboard operation is untouched.
+  slider.addEventListener("pointerdown", (e) => {
+    const r = slider.getBoundingClientRect();
+    const travel = r.width - KNOB_PX;
+    const knobCentre = r.left + KNOB_PX / 2 + (Number(slider.value) / 100) * travel;
+    if (Math.abs(e.clientX - knobCentre) > KNOB_PX / 2 + 6) e.preventDefault();
+  });
   slider.addEventListener("input", () => {
-    // The prompt fades as the knob travels, so a partial sweep reads as
-    // progress rather than as a control ignoring the drag.
-    label.style.opacity = String(1 - Number(slider.value) / 120);
-    if (Number(slider.value) >= 100) commit();
+    setProgress(Number(slider.value));
+    const v = Number(slider.value);
+    if (unlocked ? v <= 0 : v >= 100) commit();
   });
   slider.addEventListener("change", commit);
-  wrap.append(slider, label);
+
+  wrap.append(slider, knob, label);
   return wrap;
 }
 
