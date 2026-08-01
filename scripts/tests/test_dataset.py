@@ -192,6 +192,22 @@ class TestAuxDiscovery(unittest.TestCase):
             self.assertIn("B1map", coll.aux)
             self.assertEqual(coll.aux["B1map"].name, "sub-01_TB1map.nii.gz")
 
+    def test_two_candidates_for_one_aux_input_is_an_error(self):
+        # The glob spans every pipeline and datatype, so two derivatives can
+        # claim the same input. Taking the first silently fits against a map
+        # nobody chose, and a CLI run that picked the other would disagree.
+        with tempfile.TemporaryDirectory() as tmp:
+            model = self._dataset(tmp, "fmap")
+            second = (
+                dataset.root_for(tmp, model)
+                / "derivatives" / "other" / "sub-01" / "anat"
+            )
+            second.mkdir(parents=True)
+            nifti.write_nii(second / "sub-01_TB1map.nii.gz", [[2.0, 2.0], [2.0, 2.0]])
+            with self.assertRaises(ValueError) as caught:
+                dataset.find(tmp, model)
+            self.assertIn("TB1map", str(caught.exception))
+
     def test_finds_aux_under_anat(self):
         with tempfile.TemporaryDirectory() as tmp:
             model = self._dataset(tmp, "anat")

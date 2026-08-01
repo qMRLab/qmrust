@@ -139,6 +139,16 @@ def find(parent, model):
         # `anat/`. Globbing only one silently drops the other, and the fit then
         # runs uncorrected while the CLI applies it.
         found = sorted(deriv.glob(f"*/{subject}/*/*_{spec['bids_suffix']}.nii*"))
+        if len(found) > 1:
+            # Several derivatives claim the same input. Picking one silently
+            # would fit against a map nobody chose, and the figures and the
+            # playground payload would disagree with a CLI run that picked
+            # differently.
+            raise ValueError(
+                f"{model['name']}: {len(found)} candidates for aux input "
+                f"'{spec['name']}' ({spec['bids_suffix']}): "
+                f"{[str(p) for p in found]}. Leave exactly one in the dataset."
+            )
         if found:
             aux[spec["name"]] = found[0]
 

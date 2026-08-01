@@ -51,9 +51,16 @@ impl VfaT1Config {
                 self.flip_angles.len()
             );
         }
-        if self.flip_angles.iter().any(|&a| a <= 0.0 || a >= 90.0) {
+        // Non-finite first: NaN compares false against both bounds, so it would
+        // pass a range test and then reach the `partial_cmp` below, where an
+        // unwrap on `None` panics instead of reporting a bad recipe.
+        if self
+            .flip_angles
+            .iter()
+            .any(|&a| !a.is_finite() || a <= 0.0 || a >= 90.0)
+        {
             bail!(
-                "flip angles must lie in (0, 90) degrees, got {:?}",
+                "flip angles must be finite and lie in (0, 90) degrees, got {:?}",
                 self.flip_angles
             );
         }
@@ -62,7 +69,17 @@ impl VfaT1Config {
             Some(tr) if tr <= 0.0 => bail!("repetition_time must be > 0, got {tr}"),
             Some(_) => {}
         }
+        // Safe now that every angle is finite.
         self.flip_angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // A repeated angle would leave `fit` matching two expected angles to the
+        // same sample, since it resolves each by identity and takes the first
+        // hit: one acquired volume would be read twice and another never.
+        if let Some(pair) = self.flip_angles.windows(2).find(|w| w[0] == w[1]) {
+            bail!(
+                "flip angles must be distinct, got {} more than once",
+                pair[0]
+            );
+        }
         Ok(())
     }
 }
@@ -104,6 +121,43 @@ mod tests {
             fit_type: FitType::Linear,
         };
         assert!(no_tr.validate_protocol().is_err());
+    }
+
+    #[test]
+    fn validate_protocol_rejects_a_non_finite_angle() {
+        // NaN compares false against both bounds, so a range test alone lets it
+        // through to the sort, where `partial_cmp(...).unwrap()` panics. A bad
+        // recipe must be reported, never a panic.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut cfg = VfaT1Config {
+                flip_angles: vec![3.0, bad],
+                repetition_time: Some(0.015),
+                fit_type: FitType::Linear,
+            };
+            assert!(cfg.validate_protocol().is_err(), "accepted {bad}");
+        }
+    }
+
+    #[test]
+    fn validate_protocol_rejects_repeated_angles() {
+        // `fit` resolves each expected angle by identity and takes the first
+        // hit, so a repeat would read one acquired volume twice and another
+        // never.
+        let mut repeated = VfaT1Config {
+            flip_angles: vec![3.0, 20.0, 3.0],
+            repetition_time: Some(0.015),
+            fit_type: FitType::Linear,
+        };
+        let err = format!("{:#}", repeated.validate_protocol().unwrap_err());
+        assert!(err.contains("distinct"), "{err}");
+
+        let mut distinct = VfaT1Config {
+            flip_angles: vec![3.0, 20.0],
+            repetition_time: Some(0.015),
+            fit_type: FitType::Linear,
+        };
+        distinct.validate_protocol().unwrap();
+        assert_eq!(distinct.flip_angles, vec![3.0, 20.0]);
     }
 
     #[test]
