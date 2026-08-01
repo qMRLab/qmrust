@@ -117,6 +117,16 @@ pub fn dump(v: &serde_yaml::Value) -> Result<String> {
     crate::core::model::dump_model::<MtRatioConfig>(v)
 }
 
+/// Registry option-surface entry point (see
+/// [`effective_model`](crate::core::model::effective_model)): every option this
+/// model accepts, at its effective value, plus any validation complaint.
+pub fn effective(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> Result<crate::core::model::EffectiveConfig> {
+    crate::core::model::effective_model::<MtRatioConfig>(v, proto)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

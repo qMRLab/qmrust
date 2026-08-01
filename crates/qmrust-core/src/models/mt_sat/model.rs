@@ -219,11 +219,13 @@ impl Model for MtSatModel {
                 name: "FlipAngle",
                 source: Source::Field("FlipAngle"),
                 scope: Scope::PerVolume,
+                required: true,
             },
             ProtoParam {
                 name: "RepetitionTimeExcitation",
                 source: Source::Field("RepetitionTimeExcitation"),
                 scope: Scope::PerVolume,
+                required: true,
             },
         ]
     }
@@ -239,6 +241,7 @@ impl Model for MtSatModel {
 impl crate::core::model::ModelConfig for MtSatConfig {
     const NAME: &'static str = "mt_sat";
     const SUBKEY: Option<&'static str> = None;
+    const PROTOCOL_KEYS: &'static [&'static str] = &["mtw", "pdw", "t1w"];
 
     fn validate_options(&mut self) -> Result<()> {
         MtSatConfig::validate_options(self)
@@ -304,6 +307,16 @@ pub fn build_calibration(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<
 /// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
 pub fn dump(v: &serde_yaml::Value) -> Result<String> {
     crate::core::model::dump_model::<MtSatConfig>(v)
+}
+
+/// Registry option-surface entry point (see
+/// [`effective_model`](crate::core::model::effective_model)): every option this
+/// model accepts, at its effective value, plus any validation complaint.
+pub fn effective(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> Result<crate::core::model::EffectiveConfig> {
+    crate::core::model::effective_model::<MtSatConfig>(v, proto)
 }
 
 #[cfg(test)]

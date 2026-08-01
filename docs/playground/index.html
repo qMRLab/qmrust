@@ -1,5 +1,11 @@
 <!doctype html>
 <meta charset="utf-8">
+<!-- Without this a phone browser lays the page out in a ~980px imaginary
+     viewport and then scales the result down, so the `max-width: 900px`
+     breakpoint below never matches and a phone gets the desktop grid in
+     miniature. Resizing a desktop window works either way, which is what makes
+     the omission easy to miss. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>qMRust</title>
 <link rel="icon" type="image/x-icon" href="./favicon.ico">
 <link rel="stylesheet" href="./app.css">
@@ -17,6 +23,11 @@
        title="Documentation"><span data-icon="book-text" data-icon-size="25"></span></a>
     <a class="navbar-link" href="https://github.com/qmrlab/qmrust" target="_blank" rel="noopener"
        title="Source on GitHub"><span data-icon="git-compare-arrows" data-icon-size="25"></span></a>
+    <a class="navbar-link" href="https://qmrlab.org/mooc" target="_blank" rel="noopener"
+       title="qMRI course (MOOC)"><span data-icon="graduation-cap" data-icon-size="25"></span></a>
+    <span class="navbar-rule" aria-hidden="true"></span>
+    <button class="navbar-link" id="cite-open" type="button"
+            title="Cite this work"><span data-icon="quote" data-icon-size="25"></span></button>
     <span class="navbar-rule" aria-hidden="true"></span>
     <!-- The select stays a real select — native keyboard, native mobile picker —
          and only its appearance is replaced: it sits transparent over the glyph,
@@ -33,8 +44,8 @@
   </div>
 </div>
 <div id="fallback" hidden>
-  <p><strong>The WebAssembly build is not present.</strong> The viewers below still work —
-  fitting needs the wasm package. Build it, then reload:</p>
+  <p><strong>The WebAssembly build is not present.</strong> The viewers below still work,
+  but fitting needs the wasm package. Build it, then reload:</p>
   <pre><code>cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg</code></pre>
 </div>
 <div class="draw-palette" id="draw-palette" hidden></div>
@@ -53,7 +64,7 @@
     <div class="section-h recipe-title"><span class="panel-title">Recipe</span><button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." data-tip="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit."><span data-icon="info" data-icon-size="14"></span></button></div>
     <div class="model-line">model: <select id="model"></select></div>
     <div class="recipe-scroll">
-    <div id="form-view"><div id="form-fields" class="form-fields"></div></div>
+    <div id="form-view"><div id="cfg-error" class="cfg-error" hidden></div><div id="form-fields" class="form-fields"></div></div>
     <div id="yaml-view" class="yaml-wrap" hidden>
       <span id="yaml-pill" class="yaml-pill valid">valid</span>
       <div class="yaml-edit">
@@ -72,7 +83,7 @@
     </div>
 
     <div class="drop-wrap card" id="drop-wrap">
-      <div class="drop-title">Fit your own data<button class="info" type="button" aria-label="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it." data-tip="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser — nothing is uploaded. Every registered model is asked which can fit it."><span data-icon="info" data-icon-size="14"></span></button></div>
+      <div class="drop-title">Fit your own data<button class="info" type="button" aria-label="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser, nothing is uploaded. Every registered model is asked which can fit it." data-tip="Drop or browse to a BIDS dataset directory (or a zip of one). It is read and fitted entirely in your browser, nothing is uploaded. Every registered model is asked which can fit it."><span data-icon="info" data-icon-size="14"></span></button></div>
       <div class="drop-sub">Drop a BIDS folder (or .zip) here.</div>
       <div class="drop-actions">
         <button id="browse-folder" class="accent-btn" type="button">Browse</button>
@@ -183,13 +194,35 @@
   </div>
 </div>
 <div class="modal" id="notice-modal" hidden>
-  <div class="modal-card notice-card" role="alertdialog" aria-labelledby="notice-title">
+  <div class="modal-card compact notice-card" role="alertdialog" aria-labelledby="notice-title">
     <span class="notice-icon" id="notice-icon"></span>
     <h2 class="notice-title" id="notice-title"></h2>
     <p class="notice-body" id="notice-body"></p>
     <button id="notice-close" class="primary" type="button">OK</button>
   </div>
 </div>
+<div class="modal" id="cite-modal" hidden>
+  <div class="modal-card compact" role="dialog" aria-labelledby="cite-title" aria-modal="true">
+    <div class="modal-head">
+      <span id="cite-title" class="files-name">Cite this work</span>
+      <button id="cite-close" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body cite-body">
+      <p class="cite-lead">
+        qMRust implements methods from qMRLab. If it contributed to your work, please cite:
+      </p>
+      <div class="cite-controls">
+        <select id="cite-style" aria-label="Citation style"></select>
+        <button id="cite-copy" class="ghost-btn" type="button">
+          <span data-icon="copy" data-icon-size="14"></span><span id="cite-copy-label">Copy</span>
+        </button>
+      </div>
+      <pre class="cite-text"><code id="cite-out"></code></pre>
+      <a id="cite-doi" class="cite-doi" href="#" target="_blank" rel="noopener"></a>
+    </div>
+  </div>
+</div>
+
 <div class="modal" id="json-modal" hidden>
   <div class="modal-card">
     <div class="modal-head">

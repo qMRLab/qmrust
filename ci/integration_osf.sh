@@ -7,6 +7,15 @@ DATA="${1:-osf-data}"
 BIN="${QMRUST_BIN:-./target/release/qmrust}"
 mkdir -p "$DATA"
 
+# `realpath` is not on every runner image, and the paths here are built from
+# `$DATA`, which may itself be absolute or relative.
+abs() {
+  case "$1" in
+    /*) printf '%s' "$1" ;;
+    *) printf '%s/%s' "$PWD" "$1" ;;
+  esac
+}
+
 echo "Downloading qMRLab OSF datasets..."
 curl -L --fail -o "$DATA/ir.zip"       "https://osf.io/cmg9z/download?version=3"
 curl -L --fail -o "$DATA/qmt.zip"      "https://osf.io/pzqyn/download?version=2"
@@ -179,5 +188,31 @@ python3 ci/compare_maps.py \
 python3 ci/compare_maps.py \
   "$DATA/out_vfa_t1/qmrust/sub-01/anat/sub-01_M0map.nii.gz" "$VFA_REF_M0" \
   --rel-tol 0.001 --min-frac 0.999 --min-corr 0.999 --label vfa_t1-M0
+
+# The BIDS path and the .mat path must produce identical maps from the same
+# input. CLAUDE.md names this as the definition of a behaviour-preserving
+# change, and the two tests that assert it are `#[ignore]`d because they need
+# real `.mat` files rather than because they are optional. This script has just
+# unpacked exactly those files, so it is the one place they can run
+# automatically, and running them here is what makes the invariant enforced
+# rather than merely written down.
+#
+# One invocation for both: a cargo test filter is a substring match, and
+# `bids_fit_matches_mat_fit` is a substring of `qmtspgr_bids_fit_matches_mat_fit`,
+# so a per-test command would run the qMT case with no `QMRUST_QMT_MAT` set.
+#
+# `--include-ignored` rather than `--ignored`: the latter runs ONLY ignored
+# tests, so if these ever stop being ignored this line keeps running them
+# instead of silently running nothing.
+# Absolute paths, because `cargo test` runs a test binary with the PACKAGE
+# directory as its working directory, not the workspace root. Every other
+# command here invokes the CLI from the root, so these are the only paths in
+# the script that cannot be relative.
+echo "Checking the BIDS and .mat pipelines agree..."
+QMRUST_IR_MAT="$(abs "$IR_MAT")" \
+QMRUST_IR_MASK="$(abs "$IR_MASK")" \
+QMRUST_QMT_MAT="$(abs "$QMT_MAT")" \
+  cargo test -p qmrust-cli --release fit_matches_mat_fit \
+  -- --include-ignored --nocapture --test-threads=1
 
 echo "OSF integration OK"

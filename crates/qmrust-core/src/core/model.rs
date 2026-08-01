@@ -101,12 +101,27 @@ pub enum MeasurementKind {
 /// these config-shaped hooks. Protocol ingestion lives in [`build_model`] alone,
 /// so every model sources its acquisition from BIDS identically and none can be
 /// built without it.
-pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default {
+pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default + Clone {
     /// Model name, used for error context.
     const NAME: &'static str;
     /// YAML sub-key this config lives under (e.g. `Some("qmt_spgr")`), or `None`
     /// to read the top-level document (e.g. inversion_recovery).
     const SUBKEY: Option<&'static str>;
+
+    /// Config paths whose value `ingest_protocol` sources from the resolved
+    /// protocol. A UI must not offer these as editable when a protocol is
+    /// present: `ingest_protocol` overwrites them, so a typed value is
+    /// discarded, and a value that does survive duplicates into the output
+    /// provenance the per-volume axis `Protocol` already records.
+    ///
+    /// Dotted paths **relative to this config struct**, not to the emitted
+    /// document — `"protocol.mtdata"`, not `"qmt_spgr.protocol.mtdata"`.
+    /// `effective_model` prefixes `SUBKEY` so the emitted paths match the YAML
+    /// it emits. A path may name an object (`mt_sat`'s `"mtw"`), which locks
+    /// everything under it.
+    ///
+    /// Empty for a model with no acquisition axis (e.g. `mt_ratio`).
+    const PROTOCOL_KEYS: &'static [&'static str] = &[];
 
     /// Config-intrinsic validation — checks that need no protocol.
     fn validate_options(&mut self) -> AnyResult<()>;
@@ -152,13 +167,92 @@ pub fn describe_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<Box<dy
     Ok(cfg.into_model())
 }
 
-/// The one build pipeline every model runs: parse → validate options → ingest
-/// the resolved BIDS protocol → validate protocol completeness → construct →
-/// check against the protocol. Returns a fit-ready model.
+/// The value at the dotted `path`, if `root` has one.
+fn path_value<'a>(root: &'a serde_yaml::Value, path: &str) -> Option<&'a serde_yaml::Value> {
+    let mut node = root;
+    for segment in path.split('.') {
+        node = node.get(segment)?;
+    }
+    Some(node)
+}
+
+/// Whether `root` carries a value at the dotted `path`.
+fn states_path(root: &serde_yaml::Value, path: &str) -> bool {
+    path_value(root, path).is_some_and(|v| !v.is_null())
+}
+
+/// Reject a recipe that states an acquisition the dataset already supplies.
+///
+/// `ingest_protocol` gives the resolved protocol the last word, so such a value
+/// is discarded before the fit — but the output provenance echoes the recipe
+/// verbatim, so the record would claim an acquisition that was never used. A
+/// map whose `Parameters` and `Protocol` disagree is worse than a failed fit:
+/// the fit is silently right and the record is silently wrong, and nothing
+/// about the output says so.
+///
+/// Only reached when a protocol was resolved; the non-BIDS path is where a
+/// recipe is *supposed* to carry the acquisition.
+fn reject_protocol_overrides<C: ModelConfig>(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> AnyResult<()> {
+    if proto.is_empty() || C::PROTOCOL_KEYS.is_empty() {
+        return Ok(());
+    }
+    let Some(root) = (match C::SUBKEY {
+        Some(key) => v.get(key),
+        None => Some(v),
+    }) else {
+        return Ok(());
+    };
+    let stated: Vec<&str> = C::PROTOCOL_KEYS
+        .iter()
+        .copied()
+        .filter(|path| states_path(root, path))
+        .collect();
+    if stated.is_empty() {
+        return Ok(());
+    }
+    // Which paths does *this* protocol actually supply? Ingesting into a
+    // default config answers it with the model's own mapping, independently of
+    // what the recipe happens to say: a path that moves off its default is one
+    // the sidecars populate. A declared key the sidecars do not carry — an
+    // optional `ProtoParam`, like inversion_recovery's `RepetitionTime` — stays
+    // put, so the recipe may still set it rather than being refused on a claim
+    // that is untrue of this dataset.
+    let untouched = serde_yaml::to_value(C::default())?;
+    let mut probe = C::default();
+    probe
+        .ingest_protocol(proto)
+        .with_context(|| format!("{}: ingesting BIDS protocol", C::NAME))?;
+    let supplied = serde_yaml::to_value(&probe)?;
+    let stated: Vec<&str> = stated
+        .into_iter()
+        .filter(|path| path_value(&untouched, path) != path_value(&supplied, path))
+        .collect();
+    if stated.is_empty() {
+        return Ok(());
+    }
+    let quoted: Vec<String> = stated.iter().map(|k| format!("`{k}`")).collect();
+    bail!(
+        "This dataset's sidecars already supply {}, so the recipe must not set {}. \
+         The sidecars win, and the recipe's value would be dropped from the fit while \
+         still appearing in the output's `Parameters`. Remove {} from the recipe.",
+        quoted.join(", "),
+        if stated.len() == 1 { "it" } else { "them" },
+        if stated.len() == 1 { "it" } else { "them" },
+    )
+}
+
+/// The one build pipeline every model runs: reject a recipe that restates a
+/// resolved acquisition → parse → validate options → ingest the resolved BIDS
+/// protocol → validate protocol completeness → construct → check against the
+/// protocol. Returns a fit-ready model.
 pub fn build_model<C: ModelConfig>(
     v: &serde_yaml::Value,
     proto: &Protocol,
 ) -> AnyResult<Box<dyn Model>> {
+    reject_protocol_overrides::<C>(v, proto)?;
     let mut cfg = parse_model_config::<C>(v)?;
     cfg.validate_options()
         .with_context(|| format!("{}: invalid config", C::NAME))?;
@@ -183,7 +277,76 @@ pub fn dump_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<String> {
     let mut cfg = parse_model_config::<C>(v)?;
     cfg.validate_options()
         .with_context(|| format!("{}: invalid config", C::NAME))?;
-    let body = serde_yaml::to_string(&cfg)?;
+    serialize_effective::<C>(&cfg)
+}
+
+/// A model's full option surface, for a UI that must show what is adjustable
+/// rather than what a recipe happens to mention.
+///
+/// `dump_model` cannot serve this: it refuses to emit anything when validation
+/// fails, and a config is routinely invalid mid-edit (and some are invalid by
+/// default — `inversion_recovery` has no `method` until one is chosen). A panel
+/// that blanks whenever the config is momentarily wrong is unusable, so the
+/// surface is emitted regardless of validity and the error travels beside it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EffectiveConfig {
+    /// Every key the model accepts, at its effective value, as YAML.
+    pub yaml: String,
+    /// The model's own `validate_options` message, verbatim, or `None`.
+    pub error: Option<String>,
+    /// Config keys this model sources from the resolved protocol.
+    pub protocol_keys: Vec<String>,
+}
+
+/// Serialize `v` as `C`'s full option surface, with the resolved `proto`
+/// folded in and serde defaults materialized, plus whatever `validate_options`
+/// makes of it.
+///
+/// Order: parse, then `ingest_protocol` — so a protocol-sourced key's row
+/// shows the real resolved value rather than the struct default — then
+/// validate a **clone**. `ModelConfig::validate_options` takes `&mut self` and
+/// several models normalize as they go, so validating the original would
+/// serialize state left half-normalized by a validator that failed partway.
+/// Cloning makes the surface depend only on what was parsed and ingested.
+pub fn effective_model<C: ModelConfig>(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> AnyResult<EffectiveConfig> {
+    let mut cfg = parse_model_config::<C>(v)?;
+    cfg.ingest_protocol(proto)
+        .with_context(|| format!("{}: ingesting BIDS protocol", C::NAME))?;
+    let error = cfg
+        .clone()
+        .validate_options()
+        .err()
+        .map(|e| format!("{e:#}"));
+    Ok(EffectiveConfig {
+        yaml: serialize_effective::<C>(&cfg)?,
+        error,
+        protocol_keys: C::PROTOCOL_KEYS
+            .iter()
+            .map(|k| match C::SUBKEY {
+                Some(sub) => format!("{sub}.{k}"),
+                None => (*k).to_string(),
+            })
+            .collect(),
+    })
+}
+
+/// Whether `text` (YAML) sets a value at the dotted `key`, following the exact
+/// nesting the path names: `"qmt_spgr.protocol.mtdata"` means `mtdata` under
+/// `protocol` under `qmt_spgr`, and the same leaf anywhere else does not count.
+/// Text that does not parse states nothing.
+pub fn states_key(text: &str, key: &str) -> bool {
+    serde_yaml::from_str::<serde_yaml::Value>(text)
+        .ok()
+        .is_some_and(|doc| states_path(&doc, key))
+}
+
+/// `model: <name>` plus the config body, nested under `C::SUBKEY` when it has
+/// one. Shared with `dump_model`, so both emit the same shape.
+fn serialize_effective<C: ModelConfig>(cfg: &C) -> AnyResult<String> {
+    let body = serde_yaml::to_string(cfg)?;
     let mut out = format!("model: {}\n", C::NAME);
     // A fieldless config serializes to the flow mapping `{}`; appending that
     // after `model: <name>` would be invalid YAML, so emit just the model line.
@@ -385,6 +548,11 @@ pub struct ProtoParam {
     pub name: &'static str,
     pub source: Source,
     pub scope: Scope,
+    /// Whether an unresolvable value is a hard error. `false` means the
+    /// fitter does not need this param — `resolve_protocol` silently omits it
+    /// from the `Protocol` rather than bailing, so a dataset whose sidecars
+    /// lack it still fits.
+    pub required: bool,
 }
 
 /// The single surface a model contributor implements. Object-safe so the
@@ -639,5 +807,299 @@ mod tests {
         let bad = proto_with_tis(&[1.0, 2.0]);
         let err = validate_against_protocol(&kind, &bad).unwrap_err();
         assert!(err.to_string().contains("3 roles"), "{err}");
+    }
+
+    #[test]
+    fn a_recipe_may_not_restate_an_acquisition_the_sidecars_supply() {
+        // The fit would use the sidecars and the output's Parameters would echo
+        // the recipe, so the record would claim an acquisition that was never
+        // used — silently right map, silently wrong provenance.
+        use crate::models::vfa_t1::config::VfaT1Config;
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: vfa_t1\nflip_angles: [4, 25]\nrepetition_time: 0.030\n")
+                .unwrap();
+        let proto = Protocol {
+            volumes: vec![
+                BTreeMap::from([("FlipAngle".to_string(), 3.0)]),
+                BTreeMap::from([("FlipAngle".to_string(), 20.0)]),
+            ],
+            global: BTreeMap::from([("RepetitionTimeExcitation".to_string(), 0.015)]),
+        };
+        let err = match build_model::<VfaT1Config>(&v, &proto) {
+            Ok(_) => panic!("expected the recipe's acquisition to be rejected"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains("flip_angles"), "{err}");
+        assert!(err.contains("repetition_time"), "{err}");
+    }
+
+    #[test]
+    fn a_declared_key_the_sidecars_do_not_carry_may_still_be_set() {
+        // `inversion_recovery` declares `repetition_time` as protocol-sourced,
+        // but its `RepetitionTime` param is optional and its fit never reads
+        // TR. A dataset whose sidecars omit it leaves the recipe's own value
+        // untouched, so refusing it would be refusing on a claim ("the sidecars
+        // already supply it") that is untrue of this dataset.
+        use crate::models::inversion_recovery::config::IrConfig;
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: inversion_recovery\nmethod: complex\nrepetition_time: 2.5\n",
+        )
+        .unwrap();
+        let ti_only = Protocol {
+            volumes: vec![
+                BTreeMap::from([("InversionTime".to_string(), 0.35)]),
+                BTreeMap::from([("InversionTime".to_string(), 0.50)]),
+                BTreeMap::from([("InversionTime".to_string(), 0.65)]),
+            ],
+            global: BTreeMap::new(),
+        };
+        build_model::<IrConfig>(&v, &ti_only).unwrap();
+
+        // The same recipe against sidecars that *do* carry it is refused, since
+        // ingestion would then overwrite what the recipe states.
+        let mut with_tr = ti_only.clone();
+        with_tr.global.insert("RepetitionTime".to_string(), 3.5);
+        let err = match build_model::<IrConfig>(&v, &with_tr) {
+            Ok(_) => panic!("expected the overwritten key to be rejected"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains("repetition_time"), "{err}");
+    }
+
+    #[test]
+    fn the_same_recipe_is_fine_when_nothing_was_resolved() {
+        // The non-BIDS path is where a recipe is *supposed* to carry the
+        // acquisition; the guard must not touch it.
+        use crate::models::vfa_t1::config::VfaT1Config;
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: vfa_t1\nflip_angles: [4, 25]\nrepetition_time: 0.030\n")
+                .unwrap();
+        build_model::<VfaT1Config>(&v, &Protocol::default()).unwrap();
+    }
+
+    #[test]
+    fn a_bids_recipe_still_builds_against_a_resolved_protocol() {
+        use crate::models::vfa_t1::config::VfaT1Config;
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: vfa_t1\nfit_type: linear\n").unwrap();
+        let proto = Protocol {
+            volumes: vec![
+                BTreeMap::from([("FlipAngle".to_string(), 3.0)]),
+                BTreeMap::from([("FlipAngle".to_string(), 20.0)]),
+            ],
+            global: BTreeMap::from([("RepetitionTimeExcitation".to_string(), 0.015)]),
+        };
+        build_model::<VfaT1Config>(&v, &proto).unwrap();
+    }
+
+    #[test]
+    fn the_guard_reaches_a_nested_acquisition_under_a_subkey() {
+        // qmt_spgr's is `protocol.mtdata`, nested under `qmt_spgr:` — a
+        // top-level-only check would miss it entirely.
+        use crate::models::qmt_spgr::config::QmtSpgrConfig;
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: qmt_spgr\nqmt_spgr:\n  protocol:\n    mtdata: [[142, 443]]\n",
+        )
+        .unwrap();
+        let proto = Protocol {
+            volumes: vec![BTreeMap::from([
+                ("Angle".to_string(), 142.0),
+                ("Offset".to_string(), 443.0),
+            ])],
+            global: BTreeMap::new(),
+        };
+        let err = match build_model::<QmtSpgrConfig>(&v, &proto) {
+            Ok(_) => panic!("expected the nested acquisition to be rejected"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains("protocol.mtdata"), "{err}");
+    }
+
+    #[test]
+    fn effective_config_fills_defaults_and_reports_no_error_when_valid() {
+        use crate::models::mono_t2::config::MonoT2Config;
+        let v: serde_yaml::Value =
+            serde_yaml::from_str("model: mono_t2\necho_times: [0.01, 0.02, 0.03]\n").unwrap();
+        let eff = effective_model::<MonoT2Config>(&v, &Protocol::default()).unwrap();
+        // Every option appears, including ones the recipe never mentioned.
+        assert!(eff.yaml.contains("fit_type:"), "{}", eff.yaml);
+        assert!(eff.yaml.contains("drop_first_echo:"), "{}", eff.yaml);
+        assert!(eff.yaml.contains("offset_term:"), "{}", eff.yaml);
+        assert!(eff.error.is_none(), "{:?}", eff.error);
+    }
+
+    #[test]
+    fn effective_config_returns_the_surface_and_the_error_when_invalid() {
+        use crate::models::mono_t2::config::MonoT2Config;
+        // `offset_term` is rejected with the linear fit_type — but the reader still
+        // needs to see every field in order to fix it, so the surface must survive.
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: mono_t2\necho_times: [0.01, 0.02, 0.03]\nfit_type: linear\noffset_term: true\n",
+        )
+        .unwrap();
+        let eff = effective_model::<MonoT2Config>(&v, &Protocol::default()).unwrap();
+        assert!(
+            eff.yaml.contains("offset_term:"),
+            "surface withheld: {}",
+            eff.yaml
+        );
+        let msg = eff.error.expect("expected a validation error");
+        assert!(msg.contains("offset_term"), "{msg}");
+    }
+
+    #[test]
+    fn effective_config_is_unaffected_by_validation_mutating_the_config() {
+        use crate::models::inversion_recovery::config::IrConfig;
+        // IR's validate_options bails without a `method`. A validator that mutates
+        // before failing must not leak half-normalized state into the surface, so
+        // the surface is serialized from the config validation never touched.
+        let v: serde_yaml::Value = serde_yaml::from_str("model: inversion_recovery\n").unwrap();
+        let eff = effective_model::<IrConfig>(&v, &Protocol::default()).unwrap();
+        assert!(eff.yaml.contains("t1_range:"), "{}", eff.yaml);
+        assert!(
+            eff.error.is_some(),
+            "IR with no method must report its error"
+        );
+    }
+
+    #[test]
+    fn effective_config_nests_under_a_subkey() {
+        use crate::models::qmt_spgr::config::QmtSpgrConfig;
+        let v: serde_yaml::Value = serde_yaml::from_str("model: qmt_spgr\n").unwrap();
+        let eff = effective_model::<QmtSpgrConfig>(&v, &Protocol::default()).unwrap();
+        assert!(
+            eff.yaml.starts_with("model: qmt_spgr\nqmt_spgr:\n"),
+            "{}",
+            eff.yaml
+        );
+    }
+
+    #[test]
+    fn effective_config_shows_the_protocol_ingested_value_for_a_locked_key() {
+        use crate::models::vfa_t1::config::VfaT1Config;
+        // The BIDS recipe omits the acquisition; the surface must show what
+        // ingest_protocol actually resolved, not the struct default.
+        let v: serde_yaml::Value = serde_yaml::from_str("model: vfa_t1\n").unwrap();
+        let proto = Protocol {
+            volumes: vec![
+                BTreeMap::from([("FlipAngle".to_string(), 3.0)]),
+                BTreeMap::from([("FlipAngle".to_string(), 20.0)]),
+            ],
+            global: BTreeMap::from([("RepetitionTimeExcitation".to_string(), 0.015)]),
+        };
+        let eff = effective_model::<VfaT1Config>(&v, &proto).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&eff.yaml).unwrap();
+        assert_eq!(
+            parsed["flip_angles"],
+            serde_yaml::to_value(vec![3.0, 20.0]).unwrap(),
+            "{}",
+            eff.yaml
+        );
+        assert_eq!(
+            parsed["repetition_time"],
+            serde_yaml::to_value(0.015).unwrap(),
+            "{}",
+            eff.yaml
+        );
+    }
+
+    #[test]
+    fn every_registered_model_yields_a_surface() {
+        for entry in crate::registry::all() {
+            let v: serde_yaml::Value =
+                serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
+            let eff = (entry.effective)(&v, &Protocol::default())
+                .unwrap_or_else(|e| panic!("{}: effective failed: {e:#}", entry.name));
+            assert!(
+                eff.yaml.contains(&format!("model: {}", entry.name)),
+                "{}: {}",
+                entry.name,
+                eff.yaml
+            );
+        }
+    }
+
+    #[test]
+    fn protocol_keys_travel_with_the_surface_and_name_real_fields() {
+        // Every declared key must exist in the serialized config, or the UI would
+        // be told to treat a key that does not exist as protocol-sourced.
+        for entry in crate::registry::all() {
+            let v: serde_yaml::Value =
+                serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
+            let eff = (entry.effective)(&v, &Protocol::default()).unwrap();
+            let doc: serde_yaml::Value = serde_yaml::from_str(&eff.yaml).unwrap();
+            for key in &eff.protocol_keys {
+                // Existence, not a value: an unset `Option` serializes as
+                // `null`, which is still a real field the UI must be able to
+                // lock. `states_key` answers the recipe's question instead,
+                // "does this set a value", so it is the wrong test here.
+                assert!(
+                    path_value(&doc, key).is_some(),
+                    "{}: declares protocol key '{key}', absent from its config: {}",
+                    entry.name,
+                    eff.yaml
+                );
+            }
+        }
+    }
+
+    fn set_nested(v: &mut serde_yaml::Value, dotted_key: &str, new_value: &str) {
+        let parts: Vec<&str> = dotted_key.split('.').collect();
+        let mut node = v;
+        for part in &parts[..parts.len() - 1] {
+            node = node
+                .as_mapping_mut()
+                .unwrap()
+                .entry(serde_yaml::Value::String(part.to_string()))
+                .or_insert(serde_yaml::Value::Mapping(Default::default()));
+        }
+        node.as_mapping_mut().unwrap().insert(
+            serde_yaml::Value::String(parts.last().unwrap().to_string()),
+            serde_yaml::Value::String(new_value.to_string()),
+        );
+    }
+
+    #[test]
+    fn models_with_an_acquisition_axis_declare_it() {
+        // A model whose protocol_schema has per-volume params folds them into some
+        // config key; leaving PROTOCOL_KEYS empty would make the UI offer an
+        // editable field whose value ingest_protocol discards.
+        use crate::core::model::Scope;
+        let mut skipped = Vec::new();
+        for entry in crate::registry::all() {
+            let mut v: serde_yaml::Value =
+                serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
+            // Some models (inversion_recovery's `method`) have no valid default and
+            // only describe once an enum-constrained option is set; seed the first
+            // declared value for each so a bare `model: <name>` still describes.
+            for (key, values) in entry.doc.enums {
+                set_nested(&mut v, key, values[0]);
+            }
+            let model = match (entry.describe)(&v) {
+                Ok(model) => model,
+                Err(_) => {
+                    skipped.push(entry.name);
+                    continue;
+                }
+            };
+            let per_volume = model
+                .protocol_schema()
+                .iter()
+                .any(|p| matches!(p.scope, Scope::PerVolume));
+            let declared = !(entry.effective)(&v, &Protocol::default())
+                .unwrap()
+                .protocol_keys
+                .is_empty();
+            assert_eq!(
+                per_volume, declared,
+                "{}: per-volume protocol params and PROTOCOL_KEYS must agree",
+                entry.name
+            );
+        }
+        assert!(
+            skipped.is_empty(),
+            "describe still failed after seeding declared enums, so per-volume \
+             coverage for these models went unchecked: {skipped:?}"
+        );
     }
 }

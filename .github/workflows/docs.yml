@@ -12,6 +12,9 @@ on:
       - "scripts/docsfig/**"
       - "scripts/tests/**"
       - "scripts/check_theme_contrast.mjs"
+      - "scripts/check_source_hygiene.mjs"
+      - "scripts/check_vendor_integrity.mjs"
+      - "scripts/check_dataset_archives.mjs"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
@@ -23,6 +26,9 @@ on:
       - "scripts/docsfig/**"
       - "scripts/tests/**"
       - "scripts/check_theme_contrast.mjs"
+      - "scripts/check_source_hygiene.mjs"
+      - "scripts/check_vendor_integrity.mjs"
+      - "scripts/check_dataset_archives.mjs"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -74,6 +80,18 @@ jobs:
 
       - name: Theme contrast and token contract
         run: node scripts/check_theme_contrast.mjs
+
+      - name: Source hygiene
+        run: node scripts/check_source_hygiene.mjs
+
+      - name: Vendored dependency integrity
+        run: node scripts/check_vendor_integrity.mjs
+
+      # Reaches the network by design: the datasets the app offers live on a
+      # Zenodo record, and nothing else in CI reads it. Skips rather than fails
+      # when Zenodo is unreachable or unwell, so it cannot become a flaky gate.
+      - name: Dataset archives resolve
+        run: node scripts/check_dataset_archives.mjs
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked

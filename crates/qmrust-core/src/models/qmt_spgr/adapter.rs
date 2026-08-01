@@ -231,11 +231,13 @@ impl Model for QmtModel {
                 name: "Angle",
                 source: Source::Field("Angle"),
                 scope: Scope::PerVolume,
+                required: true,
             },
             ProtoParam {
                 name: "Offset",
                 source: Source::Field("Offset"),
                 scope: Scope::PerVolume,
+                required: true,
             },
         ]
     }
@@ -256,6 +258,7 @@ impl Model for QmtModel {
 impl crate::core::model::ModelConfig for QmtSpgrConfig {
     const NAME: &'static str = "qmt_spgr";
     const SUBKEY: Option<&'static str> = Some("qmt_spgr");
+    const PROTOCOL_KEYS: &'static [&'static str] = &["protocol.mtdata"];
 
     fn validate_options(&mut self) -> Result<()> {
         QmtSpgrConfig::validate_options(self)
@@ -302,6 +305,16 @@ pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> 
 /// the fully-resolved effective config as YAML.
 pub fn dump(v: &serde_yaml::Value) -> Result<String> {
     crate::core::model::dump_model::<QmtSpgrConfig>(v)
+}
+
+/// Registry option-surface entry point (see
+/// [`effective_model`](crate::core::model::effective_model)): every option this
+/// model accepts, at its effective value, plus any validation complaint.
+pub fn effective(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> Result<crate::core::model::EffectiveConfig> {
+    crate::core::model::effective_model::<QmtSpgrConfig>(v, proto)
 }
 
 #[cfg(test)]

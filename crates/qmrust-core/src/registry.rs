@@ -2,13 +2,14 @@
 //! grouping suffix) to the builder that constructs it. Adding a model means a
 //! new module implementing `Model` plus one entry here.
 
-use crate::core::model::{Model, Protocol};
+use crate::core::model::{EffectiveConfig, Model, Protocol};
 use crate::models;
 use anyhow::Result;
 
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
 pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
 pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
+pub type Effective = fn(&serde_yaml::Value, &Protocol) -> Result<EffectiveConfig>;
 
 /// Method family a model belongs to. Determines its documentation directory,
 /// so the generated URL is derived from the registry, never hand-chosen. Add a
@@ -95,6 +96,7 @@ pub struct ModelEntry {
     pub build: Builder,
     pub describe: Describer,
     pub dump: Dumper,
+    pub effective: Effective,
     pub doc: ModelDoc,
 }
 
@@ -106,6 +108,7 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::mt_ratio::build,
             describe: models::mt_ratio::describe,
             dump: models::mt_ratio::dump,
+            effective: models::mt_ratio::effective,
             doc: ModelDoc {
                 title: "Magnetization transfer ratio",
                 category: Category::MagnetizationTransfer,
@@ -138,6 +141,7 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::mt_sat::build,
             describe: models::mt_sat::describe,
             dump: models::mt_sat::dump,
+            effective: models::mt_sat::effective,
             doc: ModelDoc {
                 title: "MT saturation",
                 category: Category::MagnetizationTransfer,
@@ -177,6 +181,7 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::mono_t2::build,
             describe: models::mono_t2::describe,
             dump: models::mono_t2::dump,
+            effective: models::mono_t2::effective,
             doc: ModelDoc {
                 title: "Mono-exponential T2",
                 category: Category::Relaxometry,
@@ -215,6 +220,7 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::inversion_recovery::build,
             describe: models::inversion_recovery::describe,
             dump: models::inversion_recovery::dump,
+            effective: models::inversion_recovery::effective,
             doc: ModelDoc {
                 title: "Inversion recovery T1",
                 category: Category::Relaxometry,
@@ -249,6 +255,7 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::vfa_t1::build,
             describe: models::vfa_t1::describe,
             dump: models::vfa_t1::dump,
+            effective: models::vfa_t1::effective,
             doc: ModelDoc {
                 title: "Variable flip angle T1",
                 category: Category::Relaxometry,
@@ -286,6 +293,7 @@ pub fn all() -> &'static [ModelEntry] {
             build: models::qmt_spgr::build,
             describe: models::qmt_spgr::describe,
             dump: models::qmt_spgr::dump,
+            effective: models::qmt_spgr::effective,
             doc: ModelDoc {
                 title: "qMT-SPGR",
                 category: Category::MagnetizationTransfer,

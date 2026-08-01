@@ -232,7 +232,7 @@ export function renderFiles() {
   if (!app.dataset?.resolved?.files) {
     $("files-summary").textContent = app.dataset
       ? "No per-file verdicts for this dataset."
-      : "Showing the pre-baked demo slice — no BIDS dataset loaded.";
+      : "Showing the pre-baked demo slice, no BIDS dataset loaded.";
     return;
   }
   const entries = app.dataset.resolved.files;

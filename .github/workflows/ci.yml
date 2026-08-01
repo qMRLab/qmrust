@@ -3,6 +3,16 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+  schedule:
+    # Weekly, so an advisory published against an unchanged tree is still found.
+    - cron: "0 6 * * 1"
+
+# Nothing here writes to the repository, so the token that every step inherits
+# should not be able to. Set at the top level, so a job added later starts
+# read-only and has to ask for more in writing.
+permissions:
+  contents: read
 
 jobs:
   lint:
@@ -15,6 +25,76 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # Published advisories against the dependency tree. Scheduled as well as
+  # per-push: an advisory is published against code that is already committed,
+  # so a repository that only ever audits on a change stays green while it goes
+  # stale. Kept separate from `lint` so an advisory reads as an advisory rather
+  # than as a broken build.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  # Mutation testing: corrupt the core's arithmetic and comparisons one at a
+  # time, and report every mutant the test suite still passes with. A survivor
+  # names a line whose value nothing constrains, which is precisely how this
+  # project fails — not by crashing, but by producing a plausible wrong map.
+  #
+  # Scheduled only, and sized to the runner rather than to ambition. A hosted
+  # job is killed at 6 hours, and the whole core is ~3400 mutants; each one
+  # rebuilds and re-runs the package suite, so the budget is measured, not
+  # assumed. Three things keep it clear of the limit:
+  #
+  #   * The files listed below, which are the numerical ones (~1770 mutants).
+  #     A mutant that survives in CLI plumbing says nothing about whether a
+  #     fit is right.
+  #   * Four shards as a matrix. `--shard k/n` partitions the mutant list, so
+  #     each job takes a quarter of the wall clock.
+  #   * A reduced property-case count, below.
+  #
+  # Measured on the package suite: 13.0s per run at the default case count,
+  # 3.5s with PROPTEST_CASES=32. That puts a shard around 35 minutes.
+  #
+  # `timeout-minutes` is deliberate: without it a wedged job burns six hours
+  # before GitHub gives up. `continue-on-error` keeps a survivor reading as a
+  # finding rather than a broken build; the report is the artifact.
+  mutants:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      # Every mutant re-runs the whole suite, and the property tests dominate
+      # it at their default 256 cases. Fewer cases per property still kills
+      # mutants (each is a real fit over generated inputs) at a fraction of the
+      # per-mutant cost. The full case count runs everywhere else.
+      PROPTEST_CASES: "32"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-mutants --locked
+      - name: Mutate the numerical core (shard ${{ matrix.shard }} of 4)
+        run: >
+          cargo mutants --package qmrust-core
+          --shard ${{ matrix.shard }}/4
+          --file '**/fit.rs' --file '**/core/model.rs'
+          --file '**/mtsat_b1/**' --file '**/quad.rs'
+          --timeout 120
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-report-${{ matrix.shard }}
+          path: mutants.out/
 
   native:
     runs-on: ubuntu-latest

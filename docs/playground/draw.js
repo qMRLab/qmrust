@@ -348,7 +348,7 @@ function segmentOtsu() {
 // with one it has nothing to compete against and would flood the slice.
 function segmentGrowCut() {
   if (usedLabels().size < 2) {
-    status("Grow-cut needs two labels drawn as seeds — one region, one background", "error");
+    status("Grow-cut needs two labels drawn as seeds: one region, one background", "error");
     return;
   }
   if (!ensureDrawing()) return;
@@ -697,7 +697,7 @@ function paintPalette() {
   picker.type = "color";
   picker.className = "draw-picker";
   picker.value = activeColor();
-  picker.title = "New colour — paints as a new label";
+  picker.title = "New colour, paints as a new label";
   picker.onchange = () => {
     label = allocateLabel(picker.value);
     if (tool.erase) tool = TOOLS[0];

@@ -11,7 +11,7 @@ export async function loadWasm() {
     return mod;
   } catch (e) {
     $("fallback").hidden = false;
-    status("Fitting unavailable — wasm failed to load; viewers still work", "error");
+    status("Fitting unavailable: wasm failed to load; viewers still work", "error");
     return null;
   }
 }

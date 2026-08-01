@@ -6,6 +6,7 @@
 // open would leak contexts until the other viewers stopped rendering.
 import { Niivue } from "./vendor/niivue.js";
 import { icon } from "./vendor/icons.js";
+import { inlineCodeHtml } from "./inline-code.js";
 import { $, cssColorToRgba, status } from "./dom.js";
 import { app } from "./state.js";
 import { volumeFromDataset } from "./nifti.js";
@@ -121,7 +122,8 @@ export function closeJsonModal() {
 export function showNotice(iconName, title, body) {
   $("notice-icon").innerHTML = icon(iconName, 34);
   $("notice-title").textContent = title;
-  $("notice-body").textContent = body;
+  // Backticked terms are set as code; everything else is escaped.
+  $("notice-body").innerHTML = inlineCodeHtml(body);
   $("notice-modal").hidden = false;
 }
 

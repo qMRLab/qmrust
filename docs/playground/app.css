@@ -139,7 +139,7 @@ body {
   height: 100dvh; overflow: hidden;
 }
 h1, h2, h3 { font-family: var(--font-h); }
-code, pre, textarea, input, select, .mono { font-family: var(--font-mono); }
+code, pre, textarea, input, select { font-family: var(--font-mono); }
 /* A hoverable explanation beside a panel's heading. `title` carries the text,
    so it needs no scripting and stays available to assistive tech through
    `aria-label`. */
@@ -517,9 +517,48 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
 }
 .field-label { color: var(--ink-2); font: 12px var(--font-ui); }
-.field-key { display: block; color: var(--muted); font: 11px var(--font-mono); }
 .field-row input, .field-row textarea { width: 100%; }
 .field-row textarea { min-height: 44px; resize: vertical; }
+/* A number array is one compact line at rest and one value per line while
+   focused, so a long acquisition axis neither dominates the panel nor has to
+   be edited by counting commas. Same element in both states. */
+.field-row textarea.num-array {
+  min-height: 0;
+  resize: none;
+  overflow-y: hidden;
+  white-space: pre;
+}
+.field-row textarea.num-array.editing {
+  overflow-y: auto;
+  line-height: 1.5;
+}
+
+.cfg-error {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.7rem;
+  border-left: 3px solid var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+  color: var(--bad);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+/* A row whose value comes from the model's default rather than the recipe. */
+.field-row.unset .field-label { opacity: 0.72; }
+/* A row the sidecars supply: shown for context, not for editing. */
+.field-row.locked { opacity: 0.6; }
+.field-row.locked input,
+.field-row.locked select,
+.field-row.locked textarea { pointer-events: none; }
+/* A group whose entire contents the sidecars supply (ingest_protocol replaces
+   the whole object), same treatment as a locked leaf row. */
+.group.locked > .group-title { opacity: 0.6; }
+/* A control sourced from the model's acquisition protocol (editable in
+   non-BIDS mode, disabled once BIDS mode locks it) — the accent border reads
+   as "this is the acquisition" even when `.locked`'s opacity dims the whole
+   row uniformly alongside it. */
+.protocol-field {
+  border-color: var(--accent) !important;
+}
 
 .switch { position: relative; display: inline-block; width: 38px; height: 22px; }
 .switch input { opacity: 0; width: 0; height: 0; }
@@ -861,9 +900,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* A notice, as opposed to the two viewer modals: this one carries a sentence the
    reader has to act on, so it is narrow, centred and has a single way out. */
 .notice-card {
-  /* `.modal-card` is sized for an image viewer (a fixed 86vh), which leaves a
-     sentence floating in an empty column — this one is as tall as its text. */
-  height: auto; max-width: 46ch;
+  /* Sizing comes from `.modal-card.compact`; this is only the message layout. */
   padding: 20px 22px 18px; text-align: center;
   display: flex; flex-direction: column; align-items: center; gap: 10px;
 }
@@ -884,6 +921,19 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   width: min(92vw, 940px); height: min(86vh, 720px);
   display: flex; flex-direction: column; padding: 10px; gap: 8px;
 }
+/* A dialog that carries a message, not a viewer. `.modal-card` fixes a height
+   for an image or a file listing, which leaves a paragraph floating in an empty
+   column. This is qualified by `.modal-card` and declared after it: an equally
+   specific rule earlier in the file loses to it on source order alone. */
+.modal-card.compact {
+  width: auto;
+  height: auto;
+  max-width: min(92vw, 640px);
+  max-height: 86vh;
+}
+.modal-card.compact .modal-body { flex: 0 1 auto; }
+.modal-card.notice-card { max-width: 46ch; }
+
 .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .modal-head .files-name {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
@@ -1030,3 +1080,214 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
 /* The chart fills the modal it was given room in. */
 .chart-body { flex: 1 1 auto; min-height: 0; width: 100%; }
+
+
+/* The BIDS mark in place of the words "from sidecars": this value came from the
+   dataset, not the recipe. Sized to the label's cap height so it reads as part
+   of the line rather than as an image dropped into it. */
+.bids-badge {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  margin-left: 6px;
+  vertical-align: -3px;
+  opacity: 0.9;
+  /* Two artworks, one mark: dark ink for a light panel, white for a dark one.
+     Keyed to the app's own `data-mode` and never to `prefers-color-scheme` —
+     the theme a reader picked here is the only thing that says which. */
+  background: url("./vendor/bids-logo-light.png") center/contain no-repeat;
+}
+:root[data-mode="dark"] .bids-badge {
+  background-image: url("./vendor/bids-logo-dark.png");
+}
+.group-title .bids-badge { vertical-align: -2px; }
+
+/* Slide to override the sidecar-supplied protocol. An iOS slide-to-act pill:
+   a recessed track, a raised knob carrying a direction chevron, and a prompt
+   that fades as the knob travels. The same control sweeps back to return to
+   the dataset's own values.
+
+   Every colour is a theme token — `--bad` for the warning accent, `--on-action`
+   for ink on it, `--field`/`--line` for the recess — so each palette dresses
+   it in its own scheme rather than a fixed red. */
+.override {
+  --p: 0;                       /* knob travel, 0..1, set from the slider */
+  --knob: 40px;
+  /* Leaving the dataset behind is a warning, so the locked state wears the
+     palette's warning tone; `.override.unlocked` below swaps in the accent one,
+     because coming back to the dataset is not a warning. */
+  --tone: var(--bad);
+  --tone-ink: var(--on-action);
+  position: relative;
+  width: min(320px, 100%);
+  margin: 18px auto 4px;
+  height: 48px;
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--tone) 26%, var(--field)),
+      color-mix(in srgb, var(--tone) 13%, var(--field)));
+  box-shadow:
+    inset 0 2px 5px rgb(0 0 0 / 0.45),
+    inset 0 -1px 0 color-mix(in srgb, var(--tone) 22%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--tone) 34%, transparent);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* The interaction layer: a real range input, kept invisible so the drawn knob
+   can carry a glyph a native thumb cannot. Every border and shadow the global
+   input rule would paint is cleared here. */
+.override-slider {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  z-index: 3;
+  cursor: grab;
+}
+.override-slider:active { cursor: grabbing; }
+.override-slider:focus, .override-slider:focus-visible {
+  border: none; box-shadow: none; outline: none;
+}
+.override-slider:focus-visible + .override-knob {
+  box-shadow:
+    0 2px 6px rgb(0 0 0 / 0.5),
+    0 0 0 3px color-mix(in srgb, var(--tone) 50%, transparent);
+}
+.override-slider::-webkit-slider-runnable-track { background: transparent; height: 100%; }
+.override-slider::-moz-range-track { background: transparent; height: 100%; }
+.override-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  height: var(--knob); width: var(--knob);
+  border: none; background: transparent;
+}
+.override-slider::-moz-range-thumb {
+  height: var(--knob); width: var(--knob);
+  border: none; background: transparent;
+}
+
+.override-knob {
+  position: absolute;
+  top: 4px;
+  width: var(--knob);
+  height: var(--knob);
+  border-radius: 50%;
+  /* Lit from above, with a rim highlight and a contact shadow: the two cues
+     that read as a physical knob sitting in the recess. */
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--tone) 82%, var(--ink)),
+    var(--tone) 55%,
+    color-mix(in srgb, var(--tone) 88%, #000));
+  box-shadow:
+    0 2px 5px rgb(0 0 0 / 0.5),
+    0 1px 0 color-mix(in srgb, var(--ink) 28%, transparent) inset,
+    0 -2px 4px rgb(0 0 0 / 0.25) inset;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 2;
+  /* Travel spans the track minus the knob and its 4px insets; a percentage
+     here resolves against `.override`, the containing block. */
+  left: calc(4px + var(--p) * (100% - var(--knob) - 8px));
+  transition: left 60ms linear;
+}
+.override-knob svg {
+  width: 19px;
+  height: 19px;
+  /* The palette's own ink for action-coloured surfaces. */
+  color: var(--tone-ink);
+}
+
+.override-label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding-left: calc(var(--knob) + 6px);
+  pointer-events: none;
+  z-index: 1;
+  font: 600 12.5px var(--font-ui);
+  letter-spacing: 0.015em;
+  color: color-mix(in srgb, var(--tone) 88%, var(--ink));
+  text-shadow: 0 1px 1px rgb(0 0 0 / 0.35);
+  transition: opacity 80ms linear;
+}
+
+/* Unlocked: the same pill in the accent tone, the sweep running the other way.
+   Returning to the dataset's own values is the safe direction, so it should not
+   wear the warning colour. */
+.override.unlocked {
+  --tone: var(--accent);
+  --tone-ink: var(--on-accent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--tone) 34%, var(--field)),
+    color-mix(in srgb, var(--tone) 20%, var(--field)));
+}
+.override.unlocked .override-label {
+  padding-left: 0;
+  padding-right: calc(var(--knob) + 6px);
+}
+
+/* "Cite this work". The citation strings are pre-rendered into
+   data/citation.json, so this dialog only picks between them.
+
+   The shared `.modal-card` is a fixed viewer-sized box — right for a volume or
+   a file listing, far too big for a paragraph of text. This one sizes to its
+   content instead, capped so a long BibTeX entry scrolls rather than growing
+   past the viewport. */
+
+.cite-body {
+  display: grid;
+  gap: 10px;
+  /* Rows take their content's height rather than splitting the card between
+     them, which is what left the citation box mostly empty. */
+  align-content: start;
+  padding: 4px 4px 8px;
+}
+.cite-lead { margin: 0; color: var(--ink-2); font: 12.5px var(--font-ui); line-height: 1.5; }
+.cite-controls { display: flex; gap: 8px; align-items: center; }
+.cite-controls select { flex: 0 0 auto; }
+#cite-copy { display: inline-flex; align-items: center; gap: 6px; }
+.cite-text {
+  margin: 0;
+  padding: 10px 12px;
+  /* A floor so switching between a two-line style and a long BibTeX entry does
+     not make the dialog jump, and a ceiling so the long ones scroll. */
+  min-height: 5.5em;
+  max-height: 42vh;
+  overflow: auto;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font: 12px/1.6 var(--font-mono);
+  color: var(--ink);
+  /* BibTeX and RIS are line-oriented and keep their newlines; a prose citation
+     is one long line and must wrap instead of scrolling sideways. */
+  white-space: pre;
+}
+.cite-text.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.cite-doi { color: var(--accent); font: 11.5px var(--font-mono); text-decoration: none; }
+.cite-doi:hover { text-decoration: underline; }
+/* A button in the navbar link row: same footprint and colour as its <a> siblings. */
+button.navbar-link { background: none; border: none; padding: 0; cursor: pointer; }
+
+/* A term named in a message: a config key, a field, a filename. Set apart from
+   the prose without shouting, and it must not break the line box height. */
+.notice-body code {
+  font: 0.94em var(--font-mono);
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--field);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  white-space: nowrap;
+}

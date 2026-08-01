@@ -55,9 +55,9 @@ impl Model for VfaT1Model {
             .collect()
     }
     fn param_bounds(&self) -> Vec<(f64, f64)> {
-        // qMRLab's lb/ub in BIDS-native units, in param_names order [M0, T1].
+        // qMRLab's lb/ub in BIDS-native units, in param_names order [T1, M0].
         // The linearized solve is closed form and does not enforce them.
-        vec![M0_BOUNDS, T1_BOUNDS]
+        vec![T1_BOUNDS, M0_BOUNDS]
     }
     fn fixed_mask(&self) -> Vec<bool> {
         vec![false; 2]
@@ -157,11 +157,13 @@ impl Model for VfaT1Model {
                 name: "FlipAngle",
                 source: Source::Field("FlipAngle"),
                 scope: Scope::PerVolume,
+                required: true,
             },
             ProtoParam {
                 name: "RepetitionTimeExcitation",
                 source: Source::Derived(repetition_time),
                 scope: Scope::Global,
+                required: true,
             },
         ]
     }
@@ -176,6 +178,7 @@ impl Model for VfaT1Model {
 impl crate::core::model::ModelConfig for VfaT1Config {
     const NAME: &'static str = "vfa_t1";
     const SUBKEY: Option<&'static str> = None;
+    const PROTOCOL_KEYS: &'static [&'static str] = &["flip_angles", "repetition_time"];
 
     fn validate_options(&mut self) -> Result<()> {
         VfaT1Config::validate_options(self)
@@ -224,6 +227,16 @@ pub fn dump(v: &serde_yaml::Value) -> Result<String> {
     crate::core::model::dump_model::<VfaT1Config>(v)
 }
 
+/// Registry option-surface entry point (see
+/// [`effective_model`](crate::core::model::effective_model)): every option this
+/// model accepts, at its effective value, plus any validation complaint.
+pub fn effective(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> Result<crate::core::model::EffectiveConfig> {
+    crate::core::model::effective_model::<VfaT1Config>(v, proto)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,12 +261,15 @@ mod tests {
     #[test]
     fn build_and_roundtrip_via_trait() {
         let m = build(&vfa_value(), &Protocol::default()).unwrap();
-        assert_eq!(m.param_names(), vec!["M0", "T1"]);
-        let sig = m.forward(&[1000.0, 0.9], &Aux::new());
+        // The quantitative map leads, as in every relaxometry model here, and
+        // `forward`/`fit` speak that same order.
+        assert_eq!(m.param_names(), vec!["T1", "M0"]);
+        assert_eq!(m.output_names(), vec!["T1", "M0"]);
+        let sig = m.forward(&[0.9, 1000.0], &Aux::new());
         assert_eq!(sig.series().len(), 2);
         let fitted = m.fit(&sig, &Aux::new());
-        assert!((fitted[0] - 1000.0).abs() < 1e-6, "M0: {}", fitted[0]);
-        assert!((fitted[1] - 0.9).abs() < 1e-9, "T1: {}", fitted[1]);
+        assert!((fitted[0] - 0.9).abs() < 1e-9, "T1: {}", fitted[0]);
+        assert!((fitted[1] - 1000.0).abs() < 1e-6, "M0: {}", fitted[1]);
     }
 
     #[test]
@@ -261,7 +277,7 @@ mod tests {
         // Samples supplied in reversed order must give an identical fit; a
         // positional assembly would pair each signal with the wrong angle.
         let m = build(&vfa_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[1000.0, 0.9], &Aux::new());
+        let sig = m.forward(&[0.9, 1000.0], &Aux::new());
         let mut reversed: Vec<Sample> = match &sig {
             Measurement::Series(s) => s
                 .iter()
@@ -316,7 +332,7 @@ mod tests {
         let m = build(&v, &proto).unwrap();
 
         let ids = crate::engine::build_volume_ids(m.measurement(), &proto, m.n_volumes()).unwrap();
-        let sig = m.forward(&[1000.0, 0.9], &Aux::new());
+        let sig = m.forward(&[0.9, 1000.0], &Aux::new());
         let samples = sig.series();
         assert_eq!(samples.len(), ids.len());
         for (id, sample) in ids.iter().zip(samples) {
@@ -338,9 +354,9 @@ mod tests {
         aux.set("B1map", 1.2);
         // Signal generated at B1=1.2 and fitted with the same B1 recovers truth;
         // fitting it as if B1 were nominal does not.
-        let sig = m.forward(&[1000.0, 0.9], &aux);
-        assert!((m.fit(&sig, &aux)[1] - 0.9).abs() < 1e-9);
-        assert!((m.fit(&sig, &Aux::new())[1] - 0.9).abs() > 1e-3);
+        let sig = m.forward(&[0.9, 1000.0], &aux);
+        assert!((m.fit(&sig, &aux)[0] - 0.9).abs() < 1e-9);
+        assert!((m.fit(&sig, &Aux::new())[0] - 0.9).abs() > 1e-3);
     }
 
     #[test]

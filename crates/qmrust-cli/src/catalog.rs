@@ -538,4 +538,42 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn bids_recipes_omit_the_acquisition_and_non_bids_recipes_carry_it() {
+        // The recipe split is a rule enforced by this test: a BIDS recipe must
+        // not restate an acquisition the sidecars supply, or the output
+        // provenance records the per-volume axis twice.
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        for entry in qmrust_core::registry::all() {
+            let v: serde_yaml::Value =
+                serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
+            let keys = (entry.effective)(&v, &qmrust_core::core::model::Protocol::default())
+                .unwrap()
+                .protocol_keys;
+            if keys.is_empty() {
+                continue;
+            }
+            let read = |p: &str| {
+                std::fs::read_to_string(format!("{root}/{p}"))
+                    .unwrap_or_else(|e| panic!("{}: cannot read {p}: {e}", entry.name))
+            };
+            let bids = read(entry.doc.recipes.bids);
+            let non_bids = read(entry.doc.recipes.non_bids);
+            for key in &keys {
+                assert!(
+                    !qmrust_core::core::model::states_key(&bids, key),
+                    "{}: BIDS recipe {} states '{key}', which the sidecars supply",
+                    entry.name,
+                    entry.doc.recipes.bids
+                );
+                assert!(
+                    qmrust_core::core::model::states_key(&non_bids, key),
+                    "{}: non-BIDS recipe {} must carry '{key}'",
+                    entry.name,
+                    entry.doc.recipes.non_bids
+                );
+            }
+        }
+    }
 }

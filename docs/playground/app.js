@@ -9,10 +9,12 @@
 // with. Every behaviour those listeners reach for lives in the module that owns
 // that region.
 import { paintIcons } from "./vendor/icons.js";
+import { wireCite, closeCite } from "./cite.js";
 import { $, status } from "./dom.js";
 import { app, editor, nvIn, nvOut } from "./state.js";
 import { loadBundle, fetchOrThrow, loadWasm } from "./bundles.js";
 import { setEditorText, showTab, syncYamlScroll } from "./recipe.js";
+import { stripProtocolComments } from "./surface.js";
 import {
   onFilesClick,
   onFrameChange,
@@ -219,7 +221,9 @@ function wireRecipeControls() {
     showTab($("tab-form").classList.contains("active") ? "yaml" : "form");
   $("tab-form").onclick = toggleRecipeView;
   $("tab-yaml").onclick = toggleRecipeView;
-  $("cfg-yaml").oninput = (e) => setEditorText(e.target.value);
+  // The textarea's own text may carry a generated protocol-comment block
+  // (see `withProtocolComments`); it must never reach the recipe parser.
+  $("cfg-yaml").oninput = (e) => setEditorText(stripProtocolComments(e.target.value));
   $("cfg-yaml").addEventListener("scroll", syncYamlScroll);
 }
 
@@ -329,15 +333,17 @@ function wireDataDrop() {
   });
 }
 
-// The two modals, and the one key that closes either.
+// Every dialog, and the one key that closes any of them.
 function wireModals() {
   $("file-modal-close").onclick = closeFileModal;
   $("json-modal-close").onclick = closeJsonModal;
   $("notice-close").onclick = closeNotice;
+  wireCite();
   for (const [id, close] of [
     ["file-modal", closeFileModal],
     ["json-modal", closeJsonModal],
     ["notice-modal", closeNotice],
+    ["cite-modal", closeCite],
     ["chart-modal", closeDistributions],
   ]) {
     // The backdrop closes; the card inside it does not.
@@ -350,6 +356,7 @@ function wireModals() {
     if (!$("file-modal").hidden) closeFileModal();
     if (!$("json-modal").hidden) closeJsonModal();
     if (!$("notice-modal").hidden) closeNotice();
+    if (!$("cite-modal").hidden) closeCite();
     if (!$("chart-modal").hidden) closeDistributions();
   });
 }
@@ -361,7 +368,7 @@ async function populateModels() {
   try {
     index = await (await fetchOrThrow("./data/index.json")).json();
   } catch (e) {
-    status(`Could not load the model index — ${e.message}`, "error");
+    status(`Could not load the model index: ${e.message}`, "error");
     return false;
   }
   app.modelNames = index.models;
@@ -372,7 +379,7 @@ async function populateModels() {
       meta = await loadBundle(name);
     } catch (e) {
       // One unreadable payload should not cost the reader every other model.
-      status(`Could not load ${name} — ${e.message}`, "error");
+      status(`Could not load ${name}: ${e.message}`, "error");
       continue;
     }
     const opt = document.createElement("option");

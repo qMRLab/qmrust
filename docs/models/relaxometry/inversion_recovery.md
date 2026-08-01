@@ -60,6 +60,7 @@ In a BIDS dataset these values are resolved for you:
 | Protocol parameter | Source | Key | Resolved |
 |---|---|---|---|
 | `InversionTime` | sidecar field | `InversionTime` | per volume |
+| `RepetitionTime` | sidecar field | `RepetitionTime` | whole collection |
 
 ## Inputs
 

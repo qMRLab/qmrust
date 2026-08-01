@@ -125,6 +125,7 @@ impl Model for MonoT2Model {
             name: "EchoTime",
             source: Source::Field("EchoTime"),
             scope: Scope::PerVolume,
+            required: true,
         }]
     }
     fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
@@ -138,6 +139,7 @@ impl Model for MonoT2Model {
 impl crate::core::model::ModelConfig for MonoT2Config {
     const NAME: &'static str = "mono_t2";
     const SUBKEY: Option<&'static str> = None;
+    const PROTOCOL_KEYS: &'static [&'static str] = &["echo_times"];
 
     fn validate_options(&mut self) -> Result<()> {
         MonoT2Config::validate_options(self)
@@ -183,9 +185,24 @@ pub fn dump(v: &serde_yaml::Value) -> Result<String> {
     crate::core::model::dump_model::<MonoT2Config>(v)
 }
 
+/// Registry option-surface entry point (see
+/// [`effective_model`](crate::core::model::effective_model)): every option this
+/// model accepts, at its effective value, plus any validation complaint.
+pub fn effective(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> Result<crate::core::model::EffectiveConfig> {
+    crate::core::model::effective_model::<MonoT2Config>(v, proto)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A BIDS recipe: options only, the echo times left to the sidecars.
+    fn mono_t2_bids_value() -> serde_yaml::Value {
+        serde_yaml::from_str("model: mono_t2\nfit_type: exponential\n").unwrap()
+    }
 
     fn mono_t2_value() -> serde_yaml::Value {
         serde_yaml::from_str(
@@ -240,14 +257,14 @@ mod tests {
     }
 
     #[test]
-    fn mat_protocol_overrides_echo_times() {
+    fn a_resolved_protocol_supplies_the_echo_times() {
         let mut proto = Protocol::default();
         for te in [0.0128, 0.0256, 0.0384] {
             proto
                 .volumes
                 .push(BTreeMap::from([("EchoTime".to_string(), te)]));
         }
-        let m = build(&mono_t2_value(), &proto).unwrap();
+        let m = build(&mono_t2_bids_value(), &proto).unwrap();
         let sig = m.forward(&[0.08, 1000.0], &Aux::new());
         assert_eq!(sig.series().len(), 3);
     }

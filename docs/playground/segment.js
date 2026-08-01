@@ -256,7 +256,7 @@ function syncButton() {
   btn.classList.toggle("active", Boolean(app.computedMask));
   btn.disabled = !app.current;
   btn.title = app.computedMask
-    ? "A computed mask is in use — choose another network, or clear it"
+    ? "A computed mask is in use: choose another network, or clear it"
     : "Find a structure in the volume on screen with a segmentation network";
 }
 
@@ -270,7 +270,12 @@ function buildMenu() {
     item.type = "button";
     item.className = "menu-item";
     item.setAttribute("role", "menuitem");
-    item.innerHTML = `${icon(method.icon, 15)}<span>${method.menu}</span>`;
+    // The glyph is markup, the label is text. Keeping the two apart means a
+    // menu label is never parsed as HTML, whatever it comes to be built from.
+    item.innerHTML = icon(method.icon, 15);
+    const label = document.createElement("span");
+    label.textContent = method.menu;
+    item.append(label);
     item.onclick = () => {
       closeMenu();
       choose(method);
@@ -286,7 +291,7 @@ function buildMenu() {
     clear.onclick = () => {
       closeMenu();
       clearComputedMask();
-      status("Mask cleared — the next fit uses the recipe's own", "ok");
+      status("Mask cleared: the next fit uses the recipe's own", "ok");
     };
     box.append(clear);
   }
@@ -338,7 +343,7 @@ async function runNetwork(network) {
   if (String(conformed.permRAS) !== String(ORIENTATION)) {
     throw new Error(
       `conforming gave axes [${conformed.permRAS}] where the network expects ` +
-        `[${ORIENTATION}] — the mask would not mean anything`,
+        `[${ORIENTATION}], so the mask would not mean anything`,
     );
   }
 
@@ -362,12 +367,12 @@ async function runNetwork(network) {
   // trip missing. Reporting them apart is what makes the next one diagnosable.
   if (found === 0) {
     const frame = app.current.meta.labels[app.current.frame] ?? "this volume";
-    throw new Error(`the network found no brain in ${frame} — try a frame with more `
+    throw new Error(`the network found no brain in ${frame}. Try a frame with more `
       + "anatomical contrast");
   }
   if (inside === 0) {
     throw new Error(`the network found ${found.toLocaleString()} brain voxels, but none `
-      + "of them landed on this volume's grid — the coordinate mapping is wrong");
+      + "of them landed on this volume's grid, so the coordinate mapping is wrong");
   }
   return { mask, overlay: labelVolume(conformed, labels) };
 }
@@ -441,11 +446,11 @@ async function choose(method) {
     const share = ((inside / mask.length) * 100).toFixed(1);
     status(
       `${method.label} mask: ${inside.toLocaleString()} voxels (${share}% of the volume) ` +
-        `in ${((performance.now() - started) / 1000).toFixed(1)} s — fit to use it`,
+        `in ${((performance.now() - started) / 1000).toFixed(1)} s. Fit to use it`,
       "ok",
     );
   } catch (e) {
-    status(`Could not segment — ${e?.message ?? e}`, "error");
+    status(`Could not segment: ${e?.message ?? e}`, "error");
   } finally {
     running = false;
     hideProgress();

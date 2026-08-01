@@ -82,6 +82,20 @@ export const app = {
   // recipe's own is kept in `current.resolvedMask` and restored when this clears.
   // Belongs to one grid, so a model load drops it.
   computedMask: null,
+
+  // The selected model's full option surface from `effective_config`, or null
+  // when wasm is unavailable or the recipe fails to deserialize — in which
+  // case the form falls back to mirroring the recipe.
+  surface: null,
+  // Set by the slide-to-override control: the reader has deliberately unlocked
+  // the sidecar-supplied fields for editing. Always reset on a model or dataset
+  // load — an override is a decision about the dataset in front of you, and it
+  // must not silently carry over to the next one.
+  overrideProtocol: false,
+  // Whether a resolved BIDS protocol is supplying the acquisition, which locks
+  // the model's protocol keys. Read from the loaded dataset, never from the
+  // recipe: the recipe's contents are the thing being rendered.
+  protocolResolved: false,
 };
 
 // A misspelled field must not silently become a new one, leaving the real field
