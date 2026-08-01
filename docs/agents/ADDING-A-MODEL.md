@@ -92,7 +92,7 @@ There is **no `n_acquisitions`** — the acquisition count comes from
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
 pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
 pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
-pub type Effective = fn(&serde_yaml::Value) -> Result<EffectiveConfig>;
+pub type Effective = fn(&serde_yaml::Value, &Protocol) -> Result<EffectiveConfig>;
 pub struct ModelEntry {
     pub name: &'static str,
     pub bids_suffix: &'static str,
@@ -112,18 +112,40 @@ bindings use.
 ## The one build pipeline — `ModelConfig`
 
 You do **not** hand-write the parse/validate/protocol dance. `core::model`
-owns it once, for every model, via `build_model::<C>` / `describe_model::<C>` /
-`effective_model::<C>` (`crates/qmrust-core/src/core/model.rs`):
+owns it once, for every model (`crates/qmrust-core/src/core/model.rs`), in
+three entry points with three different jobs.
+
+`build_model::<C>` is the fit-ready path:
 
 ```
-parse config → validate_options → ingest_protocol → validate_protocol
-             → construct → validate_against_protocol
+reject a recipe that restates a resolved acquisition → parse config
+  → validate_options → ingest_protocol → validate_protocol
+  → construct → validate_against_protocol
 ```
+
+`describe_model::<C>` runs `validate_options` alone, with no protocol, for
+structural interrogation before any data is resolved.
+
+`effective_model::<C>` answers "what does this model accept, and what is it set
+to?" for a UI:
+
+```
+parse config → ingest_protocol → validate_options (on a clone)
+  → serialize EffectiveConfig
+```
+
+It takes the resolved `&Protocol` so the surface carries the sidecar values
+rather than struct defaults. It never constructs the model, and never runs
+`validate_protocol` or `validate_against_protocol`: a config is routinely
+invalid mid-edit and must still render, so a validation failure travels in
+`EffectiveConfig.error` instead of aborting. Validation runs on a clone, so a
+validator that mutates before failing cannot leak half-normalized values into
+the serialized surface.
 
 Your config implements `ModelConfig` and supplies only the config-shaped hooks:
 
 ```rust
-pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default {
+pub trait ModelConfig: DeserializeOwned + serde::Serialize + Default + Clone {
     const NAME: &'static str;
     const SUBKEY: Option<&'static str>;         // Some("qmt_spgr"), or None for top-level
     // Config paths ingest_protocol overwrites, dotted and relative to this
@@ -161,7 +183,7 @@ before any data is resolved; `build` is the fit-ready path.
      `pub fn build(v, proto) { core::model::build_model::<C>(v, proto) }`,
      `pub fn describe(v) { core::model::describe_model::<C>(v) }`,
      `pub fn dump(v) { core::model::dump_model::<C>(v) }`, and
-     `pub fn effective(v) { core::model::effective_model::<C>(v) }`.
+     `pub fn effective(v, proto) { core::model::effective_model::<C>(v, proto) }`.
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name +
    BIDS suffix + `build` + `describe` + `dump` + `effective` — the four

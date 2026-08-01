@@ -195,7 +195,7 @@ function that builds it:
 pub type Builder = fn(&serde_yaml::Value, &Protocol) -> Result<Box<dyn Model>>;
 pub type Describer = fn(&serde_yaml::Value) -> Result<Box<dyn Model>>;
 pub type Dumper = fn(&serde_yaml::Value) -> Result<String>;
-pub type Effective = fn(&serde_yaml::Value) -> Result<EffectiveConfig>;
+pub type Effective = fn(&serde_yaml::Value, &Protocol) -> Result<EffectiveConfig>;
 
 pub struct ModelEntry { pub name: &'static str, pub bids_suffix: &'static str, pub build: Builder, pub describe: Describer, pub dump: Dumper, pub effective: Effective }
 
@@ -387,8 +387,8 @@ pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> 
 pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
     crate::core::model::describe_model::<IrConfig>(v)
 }
-pub fn effective(v: &serde_yaml::Value) -> Result<EffectiveConfig> {
-    crate::core::model::effective_model::<IrConfig>(v)
+pub fn effective(v: &serde_yaml::Value, proto: &Protocol) -> Result<EffectiveConfig> {
+    crate::core::model::effective_model::<IrConfig>(v, proto)
 }
 ```
 
