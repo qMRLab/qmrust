@@ -125,8 +125,12 @@ function getByDottedPath(obj, dottedPath) {
     .reduce((node, key) => (isPlainObject(node) ? node[key] : undefined), obj);
 }
 
+// An acquisition axis is not always a flat list: qmt_spgr's `protocol.mtdata`
+// is one `[angle, offset]` row per volume, and flattening it would read as
+// twice as many volumes as the dataset has. Nesting is preserved at every
+// depth so a row stays visibly a row.
 function formatProtocolValue(value) {
-  if (Array.isArray(value)) return `[${value.join(", ")}]`;
+  if (Array.isArray(value)) return `[${value.map(formatProtocolValue).join(", ")}]`;
   if (isPlainObject(value)) return JSON.stringify(value);
   return String(value);
 }

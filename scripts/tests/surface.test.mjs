@@ -192,6 +192,17 @@ test("withProtocolComments appends one commented line per resolved protocol key"
   assert.match(out, /# repetition_time: 0\.015\s+# from sidecars/);
 });
 
+test("withProtocolComments keeps the rows of a nested acquisition axis", () => {
+  // qmt_spgr's `protocol.mtdata` is one [angle, offset] row per volume;
+  // flattened, it reads as twice as many volumes as the dataset has.
+  const out = withProtocolComments(
+    "model: qmt_spgr\n",
+    { protocol: { mtdata: [[142, 443], [426, 443]] } },
+    ["protocol.mtdata"],
+  );
+  assert.match(out, /# protocol\.mtdata: \[\[142, 443\], \[426, 443\]\]/);
+});
+
 test("withProtocolComments is a no-op with no protocol keys", () => {
   const text = "model: mt_ratio\n";
   assert.equal(withProtocolComments(text, {}, []), text);

@@ -33,12 +33,16 @@ echo "Fetching citations for $DOI ..." >&2
     "$(printf '%s' "$DOI" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" \
     "$(printf 'https://doi.org/%s' "$DOI" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
   printf '  "styles": [\n'
+  # The separator counts what was emitted, not what was attempted: a dropped
+  # style at any position would otherwise leave a comma with nothing before it.
+  emitted=0
   for i in "${!STYLES[@]}"; do
     text="$(fetch "text/x-bibliography; style=${STYLES[$i]}" | python3 scripts/strip_empty_editor.py)"
     case "$text" in
-      *style-not-found*) echo "  ${STYLES[$i]}: style not found — dropping" >&2; continue ;;
+      *style-not-found*) echo "  ${STYLES[$i]}: style not found, dropping" >&2; continue ;;
     esac
-    [ "$i" -gt 0 ] && printf ',\n'
+    [ "$emitted" -gt 0 ] && printf ',\n'
+    emitted=$((emitted + 1))
     printf '    {"id": %s, "label": %s, "text": %s}' \
       "$(printf '%s' "${STYLES[$i]}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" \
       "$(printf '%s' "${LABELS[$i]}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" \
