@@ -34,7 +34,7 @@ echo "Fetching citations for $DOI ..." >&2
     "$(printf 'https://doi.org/%s' "$DOI" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
   printf '  "styles": [\n'
   for i in "${!STYLES[@]}"; do
-    text="$(fetch "text/x-bibliography; style=${STYLES[$i]}")"
+    text="$(fetch "text/x-bibliography; style=${STYLES[$i]}" | python3 scripts/strip_empty_editor.py)"
     case "$text" in
       *style-not-found*) echo "  ${STYLES[$i]}: style not found — dropping" >&2; continue ;;
     esac

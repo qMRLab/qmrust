@@ -27,13 +27,24 @@ test("calls packed within `wait` collapse to one trailing call with the last arg
   assert.deepEqual(calls, ["a", "c"], "the trailing call carries the last call's arguments");
 });
 
+test("a solitary call never runs a second time", (t) => {
+  // The trailing run exists to deliver a call that arrived during the window.
+  // With none, repeating it says nothing new, and a caller that rebuilds the
+  // DOM would do so a whole `wait` after the reader moved on.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  const fn = debounce((v) => calls.push(v), 100);
+  fn("a");
+  t.mock.timers.tick(100);
+  assert.deepEqual(calls, ["a"], "no trailing run without a packed call");
+});
+
 test("a call after the quiet period leads again", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const calls = [];
   const fn = debounce((v) => calls.push(v), 100);
   fn("a");
   t.mock.timers.tick(100);
-  assert.deepEqual(calls, ["a", "a"], "the trailing call from the first burst has landed");
   fn("b");
-  assert.deepEqual(calls, ["a", "a", "b"], "a new burst leads immediately again");
+  assert.deepEqual(calls, ["a", "b"], "a new burst leads immediately again");
 });

@@ -42,9 +42,10 @@ impl VfaT1Fitter {
         }
     }
 
-    /// The quantitative map first, as every relaxometry model here orders them:
-    /// it is what a reader of a T1 method came for, and it is the map the app
-    /// shows before any other is chosen.
+    /// Parameter order is `[T1, M0]`, and four things must agree on it:
+    /// `param_names`, `output_names`, `forward`'s argument order, and the
+    /// order `fit_voxel` returns. Changing one without the others silently
+    /// relabels every value that crosses this boundary.
     pub fn param_names() -> [&'static str; 2] {
         ["T1", "M0"]
     }

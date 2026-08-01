@@ -167,16 +167,18 @@ pub fn describe_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<Box<dy
     Ok(cfg.into_model())
 }
 
-/// Whether `root` carries a value at the dotted `path`.
-fn states_path(root: &serde_yaml::Value, path: &str) -> bool {
+/// The value at the dotted `path`, if `root` has one.
+fn path_value<'a>(root: &'a serde_yaml::Value, path: &str) -> Option<&'a serde_yaml::Value> {
     let mut node = root;
     for segment in path.split('.') {
-        match node.get(segment) {
-            Some(next) => node = next,
-            None => return false,
-        }
+        node = node.get(segment)?;
     }
-    !node.is_null()
+    Some(node)
+}
+
+/// Whether `root` carries a value at the dotted `path`.
+fn states_path(root: &serde_yaml::Value, path: &str) -> bool {
+    path_value(root, path).is_some_and(|v| !v.is_null())
 }
 
 /// Reject a recipe that states an acquisition the dataset already supplies.
@@ -207,6 +209,26 @@ fn reject_protocol_overrides<C: ModelConfig>(
         .iter()
         .copied()
         .filter(|path| states_path(root, path))
+        .collect();
+    if stated.is_empty() {
+        return Ok(());
+    }
+    // Which paths does *this* protocol actually supply? Ingesting into a
+    // default config answers it with the model's own mapping, independently of
+    // what the recipe happens to say: a path that moves off its default is one
+    // the sidecars populate. A declared key the sidecars do not carry — an
+    // optional `ProtoParam`, like inversion_recovery's `RepetitionTime` — stays
+    // put, so the recipe may still set it rather than being refused on a claim
+    // that is untrue of this dataset.
+    let untouched = serde_yaml::to_value(C::default())?;
+    let mut probe = C::default();
+    probe
+        .ingest_protocol(proto)
+        .with_context(|| format!("{}: ingesting BIDS protocol", C::NAME))?;
+    let supplied = serde_yaml::to_value(&probe)?;
+    let stated: Vec<&str> = stated
+        .into_iter()
+        .filter(|path| path_value(&untouched, path) != path_value(&supplied, path))
         .collect();
     if stated.is_empty() {
         return Ok(());
@@ -316,9 +338,9 @@ pub fn effective_model<C: ModelConfig>(
 /// separate YAML lines, so only the leaf segment can ever match a single line
 /// verbatim.
 pub fn states_key(text: &str, key: &str) -> bool {
-    let leaf = key.rsplit('.').next().unwrap();
-    text.lines()
-        .any(|l| l.trim_start().starts_with(&format!("{leaf}:")))
+    serde_yaml::from_str::<serde_yaml::Value>(text)
+        .ok()
+        .is_some_and(|doc| states_path(&doc, key))
 }
 
 /// `model: <name>` plus the config body, nested under `C::SUBKEY` when it has
@@ -812,6 +834,39 @@ mod tests {
     }
 
     #[test]
+    fn a_declared_key_the_sidecars_do_not_carry_may_still_be_set() {
+        // `inversion_recovery` declares `repetition_time` as protocol-sourced,
+        // but its `RepetitionTime` param is optional and its fit never reads
+        // TR. A dataset whose sidecars omit it leaves the recipe's own value
+        // untouched, so refusing it would be refusing on a claim ("the sidecars
+        // already supply it") that is untrue of this dataset.
+        use crate::models::inversion_recovery::config::IrConfig;
+        let v: serde_yaml::Value = serde_yaml::from_str(
+            "model: inversion_recovery\nmethod: complex\nrepetition_time: 2.5\n",
+        )
+        .unwrap();
+        let ti_only = Protocol {
+            volumes: vec![
+                BTreeMap::from([("InversionTime".to_string(), 0.35)]),
+                BTreeMap::from([("InversionTime".to_string(), 0.50)]),
+                BTreeMap::from([("InversionTime".to_string(), 0.65)]),
+            ],
+            global: BTreeMap::new(),
+        };
+        build_model::<IrConfig>(&v, &ti_only).unwrap();
+
+        // The same recipe against sidecars that *do* carry it is refused, since
+        // ingestion would then overwrite what the recipe states.
+        let mut with_tr = ti_only.clone();
+        with_tr.global.insert("RepetitionTime".to_string(), 3.5);
+        let err = match build_model::<IrConfig>(&v, &with_tr) {
+            Ok(_) => panic!("expected the overwritten key to be rejected"),
+            Err(e) => format!("{e:#}"),
+        };
+        assert!(err.contains("repetition_time"), "{err}");
+    }
+
+    #[test]
     fn the_same_recipe_is_fine_when_nothing_was_resolved() {
         // The non-BIDS path is where a recipe is *supposed* to carry the
         // acquisition; the guard must not touch it.
@@ -972,9 +1027,14 @@ mod tests {
             let v: serde_yaml::Value =
                 serde_yaml::from_str(&format!("model: {}\n", entry.name)).unwrap();
             let eff = (entry.effective)(&v, &Protocol::default()).unwrap();
+            let doc: serde_yaml::Value = serde_yaml::from_str(&eff.yaml).unwrap();
             for key in &eff.protocol_keys {
+                // Existence, not a value: an unset `Option` serializes as
+                // `null`, which is still a real field the UI must be able to
+                // lock. `states_key` answers the recipe's question instead,
+                // "does this set a value", so it is the wrong test here.
                 assert!(
-                    states_key(&eff.yaml, key),
+                    path_value(&doc, key).is_some(),
                     "{}: declares protocol key '{key}', absent from its config: {}",
                     entry.name,
                     eff.yaml
