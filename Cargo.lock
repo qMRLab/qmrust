@@ -490,12 +490,12 @@ dependencies = [
 
 [[package]]
 name = "levenberg-marquardt"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "384ced02a6ac2eb8879d8bd86b46b88e133fa09ffe60d8307263b013ee3ceff2"
+checksum = "8be7a65739a815308eef33a6d8c78e435a7317305d5b0af0c8c465a2d7ac6fc6"
 dependencies = [
  "cfg-if",
- "nalgebra",
+ "nalgebra 0.34.2",
  "num-traits 0.2.19",
  "rustc_version",
 ]
@@ -608,6 +608,20 @@ dependencies = [
  "approx",
  "matrixmultiply",
  "nalgebra-macros",
+ "num-complex",
+ "num-rational",
+ "num-traits 0.2.19",
+ "simba",
+ "typenum",
+]
+
+[[package]]
+name = "nalgebra"
+version = "0.34.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df76ea0ff5c7e6b88689085804d6132ded0ddb9de5ca5b8aeb9eeadc0508a70a"
+dependencies = [
+ "approx",
  "num-complex",
  "num-rational",
  "num-traits 0.2.19",
@@ -905,7 +919,7 @@ dependencies = [
  "getrandom 0.2.17",
  "levenberg-marquardt",
  "matfile",
- "nalgebra",
+ "nalgebra 0.33.3",
  "ndarray",
  "plotters",
  "proptest",
