@@ -90,7 +90,7 @@ jobs:
           --file '**/fit.rs' --file '**/core/model.rs'
           --file '**/mtsat_b1/**' --file '**/quad.rs'
           --timeout 120
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutants-report-${{ matrix.shard }}
@@ -104,7 +104,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
       - run: cargo build -p qmrust-cli --release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qmrust-cli-linux
           path: target/release/qmrust
@@ -146,7 +146,7 @@ jobs:
         run: >
           wasm-pack build crates/qmrust-wasm --target web --features threads
           -Z build-std=std,panic_abort
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qmrust-wasm-pkg
           path: crates/qmrust-wasm/pkg
