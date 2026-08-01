@@ -6,6 +6,7 @@ import { buildMapVolume, readVolumeSeries } from "./nifti.js";
 import { clearVolumes, showOutput, syncMapViewControls } from "./viewers.js";
 import { plotVoxel } from "./curve.js";
 import { reresolveInputs } from "./model.js";
+import { showNotice } from "./modal.js";
 
 // `fit_volume` is one synchronous call with no progress callback across the
 // wasm boundary, so real (not simulated) progress requires splitting the work
@@ -59,16 +60,16 @@ async function fitVolumeWithProgress(nx, ny, nz, nt, data, maskU8, auxFlat) {
 
 export async function fitSlice() {
   if (!app.current) { status("Pick a model first", "info"); return; }
-  if (!app.wasm) { status("Fitting unavailable — wasm failed to load", "error"); return; }
+  if (!app.wasm) { status("Fitting unavailable: wasm failed to load", "error"); return; }
   if (!editor.valid) {
-    status("Recipe YAML is invalid — fix it before fitting", "error");
+    status("Recipe YAML is invalid: fix it before fitting", "error");
     return;
   }
   // The recipe may have changed which files the model consumes since it was
   // loaded, not only how it fits them.
   const problem = await reresolveInputs();
   if (problem) {
-    status(`Not fitted — ${problem}`, "error");
+    status(`Not fitted: ${problem}`, "error");
     return;
   }
   const { meta, volume, maskU8, auxFlat } = app.current;
@@ -82,7 +83,11 @@ export async function fitSlice() {
   try {
     maps = await fitVolumeWithProgress(nx, ny, nz, nt, data, maskU8, auxFlat);
   } catch (e) {
-    status(`Fit failed — ${e?.message ?? e}`, "error");
+    // The status line keeps the headline; the explanation goes where there is
+    // room to read it. A model's own message names the recipe key to change,
+    // which is unreadable truncated into a one-line bar.
+    status("Fit failed", "error");
+    showNotice("triangle-alert", "Fit failed", String(e?.message ?? e));
     hideProgress();
     $("fit").disabled = false;
     return;
@@ -125,7 +130,7 @@ export async function fitSlice() {
     // is already showing, so it lands there rather than in a panel of its own.
     status(`Fitted in ${((performance.now() - t0) / 1000).toFixed(1)} s`, "ok");
   } catch (e) {
-    status(`Fitted, but could not display it — ${e?.message ?? e}`, "error");
+    status(`Fitted, but could not display it: ${e?.message ?? e}`, "error");
   } finally {
     hideProgress();
     $("fit").disabled = false;

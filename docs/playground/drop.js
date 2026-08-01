@@ -45,7 +45,7 @@ function rootRelative(pairs) {
     .sort((a, b) => a.length - b.length)[0];
   if (!marker) {
     throw new Error(
-      "no dataset_description.json found — a BIDS dataset root must contain one",
+      "no dataset_description.json found: a BIDS dataset root must contain one",
     );
   }
   const root = marker.slice(0, marker.length - "dataset_description.json".length);
@@ -104,7 +104,7 @@ async function useDataset(files) {
     $("files-summary").textContent =
       `your dataset · ${verdicts.length} files · no model here can fit this`;
     showInputsTab("files");
-    status("No model matches that dataset — see Files for why", "error");
+    status("No model matches that dataset: see Files for why", "error");
     return;
   }
 
@@ -130,8 +130,8 @@ async function readAndUse(read) {
     await useDataset(await read());
   } catch (e) {
     endLoading();
-    renderFilesError(`Could not read that dataset — ${e.message}`);
-    status(`Could not read that dataset — ${e.message}`, "error");
+    renderFilesError(`Could not read that dataset: ${e.message}`);
+    status(`Could not read that dataset: ${e.message}`, "error");
   }
 }
 
@@ -155,7 +155,7 @@ async function filesFromInput(fileList) {
 
 export async function onBrowse(fileList) {
   if (!app.wasm) {
-    status("Fitting unavailable — wasm failed to load", "error");
+    status("Fitting unavailable: wasm failed to load", "error");
     return;
   }
   readAndUse(() => filesFromInput(fileList));
@@ -165,7 +165,7 @@ export function onDrop(event) {
   event.preventDefault();
   $("drop-wrap").classList.remove("drop-over");
   if (!app.wasm) {
-    status("Fitting unavailable — wasm failed to load", "error");
+    status("Fitting unavailable: wasm failed to load", "error");
     return;
   }
   // Capture the entries here, synchronously: the DataTransfer is neutered as

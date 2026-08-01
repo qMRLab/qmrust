@@ -59,7 +59,7 @@ export async function openCite() {
     // The payload is committed alongside the app, so a failure here means a
     // broken deploy rather than a network blip — say so instead of opening an
     // empty dialog.
-    show(`Citation unavailable — could not read data/citation.json (${e.message})`);
+    show(`Citation unavailable: could not read data/citation.json (${e.message})`);
   }
   modal.hidden = false;
   paintIcons(modal);
@@ -87,7 +87,7 @@ export function wireCite() {
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
-      label.textContent = "Selected — press ⌘C";
+      label.textContent = "Selected, press ⌘C";
     }
     setTimeout(() => {
       label.textContent = "Copy";

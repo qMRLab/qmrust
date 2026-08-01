@@ -65,7 +65,7 @@ const FETCH_DEADLINE_MS = 60_000;
 const SLOW_STEPS = [
   [6_000, (h) => `Still fetching the example dataset from ${h}…`],
   [15_000, (h) => `${h} is taking longer than usual…`],
-  [30_000, (h) => `${h} is slow to respond — still trying…`],
+  [30_000, (h) => `${h} is slow to respond, still trying…`],
 ];
 
 function watchSlow(host) {

@@ -150,7 +150,7 @@ function renderAllMaps(table, all) {
     tr.append(nameCell(row), cell(String(row.stats.n)));
     for (const m of all) {
       const s = labelStats(bitmap(), m.flat, app.current.meta.dims).get(row.value);
-      tr.append(cell(s ? `${roundBound(s.mean)} ±${roundBound(s.sd)}` : "—"));
+      tr.append(cell(s ? `${roundBound(s.mean)} ±${roundBound(s.sd)}` : "n/a"));
     }
     table.append(tr);
   }
@@ -168,7 +168,7 @@ export function renderMeasurements() {
   $("measure-scope").disabled = all.length < 2;
 
   if (!map) {
-    summary.textContent = "Fit a slice first — the statistics come from the fitted maps.";
+    summary.textContent = "Fit a slice first: the statistics come from the fitted maps.";
     return;
   }
   if (present.length === 0) {

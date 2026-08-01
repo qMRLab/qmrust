@@ -212,13 +212,11 @@ fn reject_protocol_overrides<C: ModelConfig>(
         return Ok(());
     }
     bail!(
-        "{}: the recipe states {} but the acquisition was resolved from the dataset's \
-         sidecars, which take precedence — the recipe's value would be discarded from the \
-         fit while still being recorded in the output's Parameters. Remove {} from the \
-         recipe, or fit the data outside a BIDS dataset where the recipe carries the \
-         acquisition.",
-        C::NAME,
+        "This dataset's sidecars already supply {}, so the recipe must not set {}. \
+         The sidecars win, and the recipe's value would be dropped from the fit while \
+         still appearing in the output's Parameters. Remove {} from the recipe.",
         stated.join(", "),
+        if stated.len() == 1 { "it" } else { "them" },
         if stated.len() == 1 { "it" } else { "them" },
     )
 }

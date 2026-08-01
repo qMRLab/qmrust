@@ -53,7 +53,7 @@ async function loadModelFromBids(name, meta) {
     $("files-summary").textContent =
       `${ds.archive} · ${files.length} files · nothing this model can fit`;
     showInputsTab("files");
-    status(`No ${meta.title} data in that dataset — see Files for why`, "error");
+    status(`No ${meta.title} data in that dataset: see Files for why`, "error");
     return false;
   }
 
@@ -155,12 +155,12 @@ export async function reresolveInputs() {
   try {
     collections = app.wasm.resolve_bids(ds.files, editor.text, "");
   } catch (e) {
-    return `the recipe could not be resolved against this dataset — ${e.message}`;
+    return `the recipe could not be resolved against this dataset: ${e.message}`;
   }
   if (collections.length === 0) return "the recipe now matches nothing in this dataset";
   const resolved = collections[0];
   if (String(resolved.data_files) !== String(app.current.resolution.data_files)) {
-    return "the recipe now selects different volumes — reload the model to fit them";
+    return "the recipe now selects different volumes: reload the model to fit them";
   }
 
   const [nx, ny, nz] = app.current.meta.dims;
@@ -200,7 +200,7 @@ export async function loadModel(name) {
   try {
     meta = await loadBundle(name);
   } catch (e) {
-    status(`Could not load ${name} — ${e.message}`, "error");
+    status(`Could not load ${name}: ${e.message}`, "error");
     return;
   }
 
@@ -242,8 +242,8 @@ export async function loadModel(name) {
       if (ok) return;
     } catch (e) {
       endLoading();
-      renderFilesError(`${e.message} — showing the pre-baked slice instead`);
-      status(`${e.message} — showing the built-in sample instead`, "error");
+      renderFilesError(`${e.message}. Showing the pre-baked slice instead`);
+      status(`${e.message}. Showing the built-in sample instead`, "error");
       // An unreachable archive host is worth interrupting for: what follows is a
       // single built-in slice, not the dataset the reader asked for, and the
       // difference matters for anything they conclude from it.
@@ -271,7 +271,7 @@ export async function loadModel(name) {
       colorbarVisible: false,
     });
   } catch (e) {
-    status(`Could not load image data — ${e.message}`, "error");
+    status(`Could not load image data: ${e.message}`, "error");
     return;
   }
   let maskU8 = null;
@@ -280,7 +280,7 @@ export async function loadModel(name) {
       maskVolume = await NVImage.loadFromUrl({ url: `./data/${meta.files.mask}` });
       maskU8 = readMask(maskVolume, nx, ny, nz);
     } catch (e) {
-      status(`Could not load the mask — ${e.message}`, "error");
+      status(`Could not load the mask: ${e.message}`, "error");
       return;
     }
   }
@@ -302,7 +302,7 @@ export async function loadModel(name) {
       auxFlat[auxName] = Array.from(readScalarVolume(auxVolume, nx, ny, nz));
       auxVolumes[auxName] = auxVolume;
     } catch (e) {
-      status(`Could not load ${filename} — ${e.message}`, "error");
+      status(`Could not load ${filename}: ${e.message}`, "error");
       return;
     }
   }
@@ -314,7 +314,7 @@ export async function loadModel(name) {
   syncMapViewControls();
   syncSegmentButton();
   status(
-    app.wasm ? "Ready" : "Fitting unavailable — wasm failed to load; viewers still work",
+    app.wasm ? "Ready" : "Fitting unavailable: wasm failed to load; viewers still work",
     app.wasm ? "ok" : "error",
   );
 }

@@ -368,7 +368,7 @@ async function populateModels() {
   try {
     index = await (await fetchOrThrow("./data/index.json")).json();
   } catch (e) {
-    status(`Could not load the model index — ${e.message}`, "error");
+    status(`Could not load the model index: ${e.message}`, "error");
     return false;
   }
   app.modelNames = index.models;
@@ -379,7 +379,7 @@ async function populateModels() {
       meta = await loadBundle(name);
     } catch (e) {
       // One unreadable payload should not cost the reader every other model.
-      status(`Could not load ${name} — ${e.message}`, "error");
+      status(`Could not load ${name}: ${e.message}`, "error");
       continue;
     }
     const opt = document.createElement("option");

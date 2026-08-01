@@ -638,7 +638,7 @@ pub fn run_fit_bids(
         .filter(|s| !vocab.is_known_suffix(s))
         .collect::<std::collections::BTreeSet<_>>()
     {
-        eprintln!("warning (vocabulary): unrecognized suffix '{unknown}' — not a canonical BIDS suffix, registered model, or declared custom suffix");
+        eprintln!("warning (vocabulary): unrecognized suffix '{unknown}'; not a canonical BIDS suffix, a registered model, or a declared custom suffix");
     }
     let collections = rust_bids::collections_for(&fs, &bids_cfg, suffix)?;
 
