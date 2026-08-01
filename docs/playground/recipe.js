@@ -20,7 +20,7 @@ import { fieldLabel, groupLabel } from "./labels.js";
 
 // Knob diameter in px, mirrored in `.override-knob`; the pointer guard and the
 // knob's travel both need it as a number.
-const KNOB_PX = 34;
+const KNOB_PX = 40;
 
 hljs.registerLanguage("yaml", hljsYaml);
 hljs.registerLanguage("json", hljsJson);
