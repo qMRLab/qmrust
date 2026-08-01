@@ -139,7 +139,7 @@ body {
   height: 100dvh; overflow: hidden;
 }
 h1, h2, h3 { font-family: var(--font-h); }
-code, pre, textarea, input, select, .mono { font-family: var(--font-mono); }
+code, pre, textarea, input, select { font-family: var(--font-mono); }
 /* A hoverable explanation beside a panel's heading. `title` carries the text,
    so it needs no scripting and stays available to assistive tech through
    `aria-label`. */

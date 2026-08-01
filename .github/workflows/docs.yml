@@ -12,6 +12,7 @@ on:
       - "scripts/docsfig/**"
       - "scripts/tests/**"
       - "scripts/check_theme_contrast.mjs"
+      - "scripts/check_source_hygiene.mjs"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
@@ -23,6 +24,7 @@ on:
       - "scripts/docsfig/**"
       - "scripts/tests/**"
       - "scripts/check_theme_contrast.mjs"
+      - "scripts/check_source_hygiene.mjs"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -74,6 +76,9 @@ jobs:
 
       - name: Theme contrast and token contract
         run: node scripts/check_theme_contrast.mjs
+
+      - name: Source hygiene
+        run: node scripts/check_source_hygiene.mjs
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
