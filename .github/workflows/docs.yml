@@ -124,7 +124,7 @@ jobs:
           page.write_text(html.replace(old, new))
           '
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/_build/html
 
