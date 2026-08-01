@@ -18,8 +18,9 @@ rayon = "1"
 anyhow = "1"
 levenberg-marquardt = "0.14"
 nalgebra = "0.33"
-rand = "0.8"
-rand_distr = "0.4"
+# Seeded simulation only: no OS entropy source, so no `getrandom` on any target.
+rand = { version = "0.10", default-features = false, features = ["std", "std_rng"] }
+rand_distr = "0.6"
 plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "point_series"] }
 matfile = "0.2"
 nifti = { version = "0.17", features = ["ndarray_volumes"] }
