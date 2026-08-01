@@ -1086,13 +1086,21 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    dataset, not the recipe. Sized to the label's cap height so it reads as part
    of the line rather than as an image dropped into it. */
 .bids-badge {
-  height: 13px;
-  width: auto;
+  display: inline-block;
+  width: 15px;
+  height: 15px;
   margin-left: 6px;
-  vertical-align: -2px;
-  opacity: 0.85;
+  vertical-align: -3px;
+  opacity: 0.9;
+  /* Two artworks, one mark: dark ink for a light panel, white for a dark one.
+     Keyed to the app's own `data-mode` and never to `prefers-color-scheme` —
+     the theme a reader picked here is the only thing that says which. */
+  background: url("./vendor/bids-logo-light.png") center/contain no-repeat;
 }
-.group-title .bids-badge { vertical-align: -1px; }
+:root[data-mode="dark"] .bids-badge {
+  background-image: url("./vendor/bids-logo-dark.png");
+}
+.group-title .bids-badge { vertical-align: -2px; }
 
 /* Slide to override the sidecar-supplied protocol. An iOS slide-to-act pill:
    a recessed track, a raised knob carrying a direction chevron, and a prompt

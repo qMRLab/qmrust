@@ -152,13 +152,18 @@ function fieldRow(path, widget) {
 
 // The BIDS mark, standing in for the words "from sidecars": this value came
 // from the dataset, not from the recipe.
+//
+// Drawn as a background image rather than an `<img>` so the stylesheet can pick
+// the artwork that suits the current mode — the mark ships as dark ink and as
+// white, and only CSS knows which one the panel behind it needs. `role`/
+// `aria-label` keep it an image to a screen reader, which a bare span is not.
 function bidsBadge() {
-  const img = document.createElement("img");
-  img.className = "bids-badge";
-  img.src = "./vendor/bids-logo.png";
-  img.alt = "BIDS";
-  img.title = "resolved from the dataset's BIDS sidecars";
-  return img;
+  const badge = document.createElement("span");
+  badge.className = "bids-badge";
+  badge.setAttribute("role", "img");
+  badge.setAttribute("aria-label", "BIDS");
+  badge.title = "resolved from the dataset's BIDS sidecars";
+  return badge;
 }
 
 function buildWidget(value, path) {
