@@ -251,6 +251,10 @@ fn run_voxelwise(
         // mismatch (an internal invariant violation, not per-voxel data);
         // keep it under the same `catch_unwind` as `fit` so it surfaces
         // as a failed voxel rather than aborting the whole parallel run.
+        //
+        // Isolation holds only where unwinding does. The wasm targets are
+        // `panic = "abort"`, so there a panic anywhere under this call takes
+        // down the module and no voxel is recorded as failed.
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let voxel: Vec<f64> = (0..n_t).map(|t| data[[x, y, z, t]]).collect();
             let meas = build_measurement(&kind, &voxel, volume_ids);
@@ -287,9 +291,10 @@ fn run_voxelwise(
                     .copied()
                     .zip(values.into_iter().map(Some))
                     .collect::<Vec<_>>(),
-                // A panic takes down the whole block, so re-run it voxel by
-                // voxel to isolate the offender: only genuinely bad voxels are
-                // recorded as failed, matching unblocked behaviour.
+                // Where unwinding is available, a panic takes down the whole
+                // block, so re-run it voxel by voxel to isolate the offender:
+                // only genuinely bad voxels are recorded as failed, matching
+                // unblocked behaviour.
                 Err(_) => chunk
                     .iter()
                     .map(|&(x, y, z)| ((x, y, z), fit_one(x, y, z)))
