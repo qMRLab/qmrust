@@ -196,3 +196,28 @@ export function readNumbers(text) {
 export function resolvedProtocolJson(app) {
   return app?.dataset?.resolved?.protocol_json ?? "";
 }
+
+/**
+ * Deletes the recipe's own values for `protocolKeys`, in place, so the
+ * sidecar-resolved values become the only source again.
+ *
+ * Re-locking the protocol has to remove what the reader typed, not merely stop
+ * them typing more: a recipe that still carries an overridden flip angle keeps
+ * showing it, keeps writing it into the output provenance, and no longer
+ * matches the dataset it names. Parents left empty by a deletion are pruned —
+ * a bare `protocol: {}` is noise nobody wrote.
+ */
+export function clearProtocolOverrides(obj, protocolKeys) {
+  const deleteAt = (node, segments) => {
+    if (!isPlainObject(node)) return;
+    const [head, ...rest] = segments;
+    if (rest.length === 0) {
+      delete node[head];
+      return;
+    }
+    deleteAt(node[head], rest);
+    if (isPlainObject(node[head]) && Object.keys(node[head]).length === 0) delete node[head];
+  };
+  for (const key of protocolKeys) deleteAt(obj, key.split("."));
+  return obj;
+}

@@ -1094,32 +1094,37 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .group-title .bids-badge { vertical-align: -1px; }
 
-/* Slide to override the sidecar-supplied protocol. Modelled on the iOS
-   slide-to-act control: a recessed pill track, a raised knob carrying a lock
-   glyph, and a prompt that fades as the knob travels. Red because the outcome
-   is a recipe that contradicts its own dataset. The same control slides back
-   the other way to re-lock. */
+/* Slide to override the sidecar-supplied protocol. An iOS slide-to-act pill:
+   a recessed track, a raised knob carrying a direction chevron, and a prompt
+   that fades as the knob travels. The same control sweeps back to return to
+   the dataset's own values.
+
+   Every colour is a theme token — `--bad` for the warning accent, `--on-action`
+   for ink on it, `--field`/`--line` for the recess — so each palette dresses
+   it in its own scheme rather than a fixed red. */
 .override {
   --p: 0;                       /* knob travel, 0..1, set from the slider */
-  --knob: 34px;
+  --knob: 40px;
   position: relative;
-  margin-top: 16px;
-  height: 42px;
+  width: min(320px, 100%);
+  margin: 18px auto 4px;
+  height: 48px;
   border-radius: 999px;
   background:
     linear-gradient(180deg,
-      color-mix(in srgb, var(--bad) 20%, transparent),
-      color-mix(in srgb, var(--bad) 11%, transparent));
+      color-mix(in srgb, var(--bad) 26%, var(--field)),
+      color-mix(in srgb, var(--bad) 13%, var(--field)));
   box-shadow:
-    inset 0 1px 2px rgb(0 0 0 / 0.35),
-    inset 0 0 0 1px color-mix(in srgb, var(--bad) 28%, transparent);
+    inset 0 2px 5px rgb(0 0 0 / 0.45),
+    inset 0 -1px 0 color-mix(in srgb, var(--bad) 22%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--bad) 34%, transparent);
   overflow: hidden;
   isolation: isolate;
 }
 
 /* The interaction layer: a real range input, kept invisible so the drawn knob
-   below can carry an icon a native thumb cannot. Every border/shadow the
-   global input rule would paint is cleared here. */
+   can carry a glyph a native thumb cannot. Every border and shadow the global
+   input rule would paint is cleared here. */
 .override-slider {
   position: absolute;
   inset: 0;
@@ -1138,29 +1143,23 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .override-slider:active { cursor: grabbing; }
 .override-slider:focus, .override-slider:focus-visible {
-  border: none;
-  box-shadow: none;
-  outline: none;
+  border: none; box-shadow: none; outline: none;
 }
 .override-slider:focus-visible + .override-knob {
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 3px color-mix(in srgb, var(--bad) 45%, transparent);
+  box-shadow:
+    0 2px 6px rgb(0 0 0 / 0.5),
+    0 0 0 3px color-mix(in srgb, var(--bad) 50%, transparent);
 }
 .override-slider::-webkit-slider-runnable-track { background: transparent; height: 100%; }
 .override-slider::-moz-range-track { background: transparent; height: 100%; }
-/* The thumb stays the drag target but is drawn by `.override-knob`. */
 .override-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  height: var(--knob);
-  width: var(--knob);
-  border: none;
-  background: transparent;
+  -webkit-appearance: none; appearance: none;
+  height: var(--knob); width: var(--knob);
+  border: none; background: transparent;
 }
 .override-slider::-moz-range-thumb {
-  height: var(--knob);
-  width: var(--knob);
-  border: none;
-  background: transparent;
+  height: var(--knob); width: var(--knob);
+  border: none; background: transparent;
 }
 
 .override-knob {
@@ -1169,24 +1168,30 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   width: var(--knob);
   height: var(--knob);
   border-radius: 50%;
+  /* Lit from above, with a rim highlight and a contact shadow: the two cues
+     that read as a physical knob sitting in the recess. */
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--bad) 92%, white),
-    var(--bad));
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+    color-mix(in srgb, var(--bad) 82%, var(--ink)),
+    var(--bad) 55%,
+    color-mix(in srgb, var(--bad) 88%, #000));
+  box-shadow:
+    0 2px 5px rgb(0 0 0 / 0.5),
+    0 1px 0 color-mix(in srgb, var(--ink) 28%, transparent) inset,
+    0 -2px 4px rgb(0 0 0 / 0.25) inset;
   display: grid;
   place-items: center;
   pointer-events: none;
   z-index: 2;
-  /* Travel spans the track minus the knob and its 4px insets. A percentage
+  /* Travel spans the track minus the knob and its 4px insets; a percentage
      here resolves against `.override`, the containing block. */
   left: calc(4px + var(--p) * (100% - var(--knob) - 8px));
   transition: left 60ms linear;
 }
 .override-knob svg {
-  width: 17px;
-  height: 17px;
-  color: #fff;
-  fill: currentColor;
+  width: 19px;
+  height: 19px;
+  /* The palette's own ink for action-coloured surfaces. */
+  color: var(--on-action);
 }
 
 .override-label {
@@ -1194,22 +1199,23 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   inset: 0;
   display: grid;
   place-items: center;
-  padding-left: calc(var(--knob) + 8px);
+  padding-left: calc(var(--knob) + 6px);
   pointer-events: none;
   z-index: 1;
   font: 600 12.5px var(--font-ui);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.015em;
   color: color-mix(in srgb, var(--bad) 88%, var(--ink));
+  text-shadow: 0 1px 1px rgb(0 0 0 / 0.35);
   transition: opacity 80ms linear;
 }
 
-/* Unlocked: the same pill, now inviting the sweep back. */
+/* Unlocked: the same pill, the sweep now running the other way. */
 .override.unlocked {
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--bad) 26%, transparent),
-    color-mix(in srgb, var(--bad) 16%, transparent));
+    color-mix(in srgb, var(--bad) 34%, var(--field)),
+    color-mix(in srgb, var(--bad) 20%, var(--field)));
 }
 .override.unlocked .override-label {
   padding-left: 0;
-  padding-right: calc(var(--knob) + 8px);
+  padding-right: calc(var(--knob) + 6px);
 }

@@ -14,7 +14,7 @@ import hljsYaml from "./vendor/highlight-yaml.js";
 import hljsJson from "./vendor/highlight-json.js";
 import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
-import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers, resolvedProtocolJson } from "./surface.js";
+import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers, resolvedProtocolJson, clearProtocolOverrides } from "./surface.js";
 import { debounce } from "./debounce.js";
 import { fieldLabel, groupLabel } from "./labels.js";
 
@@ -442,29 +442,22 @@ function renderForm() {
 // acquisition said so. Built on a range input, so it is keyboard- and
 // screen-reader-operable without reimplementing a drag; a sweep that stops
 // short springs back, so only a full travel counts.
-function lockIcon(locked) {
+// The knob's glyph points the way the sweep goes: right to override, left to
+// come back. Direction is the whole instruction, so it beats a padlock that
+// only says which state you are in.
+function arrowIcon(pointsLeft) {
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(NS, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("aria-hidden", "true");
-  const body = document.createElementNS(NS, "rect");
-  body.setAttribute("x", "4");
-  body.setAttribute("y", "11");
-  body.setAttribute("width", "16");
-  body.setAttribute("height", "10");
-  body.setAttribute("rx", "2");
-  const shackle = document.createElementNS(NS, "path");
-  // Closed: the shackle sits centred over the body. Open: it is pushed right
-  // and its near leg is gone, the shape everyone reads as "unlocked".
-  shackle.setAttribute(
-    "d",
-    locked ? "M8 11V7a4 4 0 0 1 8 0v4" : "M12 11V7a4 4 0 0 1 8 0v2",
-  );
-  shackle.setAttribute("fill", "none");
-  shackle.setAttribute("stroke", "currentColor");
-  shackle.setAttribute("stroke-width", "2");
-  shackle.setAttribute("stroke-linecap", "round");
-  svg.append(shackle, body);
+  const chevron = document.createElementNS(NS, "path");
+  chevron.setAttribute("d", pointsLeft ? "M14 6 L8 12 L14 18" : "M10 6 L16 12 L10 18");
+  chevron.setAttribute("fill", "none");
+  chevron.setAttribute("stroke", "currentColor");
+  chevron.setAttribute("stroke-width", "2.5");
+  chevron.setAttribute("stroke-linecap", "round");
+  chevron.setAttribute("stroke-linejoin", "round");
+  svg.append(chevron);
   return svg;
 }
 
@@ -490,16 +483,18 @@ function overrideControl() {
   slider.value = unlocked ? "100" : "0";
   slider.setAttribute(
     "aria-label",
-    unlocked ? "Slide to re-lock the BIDS protocol" : "Slide to override the BIDS protocol",
+    unlocked ? "Slide to default back to the BIDS protocol" : "Slide to override the BIDS protocol",
   );
 
   const knob = document.createElement("span");
   knob.className = "override-knob";
-  knob.append(lockIcon(unlocked));
+  knob.append(arrowIcon(unlocked));
 
   const label = document.createElement("span");
   label.className = "override-label";
-  label.textContent = unlocked ? "Slide to Re-lock" : "Slide to Override BIDS Protocol";
+  label.textContent = unlocked
+    ? "Default back to BIDS Protocol"
+    : "Slide to Override BIDS Protocol";
 
   const setProgress = (v) => {
     // Travel drives the knob's position and fades the prompt, so a partial
@@ -515,6 +510,14 @@ function overrideControl() {
     const done = unlocked ? v <= 0 : v >= 100;
     if (done) {
       app.overrideProtocol = !unlocked;
+      if (unlocked) {
+        // Coming back to the dataset: drop whatever the recipe overrode, so
+        // the sidecar values are the only source again and the provenance
+        // stops carrying an acquisition the dataset never stated.
+        clearProtocolOverrides(editor.obj, app.surface?.protocol_keys ?? []);
+        commitObjEdit();
+        return;
+      }
       refreshSurface();
       updateYamlView();
       renderForm();

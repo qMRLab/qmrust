@@ -10,6 +10,7 @@ import {
   stripProtocolComments,
   readNumbers,
   resolvedProtocolJson,
+  clearProtocolOverrides,
 } from "../../docs/playground/surface.js";
 
 const flat = (rows) => Object.fromEntries(rows.map((r) => [r.path.join("."), r]));
@@ -291,4 +292,29 @@ test("no resolved dataset yields the empty protocol", () => {
   assert.equal(resolvedProtocolJson({}), "");
   assert.equal(resolvedProtocolJson({ dataset: { files: new Map() } }), "");
   assert.equal(resolvedProtocolJson(undefined), "");
+});
+
+test("re-locking removes the recipe's protocol overrides", () => {
+  // Stopping the reader typing is not enough: a recipe still carrying an
+  // overridden value keeps displaying it, keeps writing it into the output
+  // provenance, and no longer matches the dataset it names.
+  const recipe = { model: "vfa_t1", flip_angles: [4, 25], fit_type: "linear", mask: { desc: "brain" } };
+  clearProtocolOverrides(recipe, ["flip_angles", "repetition_time"]);
+  assert.deepEqual(recipe, { model: "vfa_t1", fit_type: "linear", mask: { desc: "brain" } });
+});
+
+test("re-locking prunes a parent the deletion emptied, but not a shared one", () => {
+  const emptied = { qmt_spgr: { protocol: { mtdata: [[1, 2]] }, lineshape: "gaussian" } };
+  clearProtocolOverrides(emptied, ["qmt_spgr.protocol.mtdata"]);
+  assert.deepEqual(emptied, { qmt_spgr: { lineshape: "gaussian" } }, "empty `protocol` is noise");
+
+  const shared = { qmt_spgr: { protocol: { mtdata: [[1, 2]], tr: 0.03 } } };
+  clearProtocolOverrides(shared, ["qmt_spgr.protocol.mtdata"]);
+  assert.deepEqual(shared, { qmt_spgr: { protocol: { tr: 0.03 } } }, "a sibling must survive");
+});
+
+test("re-locking a recipe that never overrode anything is a no-op", () => {
+  const recipe = { model: "vfa_t1", fit_type: "linear" };
+  clearProtocolOverrides(recipe, ["flip_angles", "repetition_time"]);
+  assert.deepEqual(recipe, { model: "vfa_t1", fit_type: "linear" });
 });
