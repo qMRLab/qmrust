@@ -19,7 +19,7 @@ anyhow = "1"
 levenberg-marquardt = "0.14"
 nalgebra = "0.33"
 rand = "0.8"
-rand_distr = "0.4"
+rand_distr = "0.6"
 plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "point_series"] }
 matfile = "0.2"
 nifti = { version = "0.17", features = ["ndarray_volumes"] }
