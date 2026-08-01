@@ -25,7 +25,7 @@ nalgebra = "0.34"
 rand = { version = "0.10", default-features = false, features = ["std", "std_rng"] }
 rand_distr = "0.6"
 plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series", "point_series"] }
-matfile = "0.2"
+matfile = "0.5"
 nifti = { version = "0.17", features = ["ndarray_volumes"] }
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.17"
