@@ -1,10 +1,10 @@
 // "Cite this work": the qMRLab paper, in whichever style the reader needs.
 //
 // The strings are pre-rendered into `data/citation.json` by
-// `scripts/fetch_citation.sh`, which asks doi.org to format the DOI. They are
-// not fetched here: a strict CSP blocks external hosts, so the app could
-// neither reach doi.org nor pull CSL style files at runtime — and shipping the
-// rendered text means citing works offline and costs no request.
+// `scripts/fetch_citation.sh`, which asks doi.org to format the DOI. Rendering
+// them at build time rather than in the browser means citing costs no request,
+// works offline, and keeps this app's only outbound traffic the dataset fetch
+// a reader explicitly asks for.
 import { $ } from "./dom.js";
 import { paintIcons } from "./vendor/icons.js";
 

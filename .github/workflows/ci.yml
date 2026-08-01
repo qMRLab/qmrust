@@ -3,6 +3,15 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    # Weekly, so an advisory published against an unchanged tree is still found.
+    - cron: "0 6 * * 1"
+
+# Nothing here writes to the repository, so the token that every step inherits
+# should not be able to. Set at the top level, so a job added later starts
+# read-only and has to ask for more in writing.
+permissions:
+  contents: read
 
 jobs:
   lint:
@@ -15,6 +24,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # Published advisories against the dependency tree. Scheduled as well as
+  # per-push: an advisory is published against code that is already committed,
+  # so a repository that only ever audits on a change stays green while it goes
+  # stale. Kept separate from `lint` so an advisory reads as an advisory rather
+  # than as a broken build.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
 
   native:
     runs-on: ubuntu-latest

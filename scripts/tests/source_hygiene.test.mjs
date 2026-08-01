@@ -12,7 +12,9 @@ import {
   proseEmDashes,
   readableRuns,
   stripComments,
+  stripProducerCalls,
   temporalComments,
+  unescapedHtmlSinks,
   unusedExports,
 } from "../check_source_hygiene.mjs";
 
@@ -96,6 +98,47 @@ test("comments go, whatever their form, and a URL survives", () => {
   const out = stripComments(src);
   assert.ok(!out.includes("block") && !out.includes("line"));
   assert.ok(out.includes("https://x.example"));
+});
+
+// The app renders filenames, sidecar contents and entity values out of a
+// dataset a stranger supplied, so an `innerHTML` that does not escape is the
+// one XSS this code can plausibly grow. Both columns matter equally: a check
+// that flags the safe forms gets switched off, and one that misses the unsafe
+// forms was never protecting anything.
+const SAFE = [
+  ["escaped by a producer", 'x.innerHTML = inlineCodeHtml(msg);'],
+  ["a ternary whose branches are both safe", 'box.innerHTML = m ? inlineCodeHtml(m) : "";'],
+  ["a glyph beside written-down text", 'b.innerHTML = `${icon("eye", 16)}<span>Segment</span>`;'],
+  // The interpolation closes on its second brace; the object literal's is the first.
+  ["a highlighter call carrying an options object", 'h.innerHTML = `${hljs.highlight(t, { language: "yaml" }).value}\\n`;'],
+  ["a written-down string", 'x.innerHTML = "<b>ready</b>";'],
+];
+
+const UNSAFE = [
+  ["a bare variable", "x.innerHTML = filename;"],
+  ["dataset text interpolated into markup", "x.innerHTML = `<b>${role.reason}</b>`;"],
+  ["string concatenation", 'x.innerHTML = "<b>" + name + "</b>";'],
+  ["a function that merely sounds like it escapes", "x.innerHTML = escapeIsh(name);"],
+  ["an unsafe branch hiding behind a safe one", 'x.innerHTML = m ? inlineCodeHtml(m) : raw;'],
+  ["a safe producer's output concatenated with raw text", 'x.innerHTML = icon("eye", 16) + name;'],
+];
+
+for (const [label, src] of SAFE) {
+  test(`innerHTML allows ${label}`, () => {
+    assert.deepEqual(unescapedHtmlSinks([["t.js", src]]), []);
+  });
+}
+
+for (const [label, src] of UNSAFE) {
+  test(`innerHTML flags ${label}`, () => {
+    assert.equal(unescapedHtmlSinks([["t.js", src]]).length, 1, src);
+  });
+}
+
+test("a producer's arguments go with it, since they passed through the escaping", () => {
+  assert.match(stripProducerCalls("inlineCodeHtml(message)"), /^\s*$/);
+  // Only the listed producers earn that; a lookalike keeps its argument.
+  assert.match(stripProducerCalls("inlineCodeHtmlish(message)"), /message/);
 });
 
 test("a comment that narrates history is reported", () => {

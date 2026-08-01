@@ -122,6 +122,116 @@ export function proseEmDashes(files) {
   return problems;
 }
 
+// The only expressions allowed to produce HTML. Each either escapes its input
+// (`inlineCodeHtml`), or renders from a closed set this repo owns (`icon`), or
+// is a library whose whole contract is escaping what it highlights (`hljs`,
+// `highlightJson`).
+const HTML_PRODUCERS = ["icon", "inlineCodeHtml", "highlightJson", "hljs.highlight"];
+
+/**
+ * `value` with every producer call, and its arguments, removed.
+ *
+ * The arguments go with the call: `inlineCodeHtml(message)` is safe precisely
+ * because `message` passed through it. Parens are matched by counting, since a
+ * regex cannot see the end of a nested call.
+ */
+export function stripProducerCalls(value) {
+  for (const producer of HTML_PRODUCERS) {
+    let at;
+    while ((at = value.indexOf(`${producer}(`)) !== -1) {
+      let depth = 0;
+      let i = at + producer.length;
+      for (; i < value.length; i++) {
+        if (value[i] === "(") depth++;
+        else if (value[i] === ")" && --depth === 0) break;
+      }
+      if (i >= value.length) return value; // unbalanced: leave it to be reported
+      value = value.slice(0, at) + value.slice(i + 1);
+    }
+  }
+  // `hljs.highlight(...).value` leaves a trailing property access behind.
+  return value.replace(/^\.\w+|\.\w+/g, "");
+}
+
+/**
+ * The parts of `value` that are not written-down text: everything outside a
+ * literal, plus each `${...}` inside a template.
+ *
+ * A template's own characters are authored here and safe by construction; its
+ * interpolations are not. Scanned rather than matched, because `${hljs.highlight(
+ * t, { language: "yaml" }).value}` closes on its second brace, and a regex
+ * stops at the first.
+ */
+export function dynamicParts(value) {
+  const parts = [];
+  let buf = "";
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (c === '"' || c === "'") {
+      while (++i < value.length && value[i] !== c);
+      continue;
+    }
+    if (c === "`") {
+      while (++i < value.length && value[i] !== "`") {
+        if (value[i] !== "$" || value[i + 1] !== "{") continue;
+        let depth = 1;
+        const start = (i += 2);
+        while (i < value.length && depth > 0) {
+          if (value[i] === "{") depth++;
+          else if (value[i] === "}") depth--;
+          if (depth > 0) i++;
+        }
+        parts.push(value.slice(start, i));
+      }
+      continue;
+    }
+    buf += c;
+  }
+  parts.push(buf);
+  return parts;
+}
+
+/**
+ * `expr` with a leading ternary condition removed: in `a ? b : c` only `b` and
+ * `c` reach the DOM. Nested ternaries are left whole, which can only over-report.
+ */
+function withoutCondition(expr) {
+  const q = expr.indexOf("?");
+  return q !== -1 && expr.includes(":") ? expr.slice(q + 1) : expr;
+}
+
+/**
+ * Assignments to `innerHTML` from anything but a known-escaping producer.
+ *
+ * The app reads datasets a stranger hands it: filenames, sidecar JSON, entity
+ * values, error text quoting all three. Those reach the DOM constantly, and
+ * `textContent` makes them harmless. `innerHTML` does not, so every use has to
+ * be traceable to something that escapes. This check is the reason a reviewer
+ * can trust that; it is not a parser, and a sufficiently indirect assignment
+ * gets past it, so it guards the honest mistake rather than the determined one.
+ */
+export function unescapedHtmlSinks(files) {
+  const problems = [];
+  for (const [name, text] of files) {
+    stripComments(text)
+      .split("\n")
+      .forEach((line, i) => {
+        const m = line.match(/\.innerHTML\s*=\s*(.+)$/);
+        if (!m) return;
+        const value = m[1].trim();
+        const dynamic = dynamicParts(withoutCondition(value))
+          .map((part) => stripProducerCalls(part))
+          .join("");
+        // What survives is an expression no producer accounted for. Punctuation
+        // and a trailing semicolon are not names.
+        if (/[A-Za-z_$]/.test(dynamic)) {
+          problems.push(`${name}:${i + 1}: innerHTML from an unescaped source: ${value.slice(0, 60)}`);
+        }
+      });
+  }
+  return problems;
+}
+
 // Phrasing that dates a comment to the moment it was written. A reader who did
 // not watch the change cannot use any of it, and it decays into a claim about
 // code that is no longer there.
@@ -182,6 +292,7 @@ export function main() {
     ),
     ...unusedExports(scripts, [...scripts, ...markup, ...tests]),
     ...proseEmDashes([...scripts, ...markup]),
+    ...unescapedHtmlSinks(scripts),
     // Comments are held to this everywhere, not just in the app: the rule is
     // about what a comment is for, and Rust is where most of them live.
     ...temporalComments([

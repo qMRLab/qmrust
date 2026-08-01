@@ -2,11 +2,10 @@
 # Render the qMRLab paper's citation in every style the playground offers, and
 # write them to the payload the app reads.
 #
-# The formatting is done here, not in the browser: the playground runs under a
-# strict CSP that blocks external hosts, so it can neither call doi.org nor
-# fetch CSL style files at runtime. Shipping the rendered strings also means the
-# citation works offline and costs no request — and a published DOI's metadata
-# does not change often enough to be worth a formatter in the bundle.
+# The formatting is done here, not in the browser: shipping the rendered strings
+# means the citation costs no request and works offline, and a published DOI's
+# metadata does not change often enough to be worth either a runtime call to
+# doi.org or a CSL formatter in the bundle.
 #
 # Formatting comes from DOI content negotiation (doi.org, backed by Crossref's
 # citeproc-js service), so the strings are the registrar's own rendering rather

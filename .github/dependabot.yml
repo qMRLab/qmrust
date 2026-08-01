@@ -1,0 +1,26 @@
+# Two ecosystems, because those are the two this repo actually has.
+#
+# The playground has no package manager: its third-party JavaScript is vendored
+# under `docs/playground/vendor/` and pinned by hash in that directory's
+# MANIFEST.json, which `scripts/check_vendor_integrity.mjs` enforces. Dependabot
+# cannot see those, so upgrading them stays a deliberate, manual act.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per week for routine bumps: 166 crates would otherwise arrive as
+      # a stream of individual PRs nobody reviews properly. Security advisories
+      # are unaffected, since Dependabot raises those regardless of grouping.
+      patch-and-minor:
+        update-types: [minor, patch]
+
+  # Actions are pinned to moving tags (`actions/checkout@v4`), so a compromised
+  # or simply changed tag lands silently. This at least surfaces the major bumps.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

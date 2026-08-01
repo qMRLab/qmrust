@@ -270,7 +270,12 @@ function buildMenu() {
     item.type = "button";
     item.className = "menu-item";
     item.setAttribute("role", "menuitem");
-    item.innerHTML = `${icon(method.icon, 15)}<span>${method.menu}</span>`;
+    // The glyph is markup, the label is text. Keeping the two apart means a
+    // menu label is never parsed as HTML, whatever it comes to be built from.
+    item.innerHTML = icon(method.icon, 15);
+    const label = document.createElement("span");
+    label.textContent = method.menu;
+    item.append(label);
     item.onclick = () => {
       closeMenu();
       choose(method);

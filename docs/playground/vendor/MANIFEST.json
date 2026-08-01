@@ -1,0 +1,106 @@
+{
+  "_comment": [
+    "Every third-party file the playground ships, pinned by SHA-256.",
+    "",
+    "The app has no package manager: its dependencies are committed blobs, some",
+    "of them minified megabytes that no reviewer reads. Two things follow. A",
+    "change to one is invisible in a pull request, so the hashes here are what",
+    "makes an edit to vendored code a deliberate, reviewable act rather than a",
+    "line in a diff nobody opens. And nothing else records what these files ARE,",
+    "so `version` is what makes it possible to ask whether a shipped library has",
+    "a published advisory against it.",
+    "",
+    "To update one: replace the file, run `node scripts/check_vendor_integrity.mjs",
+    "--update`, and record the new version in the same commit.",
+    "",
+    "`version: null` means the build carries no version string. Pin it by hash,",
+    "and record the version here when the file is next replaced from a known",
+    "release."
+  ],
+  "files": [
+    {
+      "file": "niivue.js",
+      "version": "0.69.0",
+      "source": "https://github.com/niivue/niivue",
+      "license": "BSD-2-Clause",
+      "sha256": "59bbafd414c46508aa6d009959477467f9c884ea577fcc4dea6bb55a0fd26aa9"
+    },
+    {
+      "file": "tf.js",
+      "version": "3.29.1",
+      "source": "https://github.com/tensorflow/tfjs",
+      "license": "Apache-2.0",
+      "sha256": "300dfae273d20b4046f46a06d735688f03675a807561e9bcb5f664eb2f3d2831"
+    },
+    {
+      "file": "echarts.js",
+      "version": "5.6.0",
+      "source": "https://github.com/apache/echarts",
+      "license": "Apache-2.0",
+      "sha256": "342d276d87314bfd6af8c4dd48b5cbbf8cb556642aa8a770d740057dbc996588"
+    },
+    {
+      "file": "highlight-core.js",
+      "version": "11.10.0",
+      "source": "https://github.com/highlightjs/highlight.js",
+      "license": "BSD-3-Clause",
+      "sha256": "224f718d73f37e1b85fbab697b57d75dc2013e57bc0485a8fa8534070f3e543a"
+    },
+    {
+      "file": "highlight-json.js",
+      "version": "11.10.0",
+      "source": "https://github.com/highlightjs/highlight.js",
+      "license": "BSD-3-Clause",
+      "sha256": "ea5900cde2028a6405cf69b0ec3284014ad050a73e64d26371ef4e7b44402173"
+    },
+    {
+      "file": "highlight-yaml.js",
+      "version": "11.10.0",
+      "source": "https://github.com/highlightjs/highlight.js",
+      "license": "BSD-3-Clause",
+      "sha256": "61dffad838f9a8cca2e2479e1e14c193d604de02bf5d177528e7f8b82c2626c2"
+    },
+    {
+      "file": "icons.js",
+      "version": "1.27.0",
+      "source": "https://lucide.dev",
+      "license": "ISC",
+      "sha256": "a994a2bdba6210836d266b6a1cb29c4340f2b256f5bc248a2588f4318f143aa4"
+    },
+    {
+      "file": "js-yaml.js",
+      "version": null,
+      "source": "https://github.com/nodeca/js-yaml",
+      "license": "MIT",
+      "sha256": "37e42e37298c74a605506134be6592f639ee980a6e274430843a22f30e44270e"
+    },
+    {
+      "file": "fflate.js",
+      "version": null,
+      "source": "https://github.com/101arrowz/fflate",
+      "license": "MIT",
+      "sha256": "8cc1f687e0159e977addb6b85e274dbd11e622cf151f4fcb7b85d49622ea43e7"
+    },
+    {
+      "file": "bids-logo.png",
+      "version": null,
+      "source": "https://bids.neuroimaging.io",
+      "license": "CC-BY-4.0",
+      "sha256": "c5fb0e5bb3c136de742b40a417f0c2c91609e446f874461e9e012e09a1c7f54d"
+    },
+    {
+      "file": "bids-logo-light.png",
+      "version": null,
+      "source": "https://github.com/bids-standard",
+      "license": "CC-BY-4.0",
+      "sha256": "9a03880bc55b0f561993096e0b4bb85d57ae156a46f6d872769446c110f1c569"
+    },
+    {
+      "file": "bids-logo-dark.png",
+      "version": null,
+      "source": "https://bids.neuroimaging.io",
+      "license": "CC-BY-4.0",
+      "sha256": "e5ebbb81ef0c659e2bcbb0410f2efb571a24675ceffcc8b61c07aa64406b06ba"
+    }
+  ]
+}
