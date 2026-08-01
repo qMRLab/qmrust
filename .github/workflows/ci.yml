@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
   schedule:
     # Weekly, so an advisory published against an unchanged tree is still found.
     - cron: "0 6 * * 1"
@@ -38,6 +39,33 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-audit --locked
       - run: cargo audit
+
+  # Mutation testing: corrupt the core's arithmetic and comparisons one at a
+  # time, and report every mutant the test suite still passes with. A survivor
+  # names a line whose value nothing constrains, which is precisely how this
+  # project fails — not by crashing, but by producing a plausible wrong map.
+  #
+  # Scheduled only. It takes tens of minutes, and its output is a reading list
+  # rather than a verdict, so blocking a pull request on it would be a tax
+  # without a decision attached. `continue-on-error` keeps a survivor from
+  # reading as a broken build; the report is the artifact.
+  mutants:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-mutants --locked
+      # The core alone: the shell's I/O and CLI plumbing produce mutants whose
+      # survival says nothing about whether a fit is right.
+      - run: cargo mutants --package qmrust-core --no-shuffle --timeout 120
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-report
+          path: mutants.out/
 
   native:
     runs-on: ubuntu-latest
