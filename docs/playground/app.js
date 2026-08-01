@@ -9,6 +9,7 @@
 // with. Every behaviour those listeners reach for lives in the module that owns
 // that region.
 import { paintIcons } from "./vendor/icons.js";
+import { wireCite, closeCite } from "./cite.js";
 import { $, status } from "./dom.js";
 import { app, editor, nvIn, nvOut } from "./state.js";
 import { loadBundle, fetchOrThrow, loadWasm } from "./bundles.js";
@@ -332,15 +333,17 @@ function wireDataDrop() {
   });
 }
 
-// The two modals, and the one key that closes either.
+// Every dialog, and the one key that closes any of them.
 function wireModals() {
   $("file-modal-close").onclick = closeFileModal;
   $("json-modal-close").onclick = closeJsonModal;
   $("notice-close").onclick = closeNotice;
+  wireCite();
   for (const [id, close] of [
     ["file-modal", closeFileModal],
     ["json-modal", closeJsonModal],
     ["notice-modal", closeNotice],
+    ["cite-modal", closeCite],
     ["chart-modal", closeDistributions],
   ]) {
     // The backdrop closes; the card inside it does not.
@@ -353,6 +356,7 @@ function wireModals() {
     if (!$("file-modal").hidden) closeFileModal();
     if (!$("json-modal").hidden) closeJsonModal();
     if (!$("notice-modal").hidden) closeNotice();
+    if (!$("cite-modal").hidden) closeCite();
     if (!$("chart-modal").hidden) closeDistributions();
   });
 }
