@@ -333,10 +333,10 @@ pub fn effective_model<C: ModelConfig>(
     })
 }
 
-/// Whether `text` (YAML) declares `key`'s leaf segment as a mapping key on its
-/// own line. A dotted path (`"qmt_spgr.protocol.mtdata"`) nests across
-/// separate YAML lines, so only the leaf segment can ever match a single line
-/// verbatim.
+/// Whether `text` (YAML) sets a value at the dotted `key`, following the exact
+/// nesting the path names: `"qmt_spgr.protocol.mtdata"` means `mtdata` under
+/// `protocol` under `qmt_spgr`, and the same leaf anywhere else does not count.
+/// Text that does not parse states nothing.
 pub fn states_key(text: &str, key: &str) -> bool {
     serde_yaml::from_str::<serde_yaml::Value>(text)
         .ok()

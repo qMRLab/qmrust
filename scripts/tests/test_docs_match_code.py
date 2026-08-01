@@ -8,9 +8,9 @@ quote have to be the real ones.
 Scope, deliberately narrow so it never cries wolf:
 
   * `pub type X = ...;` and `pub trait X: ...` lines quoted in a ```rust block
-    are compared verbatim against the crates. Those are exact by nature, and
-    they are where the drift that prompted this test happened (an `Effective`
-    alias that had gained a `&Protocol` parameter months after the doc froze).
+    are compared verbatim against the crates. A signature is exact by nature,
+    so a quoted one that no longer appears in the source is drift, not a
+    paraphrase.
   * `pub fn name` mentions are checked by *name only*, since the docs
     legitimately abbreviate argument lists.
 

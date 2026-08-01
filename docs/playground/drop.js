@@ -117,7 +117,7 @@ async function useDataset(files) {
   await loadModel(pick);
   const others = matches.filter((m) => m !== pick);
   if (others.length) {
-    status(`Loaded as ${pick} — also matches ${others.join(", ")}`, "info");
+    status(`Loaded as ${pick}, which also matches ${others.join(", ")}`, "info");
   }
 }
 

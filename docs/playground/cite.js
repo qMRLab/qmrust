@@ -36,7 +36,7 @@ function show(text) {
   $("cite-out").parentElement.classList.toggle("wrap", !text.includes("\n"));
 }
 
-export async function openCite() {
+async function openCite() {
   const modal = $("cite-modal");
   const select = $("cite-style");
   try {
@@ -87,7 +87,7 @@ export function wireCite() {
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
-      label.textContent = "Selected, press ⌘C";
+      label.textContent = "Selected, now copy";
     }
     setTimeout(() => {
       label.textContent = "Copy";

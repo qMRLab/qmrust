@@ -212,6 +212,7 @@ The CLI, the simulator, and the wasm bindings all resolve models through `by_nam
 
 Each model's `build`/`describe` are one-liners delegating to a **single shared
 build pipeline** in `core::model` (`build_model::<C>` / `describe_model::<C>`):
+reject a recipe that restates an acquisition the resolved protocol supplies →
 parse the config → `validate_options` → `ingest_protocol` (fold the
 BIDS-resolved per-volume protocol into the model's acquisition arrays) →
 `validate_protocol` → construct → `validate_against_protocol`. Protocol
@@ -415,9 +416,10 @@ fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` (name + BIDS suffix + `build` +
    `describe` + `dump` + `effective`). If the config has an acquisition axis
-   `ingest_protocol` overwrites, declare it in `PROTOCOL_KEYS` too — otherwise
-   the playground's recipe form offers it as editable and a resolved protocol
-   silently discards whatever value was typed there.
+   `ingest_protocol` overwrites, declare it in `PROTOCOL_KEYS` too. It is what
+   `build_model` reads to refuse a recipe that restates a resolved acquisition,
+   and what the playground's recipe form reads to show those fields as the
+   dataset's rather than as editable.
 4. If the model introduces a new BIDS suffix, add a grouping block for it to
    `crates/rust-bids/src/default_grouping.yaml` (`sequential_set` or `named_set`)
    so `qmrust fit --bids-dir` can assemble its volumes; without it a fit of the

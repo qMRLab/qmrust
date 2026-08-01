@@ -517,7 +517,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
 }
 .field-label { color: var(--ink-2); font: 12px var(--font-ui); }
-.field-key { display: none; }
 .field-row input, .field-row textarea { width: 100%; }
 .field-row textarea { min-height: 44px; resize: vertical; }
 /* A number array is one compact line at rest and one value per line while
@@ -550,19 +549,9 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .field-row.locked input,
 .field-row.locked select,
 .field-row.locked textarea { pointer-events: none; }
-.field-row .field-source {
-  margin-left: 0.4rem;
-  font-size: 0.72rem;
-  opacity: 0.75;
-}
 /* A group whose entire contents the sidecars supply (ingest_protocol replaces
    the whole object), same treatment as a locked leaf row. */
 .group.locked > .group-title { opacity: 0.6; }
-.group.locked .field-source {
-  margin-left: 0.4rem;
-  font-size: 0.72rem;
-  opacity: 0.75;
-}
 /* A control sourced from the model's acquisition protocol (editable in
    non-BIDS mode, disabled once BIDS mode locks it) — the accent border reads
    as "this is the acquisition" even when `.locked`'s opacity dims the whole
@@ -1124,9 +1113,9 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .override {
   --p: 0;                       /* knob travel, 0..1, set from the slider */
   --knob: 40px;
-  /* Leaving the dataset behind is a warning; coming back to it is not. The
-     two states carry the palette's own warning and accent tones rather than a
-     fixed red and teal, so every theme dresses the control in its own scheme. */
+  /* Leaving the dataset behind is a warning, so the locked state wears the
+     palette's warning tone; `.override.unlocked` below swaps in the accent one,
+     because coming back to the dataset is not a warning. */
   --tone: var(--bad);
   --tone-ink: var(--on-action);
   position: relative;

@@ -1,12 +1,19 @@
-//! Variable flip angle T1 mapping — Fram et al. (1987) linearized SPGR fit.
+//! Variable flip angle T1 mapping from spoiled gradient echo data.
 //!
 //! Signal model (spoiled gradient echo at steady state):
 //!   S(α) = M0 · sin(α·B1) · (1 − E) / (1 − E·cos(α·B1)),   E = exp(−TR/T1)
 //!
-//! Dividing through linearizes it: with y = S/sin(α·B1) and x = S/tan(α·B1),
+//! `FitType::Linear`, qMRLab's method and the default, is Fram et al. (1987):
+//! dividing through linearizes the equation, so with y = S/sin(α·B1) and
+//! x = S/tan(α·B1),
 //!   y = E·x + M0(1 − E)
-//! so an ordinary least-squares line through (x, y) yields T1 = −TR/ln(slope)
-//! and M0 = intercept/(1 − slope). The fit is closed form — no iteration.
+//! and an ordinary least-squares line through (x, y) yields T1 = −TR/ln(slope)
+//! and M0 = intercept/(1 − slope), in closed form.
+//!
+//! `FitType::Nonlinear` instead fits the equation itself by Levenberg-Marquardt,
+//! seeded from that closed-form solve. The linearization weights the angles
+//! unevenly, so the nonlinear fit is the more accurate of the two under noise;
+//! the linear one is the default because it is what qMRLab reports.
 
 use levenberg_marquardt::{LeastSquaresProblem, LevenbergMarquardt};
 use nalgebra::{DMatrix, DVector, Dyn, Owned};
@@ -113,8 +120,9 @@ impl VfaT1Fitter {
 
     /// Levenberg-Marquardt on the signal equation itself, minimising
     /// `S_i − S(α_i; M0, T1)`. Unconstrained, like the other iterative fitters
-    /// here — a bounded LM reparameterization distorts the step and is a trap
-    /// this codebase has hit before.
+    /// here: the usual way to bound LM is to reparameterize the variables,
+    /// which distorts the step direction and changes the answer on data that
+    /// never approached a bound.
     ///
     /// Only a solve this method cannot stand behind is rejected: one that did
     /// not converge, or a T1 that is not a positive finite number (the signal

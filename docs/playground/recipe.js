@@ -16,6 +16,7 @@ import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
 import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers, resolvedProtocolJson, clearProtocolOverrides } from "./surface.js";
 import { debounce } from "./debounce.js";
+import { inlineCodeHtml } from "./inline-code.js";
 import { fieldLabel, groupLabel } from "./labels.js";
 
 // Knob diameter in px, mirrored in `.override-knob`; the pointer guard and the
@@ -301,7 +302,7 @@ function buildWidget(value, path) {
       const parsed = ta.value.trim() === "" ? null : yamlLoad(ta.value);
       setAtPath(editor.obj, path, parsed);
       commitObjEdit();
-    } catch (e) {
+    } catch {
       // Leave the underlying object untouched; the textarea keeps the
       // reader's (currently unparsable) text so they can keep fixing it.
     }
@@ -441,15 +442,9 @@ function renderForm() {
   restoreFocus(container, focus);
 }
 
-// Slide to override: a deliberate sweep rather than a click, because unlocking
-// these fields lets the recipe contradict the dataset it is fitted against —
-// and a value typed here is recorded in the output provenance as if the
-// acquisition said so. Built on a range input, so it is keyboard- and
-// screen-reader-operable without reimplementing a drag; a sweep that stops
-// short springs back, so only a full travel counts.
 // The knob's glyph points the way the sweep goes: right to override, left to
-// come back. Direction is the whole instruction, so it beats a padlock that
-// only says which state you are in.
+// come back. Direction is the whole instruction, so it beats a padlock, which
+// only says which state you are already in.
 function arrowIcon(pointsLeft) {
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(NS, "svg");
@@ -553,9 +548,13 @@ function overrideControl() {
   return wrap;
 }
 
+// Backticked terms are set as `<code>` here exactly as they are in the notice
+// dialog: the same messages reach both surfaces, and a config key that reads as
+// code in one and as stray punctuation in the other is the app disagreeing with
+// itself about what it just said.
 function showConfigError(message) {
   const box = $("cfg-error");
-  box.textContent = message ?? "";
+  box.innerHTML = message ? inlineCodeHtml(message) : "";
   box.hidden = !message;
 }
 
@@ -581,7 +580,7 @@ export function setEditorText(text) {
     editor.valid = true;
     setYamlPill(true);
     scheduleSurfaceRefresh();
-  } catch (e) {
+  } catch {
     editor.valid = false;
     setYamlPill(false);
   }
