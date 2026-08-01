@@ -1,5 +1,11 @@
 <!doctype html>
 <meta charset="utf-8">
+<!-- Without this a phone browser lays the page out in a ~980px imaginary
+     viewport and then scales the result down, so the `max-width: 900px`
+     breakpoint below never matches and a phone gets the desktop grid in
+     miniature. Resizing a desktop window works either way, which is what makes
+     the omission easy to miss. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>qMRust</title>
 <link rel="icon" type="image/x-icon" href="./favicon.ico">
 <link rel="stylesheet" href="./app.css">
