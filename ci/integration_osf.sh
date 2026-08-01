@@ -7,6 +7,15 @@ DATA="${1:-osf-data}"
 BIN="${QMRUST_BIN:-./target/release/qmrust}"
 mkdir -p "$DATA"
 
+# `realpath` is not on every runner image, and the paths here are built from
+# `$DATA`, which may itself be absolute or relative.
+abs() {
+  case "$1" in
+    /*) printf '%s' "$1" ;;
+    *) printf '%s/%s' "$PWD" "$1" ;;
+  esac
+}
+
 echo "Downloading qMRLab OSF datasets..."
 curl -L --fail -o "$DATA/ir.zip"       "https://osf.io/cmg9z/download?version=3"
 curl -L --fail -o "$DATA/qmt.zip"      "https://osf.io/pzqyn/download?version=2"
@@ -195,8 +204,14 @@ python3 ci/compare_maps.py \
 # `--include-ignored` rather than `--ignored`: the latter runs ONLY ignored
 # tests, so if these ever stop being ignored this line keeps running them
 # instead of silently running nothing.
+# Absolute paths, because `cargo test` runs a test binary with the PACKAGE
+# directory as its working directory, not the workspace root. Every other
+# command here invokes the CLI from the root, so these are the only paths in
+# the script that cannot be relative.
 echo "Checking the BIDS and .mat pipelines agree..."
-QMRUST_IR_MAT="$IR_MAT" QMRUST_IR_MASK="$IR_MASK" QMRUST_QMT_MAT="$QMT_MAT" \
+QMRUST_IR_MAT="$(abs "$IR_MAT")" \
+QMRUST_IR_MASK="$(abs "$IR_MASK")" \
+QMRUST_QMT_MAT="$(abs "$QMT_MAT")" \
   cargo test -p qmrust-cli --release fit_matches_mat_fit \
   -- --include-ignored --nocapture --test-threads=1
 
