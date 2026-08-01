@@ -30,3 +30,6 @@ MTR:
     MToff:
       mt: "off"
     required: [MTon, MToff]
+VFA:
+  sequential_set:
+    by: [flip]

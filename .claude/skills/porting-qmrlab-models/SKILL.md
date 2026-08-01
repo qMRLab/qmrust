@@ -54,7 +54,7 @@ doubt, ask — that is cheaper at every phase than discovering it at validation.
 (or read it from a configured location) and confirm the target model name. It reads
 `.m` files directly with Read/Grep. Record how this model fetches its example data
 (an `onlineData` URL / demo `*_batch.m` / `qMRgenBatch` download) — the port depends
-on it for the bidsify and validation gates.
+on it for the bidsify, validation, and app-integration gates.
 
 **Phase 1 — Read the class.** Locate `equations`/`fit`/`Prot`/`xnames`/`st,lb,ub,fx`
 and options in the `.m` files. Produce a written statement of the signal equation,
@@ -66,6 +66,36 @@ with their units.
 `TODO(port)` markers in `config.rs` (config fields), `fit.rs` (signal equation +
 fitter), `model.rs` (protocol mapping / `bids()`), and the `default_grouping.yaml`
 grouping block. Write the forward→fit round-trip test.
+
+For a `Series` model, **the per-volume protocol params *are* the volume
+identity** (`engine::build_volume_ids` builds them from `proto.volumes`), and
+`forward` must tag its samples with exactly the same keys. So a quantity that is
+constant across the series — a single TR, a fixed TE — belongs in
+`Scope::Global`, not `Scope::PerVolume`: as a per-volume param it silently joins
+the identity on one side only, and no predicted sample matches its volume. The
+fit keeps working, because it queries one key by name; the only symptom is a
+missing forward curve in the app. Assert the two agree, don't eyeball it:
+```rust
+// Compared by volume index: any drift between the protocol-derived identity
+// and the sample `forward` emits for that volume fails here, immediately.
+let ids = crate::engine::build_volume_ids(m.measurement(), &proto, m.n_volumes()).unwrap();
+let sig = m.forward(&params, &Aux::new());
+let samples = sig.series();
+assert_eq!(samples.len(), ids.len());
+for (id, sample) in ids.iter().zip(samples) {
+    let crate::core::model::VolumeId::Params(row) = id else {
+        panic!("a Series model must yield param-row identities")
+    };
+    assert_eq!(
+        *row, sample.params,
+        "volume identity {row:?} has no matching forward sample {:?}",
+        sample.params
+    );
+}
+```
+`models/vfa_t1/model.rs` carries this as
+`forward_samples_carry_the_volume_identities_the_bids_path_builds`; copy it and
+swap the model.
 → *Gate: confirm the translation; round-trip test passes.*
 
 **Phase 3 — Wire.** Confirm the registry line and grouping block the scaffold added;
@@ -94,6 +124,49 @@ per-volume axis that `Protocol` already records from the sidecars.
 `FitResults` for the same dataset.
 → *Gate: human reviews the delta and signs off.*
 
+**Phase 6 — Ship it in the app.** A model nobody can reach in the playground is
+half-ported. The playground (`docs/playground/`) and `qmrust-wasm` are entirely
+data-driven — no per-model JS, HTML, CSS, or wasm binding exists, and none should
+be added. What the app needs is the model's *example dataset and payload*, both
+generated:
+
+1. Add the model's block to `scripts/make_bids_examples.sh` — an OSF `fetch`
+   line, and a `ds-<lowercased suffix>` section that bidsifies, fits, and
+   `assert_maps`-checks its outputs. Roots are named from the registry suffix, so
+   there is no model→directory table to edit. Run it with `--zip`.
+2. Regenerate the catalog and the playground payload:
+   ```bash
+   ./target/release/qmrust catalog > catalog.json
+   python3 scripts/make_docs_figures.py --bids-dir <dataset parent> \
+     --catalog catalog.json --bundle-slice
+   ```
+   This writes `docs/figures/<model>/*.webp`, `docs/playground/data/<model>.json`
+   (+ its `.nii.gz` slices) and re-derives `docs/playground/data/index.json`,
+   which is what the model picker reads. A model missing from `index.json` means
+   its dataset root wasn't found — fix step 1, don't hand-edit the manifest.
+3. Check the generated payload's `files.aux` lists every optional input the model
+   declares, and that its `probes` agree with the CLI's own maps. An aux map that
+   silently fails to resolve makes the app fit uncorrected while the CLI corrects
+   — the maps then differ with nothing to point at.
+4. **Rebuild the playground wasm before serving locally.** No wasm *source* edit
+   is needed, but `docs/playground/pkg/` is a gitignored build artifact: a stale
+   one carries the old registry and the app fails with `Unknown model: '<name>'`
+   while still rendering the pre-baked slice, which reads like a data problem and
+   is not. CI rebuilds it on deploy, so this bites local testing only.
+   ```bash
+   cd crates/qmrust-wasm && wasm-pack build --target web --out-dir ../../docs/playground/pkg
+   ```
+   Then hard-reload — browsers cache the `.wasm`.
+5. Upload `ds-<suffix>.zip` to the Zenodo deposition behind
+   `docs/playground/data/sources.json` (the fetch path resolves
+   `${base}/${archive}${suffix}`). Adding a file mints a **new version id**, so
+   afterwards update `record`/`doi`/`base` to that id — the concept id 404s on
+   the `/api/` files route. Then confirm every model's archive still resolves
+   200 with `Access-Control-Allow-Origin: *`, not just the new one. **This
+   publishes data externally — confirm with the user before uploading.**
+→ *Gate: the model appears in `docs/playground/data/index.json`, its payload has
+the expected aux + probes, and the user has confirmed the archive upload.*
+
 ## Definition of done
 
 Always required:
@@ -113,7 +186,12 @@ qMRLab model defines how to fetch it):
   suffix, per-volume entities, and sidecars match `bids()`/`bids_volume()`, voxel data
   byte-identical to source;
 - the model fits that bidsified data via `qmrust fit --bids-dir` with the BIDS recipe,
-  and its output provenance does not duplicate the acquisition axis into `Parameters`.
+  and its output provenance does not duplicate the acquisition axis into `Parameters`;
+- the model is reachable in the playground: a `scripts/make_bids_examples.sh` block
+  builds its `ds-<suffix>` root, and a regenerated
+  `docs/playground/data/{index.json,<model>.json}` (+ slices) carries its aux maps and
+  CLI-agreeing probes. No per-model JS/HTML/CSS/wasm edit is ever part of this — if one
+  seems necessary, the app has grown a special case that belongs in the data instead.
 
 Required when a qMRLab reference result exists (e.g. `FitResults` on OSF):
 

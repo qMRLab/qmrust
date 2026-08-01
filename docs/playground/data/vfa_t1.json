@@ -1,0 +1,127 @@
+{
+ "model": "vfa_t1",
+ "title": "Variable flip angle T1",
+ "dims": [
+  128,
+  128,
+  1,
+  2
+ ],
+ "factor": 1,
+ "volume_ids": [
+  {
+   "FlipAngle": 3.0
+  },
+  {
+   "FlipAngle": 20.0
+  }
+ ],
+ "labels": [
+  "FlipAngle=3",
+  "FlipAngle=20"
+ ],
+ "params": [
+  "M0",
+  "T1"
+ ],
+ "outputs": [
+  {
+   "name": "M0",
+   "unit": "",
+   "display_range": null
+  },
+  {
+   "name": "T1",
+   "unit": "s",
+   "display_range": [
+    0.0,
+    3.0
+   ]
+  }
+ ],
+ "enums": [
+  {
+   "key": "fit_type",
+   "values": [
+    "linear",
+    "nonlinear"
+   ]
+  }
+ ],
+ "config": "model: vfa_t1\n\n# non-BIDS: protocol from this file; mask via --mask\n# Flip angles in degrees (BIDS-MRI convention), times in seconds (BIDS/SI).\n# The linearization assumes one repetition time for the whole series.\nflip_angles:\n- 3\n- 20\nrepetition_time: 0.015\n\n# Fit algorithm. `linear` (default) is qMRLab's closed-form Fram linearization;\n# `nonlinear` refines it with Levenberg-Marquardt on the signal equation, which\n# avoids the bias the linearizing transform puts into the noise at low SNR.\nfit_type: linear\n",
+ "config_bids": "model: vfa_t1\n\n# BIDS input: FlipAngle and RepetitionTimeExcitation are read from the JSON\n# sidecars via the model's protocol_schema(), so neither is declared here.\n\n# Fit algorithm (an option, not BIDS metadata): `linear` is qMRLab's closed-form\n# Fram linearization; `nonlinear` minimises residuals on the signal equation by\n# Levenberg-Marquardt, avoiding the bias the linearizing transform puts into the\n# noise at low SNR.\nfit_type: linear\n\n# BIDS mask selection \u2014 disambiguates which mask in the dataset to apply.\nmask:\n  desc: brain\n",
+ "archive": "ds-vfa.zip",
+ "files": {
+  "data": "vfa_t1.nii.gz",
+  "mask": "vfa_t1_mask.nii.gz",
+  "aux": {
+   "B1map": "vfa_t1_B1map.nii.gz"
+  }
+ },
+ "probes": [
+  {
+   "x": 63,
+   "y": 59,
+   "expected": {
+    "M0": 2017.1513907209396,
+    "T1": 1.4076235954840055
+   }
+  },
+  {
+   "x": 64,
+   "y": 59,
+   "expected": {
+    "M0": 2111.823122138415,
+    "T1": 1.4562254803249461
+   }
+  },
+  {
+   "x": 63,
+   "y": 60,
+   "expected": {
+    "M0": 2145.100057682434,
+    "T1": 1.5859305684325227
+   }
+  },
+  {
+   "x": 64,
+   "y": 60,
+   "expected": {
+    "M0": 2108.1317440617295,
+    "T1": 1.4006565344003077
+   }
+  },
+  {
+   "x": 63,
+   "y": 58,
+   "expected": {
+    "M0": 2015.2958905178357,
+    "T1": 1.3885884764696066
+   }
+  },
+  {
+   "x": 64,
+   "y": 58,
+   "expected": {
+    "M0": 2192.3412331455734,
+    "T1": 1.5275379988657982
+   }
+  },
+  {
+   "x": 62,
+   "y": 59,
+   "expected": {
+    "M0": 2190.2632839853895,
+    "T1": 1.3987500936664004
+   }
+  },
+  {
+   "x": 65,
+   "y": 59,
+   "expected": {
+    "M0": 2194.8853412259723,
+    "T1": 1.495468881160807
+   }
+  }
+ ]
+}

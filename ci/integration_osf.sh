@@ -13,11 +13,13 @@ curl -L --fail -o "$DATA/qmt.zip"      "https://osf.io/pzqyn/download?version=2"
 curl -L --fail -o "$DATA/mono_t2.zip"  "https://osf.io/kujp3/download?version=3"
 curl -L --fail -o "$DATA/mtr.zip"      "https://osf.io/erm2s/download?version=2"
 curl -L --fail -o "$DATA/mtsat.zip"    "https://osf.io/c5wdb/download?version=4"
+curl -L --fail -o "$DATA/vfa_t1.zip"   "https://osf.io/7wcvh/download?version=3"
 unzip -o -q "$DATA/ir.zip"      -d "$DATA/ir"
 unzip -o -q "$DATA/qmt.zip"     -d "$DATA/qmt"
 unzip -o -q "$DATA/mono_t2.zip" -d "$DATA/mono_t2"
 unzip -o -q "$DATA/mtr.zip"     -d "$DATA/mtr"
 unzip -o -q "$DATA/mtsat.zip"   -d "$DATA/mtsat"
+unzip -o -q "$DATA/vfa_t1.zip"  -d "$DATA/vfa_t1"
 
 # Locate the datasets by their key files (robust to archive folder layout).
 IR_MAT="$(find "$DATA/ir" -name 'IRData.mat' | head -1)"
@@ -57,6 +59,19 @@ MTSAT_REF_MTR="$(find "$DATA/mtsat" -path '*FitResults*' -name 'MTR.nii.gz' | he
 [ -n "$MTSAT_MTW" ]     || { echo "MTw.nii.gz not found in MTsat archive"; exit 1; }
 [ -n "$MTSAT_REF_SAT" ] || { echo "FitResults/MTSAT.nii.gz not found in MTsat archive"; exit 1; }
 MTSAT_DIR="$(dirname "$MTSAT_MTW")"
+
+# vfa_t1 ships as a 4D NIfTI (VFAData.nii.gz, flip angles in the 4th axis) plus
+# a transmit field map and a mask, with a qMRLab reference (FitResults/).
+VFA_DATA="$(find "$DATA/vfa_t1" -name 'VFAData.nii.gz' | head -1)"
+VFA_B1="$(find "$DATA/vfa_t1" -name 'B1map.nii.gz' | head -1)"
+VFA_MASK="$(find "$DATA/vfa_t1" -name 'Mask.nii.gz' | head -1)"
+VFA_REF_T1="$(find "$DATA/vfa_t1" -path '*FitResults*' -name 'T1.nii.gz' | head -1)"
+VFA_REF_M0="$(find "$DATA/vfa_t1" -path '*FitResults*' -name 'M0.nii.gz' | head -1)"
+[ -n "$VFA_DATA" ]   || { echo "VFAData.nii.gz not found in VFA archive"; exit 1; }
+[ -n "$VFA_B1" ]     || { echo "B1map.nii.gz not found in VFA archive"; exit 1; }
+[ -n "$VFA_MASK" ]   || { echo "Mask.nii.gz not found in VFA archive"; exit 1; }
+[ -n "$VFA_REF_T1" ] || { echo "FitResults/T1.nii.gz not found in VFA archive"; exit 1; }
+[ -n "$VFA_REF_M0" ] || { echo "FitResults/M0.nii.gz not found in VFA archive"; exit 1; }
 
 echo "Running IR fit..."
 "$BIN" fit --mat-data "$IR_MAT" --mask "$IR_MASK" \
@@ -99,12 +114,25 @@ echo "Running mt_sat bidsify + BIDS-path fit..."
 "$BIN" fit --bids-dir "$DATA/mtsat_bids" \
   --config recipes/bids/mt_sat_config.yaml --output-dir "$DATA/out_mtsat"
 
+echo "Running vfa_t1 bidsify + BIDS-path fit..."
+# bidsify reads the 4D series from --nii-data and the transmit map via --aux;
+# the non-BIDS recipe supplies the flip angles and TR, written into the VFA
+# sidecars. The BIDS-path fit folds those sidecars back in and resolves the
+# TB1map derivative as the model's optional B1map input.
+"$BIN" bidsify --model vfa_t1 --nii-data "$VFA_DATA" --nii-mask "$VFA_MASK" \
+  --aux "B1map=$VFA_B1" \
+  --config recipes/non-bids/vfa_t1_config.yaml --subject 01 --out "$DATA/vfa_t1_bids"
+"$BIN" fit --bids-dir "$DATA/vfa_t1_bids" \
+  --config recipes/bids/vfa_t1_config.yaml --output-dir "$DATA/out_vfa_t1"
+
 echo "Asserting outputs..."
 for f in "$DATA/out_ir/T1.nii.gz" "$DATA/out_ramani/F.nii.gz" "$DATA/out_srp/F.nii.gz" \
          "$DATA/out_mono_t2/qmrust/sub-01/anat/sub-01_T2map.nii.gz" \
          "$DATA/out_mtr/qmrust/sub-01/anat/sub-01_MTRmap.nii.gz" \
          "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_MTsat.nii.gz" \
-         "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_T1map.nii.gz"; do
+         "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_T1map.nii.gz" \
+         "$DATA/out_vfa_t1/qmrust/sub-01/anat/sub-01_T1map.nii.gz" \
+         "$DATA/out_vfa_t1/qmrust/sub-01/anat/sub-01_M0map.nii.gz"; do
   test -s "$f" || { echo "MISSING or empty: $f"; exit 1; }
 done
 
@@ -140,5 +168,16 @@ python3 ci/compare_maps.py \
 python3 ci/compare_maps.py \
   "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_MTRmap.nii.gz" "$MTSAT_REF_MTR" \
   --rel-tol 0.001 --min-frac 0.99 --min-corr 0.999 --label mt_sat-MTR
+
+# vfa_t1 is a closed-form linearized least-squares solve with the same B1 map
+# qMRLab used, and both report T1 in seconds, so every masked voxel agrees to
+# the float32 precision the maps are stored in.
+echo "Comparing vfa_t1 maps to qMRLab FitResults..."
+python3 ci/compare_maps.py \
+  "$DATA/out_vfa_t1/qmrust/sub-01/anat/sub-01_T1map.nii.gz" "$VFA_REF_T1" \
+  --rel-tol 0.001 --min-frac 0.999 --min-corr 0.999 --label vfa_t1-T1
+python3 ci/compare_maps.py \
+  "$DATA/out_vfa_t1/qmrust/sub-01/anat/sub-01_M0map.nii.gz" "$VFA_REF_M0" \
+  --rel-tol 0.001 --min-frac 0.999 --min-corr 0.999 --label vfa_t1-M0
 
 echo "OSF integration OK"

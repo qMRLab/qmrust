@@ -134,7 +134,21 @@ def find(parent, model):
     for spec in model["required_inputs"]:
         if not spec["bids_suffix"]:
             continue
-        found = sorted(deriv.glob(f"*/{subject}/anat/*_{spec['bids_suffix']}.nii*"))
+        # Any datatype directory: bidsify files a map by BIDS convention, so a
+        # transmit/off-resonance map lands in `fmap/` and a parameter map in
+        # `anat/`. Globbing only one silently drops the other, and the fit then
+        # runs uncorrected while the CLI applies it.
+        found = sorted(deriv.glob(f"*/{subject}/*/*_{spec['bids_suffix']}.nii*"))
+        if len(found) > 1:
+            # Several derivatives claim the same input. Picking one silently
+            # would fit against a map nobody chose, and the figures and the
+            # playground payload would disagree with a CLI run that picked
+            # differently.
+            raise ValueError(
+                f"{model['name']}: {len(found)} candidates for aux input "
+                f"'{spec['name']}' ({spec['bids_suffix']}): "
+                f"{[str(p) for p in found]}. Leave exactly one in the dataset."
+            )
         if found:
             aux[spec["name"]] = found[0]
 

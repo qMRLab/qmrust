@@ -230,7 +230,10 @@ export async function loadModel(name) {
     showLoading(`fetching ${meta.archive}…`, (meta.dims?.[3] ?? 8) * 2 + 4);
     try {
       const ok = await loadModelFromBids(name, meta);
-      endLoading();
+      // A dataset that resolved is showing its volumes: land on the viewer. One
+      // that resolved to nothing this model can fit has already selected Files
+      // to say why, so leave that standing.
+      endLoading(ok ? "viewer" : null);
       if (ok) return;
     } catch (e) {
       endLoading();

@@ -244,6 +244,43 @@ pub fn all() -> &'static [ModelEntry] {
             },
         },
         ModelEntry {
+            name: "vfa_t1",
+            bids_suffix: "VFA",
+            build: models::vfa_t1::build,
+            describe: models::vfa_t1::describe,
+            dump: models::vfa_t1::dump,
+            doc: ModelDoc {
+                title: "Variable flip angle T1",
+                category: Category::Relaxometry,
+                summary: "Fits the longitudinal relaxation time T1 from spoiled \
+                    gradient-echo images acquired at two or more excitation flip \
+                    angles and a single repetition time. Dividing the \
+                    steady-state signal by the sine of the flip angle \
+                    linearizes the model, so T1 and the equilibrium \
+                    magnetization follow from an ordinary least-squares line \
+                    through the transformed data — a closed-form solve, with no \
+                    iteration. That transform also divides the noise, which \
+                    biases the estimate at low SNR, so a nonlinear fit_type is \
+                    available that minimises residuals on the signal equation \
+                    itself. A transmit field map, when supplied, scales the \
+                    nominal flip angles to the actual ones before the fit.",
+                equation: r"S(\alpha) = M_0 \sin(\alpha)\,\frac{1 - e^{-T_R/T_1}}{1 - \cos(\alpha)\,e^{-T_R/T_1}}",
+                symbols: &[
+                    ("M0", "Equilibrium magnetization", ""),
+                    ("T1", "Longitudinal relaxation time", "s"),
+                ],
+                citations: &["fram1987"],
+                source_dir: "crates/qmrust-core/src/models/vfa_t1",
+                recipes: Recipes {
+                    bids: "recipes/bids/vfa_t1_config.yaml",
+                    non_bids: "recipes/non-bids/vfa_t1_config.yaml",
+                    sim: None,
+                },
+                enums: &[("fit_type", &["linear", "nonlinear"])],
+                display_ranges: &[("T1", 0.0, 3.0)],
+            },
+        },
+        ModelEntry {
             name: "qmt_spgr",
             bids_suffix: "QMTSPGR",
             build: models::qmt_spgr::build,

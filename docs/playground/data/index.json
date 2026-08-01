@@ -4,6 +4,7 @@
   "mono_t2",
   "mt_ratio",
   "mt_sat",
-  "qmt_spgr"
+  "qmt_spgr",
+  "vfa_t1"
  ]
 }

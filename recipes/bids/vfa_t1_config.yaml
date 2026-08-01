@@ -1,0 +1,14 @@
+model: vfa_t1
+
+# BIDS input: FlipAngle and RepetitionTimeExcitation are read from the JSON
+# sidecars via the model's protocol_schema(), so neither is declared here.
+
+# Fit algorithm (an option, not BIDS metadata): `linear` is qMRLab's closed-form
+# Fram linearization; `nonlinear` minimises residuals on the signal equation by
+# Levenberg-Marquardt, avoiding the bias the linearizing transform puts into the
+# noise at low SNR.
+fit_type: linear
+
+# BIDS mask selection — disambiguates which mask in the dataset to apply.
+mask:
+  desc: brain

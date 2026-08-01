@@ -160,5 +160,60 @@ class TestProbeConvention(unittest.TestCase):
                 figs._verify_probes(data_path, probes, transposed)
 
 
+class TestAuxDiscovery(unittest.TestCase):
+    """A declared optional input must be found wherever `bidsify` files it.
+
+    Maps are placed by BIDS datatype convention — a transmit/off-resonance map
+    under `fmap/`, a parameter map under `anat/` — so a discovery that searches
+    only one datatype silently drops the other. The symptom is the worst kind:
+    the app fits uncorrected while the CLI corrects, and both produce plausible
+    maps that simply disagree.
+    """
+
+    def _dataset(self, tmp, datatype):
+        model = named_model(required_inputs=[
+            {"name": "B1map", "bids_suffix": "TB1map", "required": False},
+        ])
+        root = dataset.root_for(tmp, model)
+        anat = root / "sub-01" / "anat"
+        anat.mkdir(parents=True)
+        for mt in ("on", "off"):
+            nifti.write_nii(anat / f"sub-01_mt-{mt}_MTR.nii.gz", [[1.0, 1.0], [1.0, 1.0]])
+            (anat / f"sub-01_mt-{mt}_MTR.json").write_text("{}")
+        aux_dir = root / "derivatives" / "preprocessed" / "sub-01" / datatype
+        aux_dir.mkdir(parents=True)
+        nifti.write_nii(aux_dir / "sub-01_TB1map.nii.gz", [[1.0, 1.0], [1.0, 1.0]])
+        return model
+
+    def test_finds_aux_under_fmap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = self._dataset(tmp, "fmap")
+            coll = dataset.find(tmp, model)
+            self.assertIn("B1map", coll.aux)
+            self.assertEqual(coll.aux["B1map"].name, "sub-01_TB1map.nii.gz")
+
+    def test_two_candidates_for_one_aux_input_is_an_error(self):
+        # The glob spans every pipeline and datatype, so two derivatives can
+        # claim the same input. Taking the first silently fits against a map
+        # nobody chose, and a CLI run that picked the other would disagree.
+        with tempfile.TemporaryDirectory() as tmp:
+            model = self._dataset(tmp, "fmap")
+            second = (
+                dataset.root_for(tmp, model)
+                / "derivatives" / "other" / "sub-01" / "anat"
+            )
+            second.mkdir(parents=True)
+            nifti.write_nii(second / "sub-01_TB1map.nii.gz", [[2.0, 2.0], [2.0, 2.0]])
+            with self.assertRaises(ValueError) as caught:
+                dataset.find(tmp, model)
+            self.assertIn("TB1map", str(caught.exception))
+
+    def test_finds_aux_under_anat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = self._dataset(tmp, "anat")
+            coll = dataset.find(tmp, model)
+            self.assertIn("B1map", coll.aux)
+
+
 if __name__ == "__main__":
     unittest.main()
