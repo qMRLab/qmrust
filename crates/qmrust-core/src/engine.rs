@@ -240,20 +240,67 @@ fn run_voxelwise(
     let output_names = model.output_names();
     let n_outputs = output_names.len();
     let kind = model.measurement();
-    let results: Vec<_> = indices
-        .par_iter()
-        .map(|&(x, y, z)| {
+    // Voxels are handed to the model in blocks so that a model whose per-voxel
+    // work sweeps a shared read-only structure can stream it once per block
+    // (see `Model::fit_block`). Blocks stay small enough that the parallel
+    // scheduler still balances well across cores on a partially-masked volume.
+    const FIT_BLOCK: usize = 64;
+
+    let fit_one = |x: usize, y: usize, z: usize| {
+        // `build_measurement` can panic on a shell/model `MeasurementKind`
+        // mismatch (an internal invariant violation, not per-voxel data);
+        // keep it under the same `catch_unwind` as `fit` so it surfaces
+        // as a failed voxel rather than aborting the whole parallel run.
+        //
+        // Isolation holds only where unwinding does. The wasm targets are
+        // `panic = "abort"`, so there a panic anywhere under this call takes
+        // down the module and no voxel is recorded as failed.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let voxel: Vec<f64> = (0..n_t).map(|t| data[[x, y, z, t]]).collect();
-            let a = aux.at(x, y, z);
-            // `build_measurement` can panic on a shell/model `MeasurementKind`
-            // mismatch (an internal invariant violation, not per-voxel data);
-            // keep it under the same `catch_unwind` as `fit` so it surfaces
-            // as a failed voxel rather than aborting the whole parallel run.
-            let fit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let meas = build_measurement(&kind, &voxel, volume_ids);
-                model.fit(&meas, &a)
+            let meas = build_measurement(&kind, &voxel, volume_ids);
+            model.fit(&meas, &aux.at(x, y, z))
+        }))
+        .ok()
+    };
+
+    let results: Vec<_> = indices
+        .par_chunks(FIT_BLOCK)
+        .flat_map_iter(|chunk| {
+            let block = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let ms: Vec<Measurement> = chunk
+                    .iter()
+                    .map(|&(x, y, z)| {
+                        let voxel: Vec<f64> = (0..n_t).map(|t| data[[x, y, z, t]]).collect();
+                        build_measurement(&kind, &voxel, volume_ids)
+                    })
+                    .collect();
+                let auxes: Vec<Aux> = chunk.iter().map(|&(x, y, z)| aux.at(x, y, z)).collect();
+                let values = model.fit_block(&ms, &auxes);
+                assert_eq!(
+                    values.len(),
+                    chunk.len(),
+                    "fit_block returned {} results for {} voxels",
+                    values.len(),
+                    chunk.len()
+                );
+                values
             }));
-            ((x, y, z), fit.ok())
+            match block {
+                Ok(values) => chunk
+                    .iter()
+                    .copied()
+                    .zip(values.into_iter().map(Some))
+                    .collect::<Vec<_>>(),
+                // Where unwinding is available, a panic takes down the whole
+                // block, so re-run it voxel by voxel to isolate the offender:
+                // only genuinely bad voxels are recorded as failed, matching
+                // unblocked behaviour.
+                Err(_) => chunk
+                    .iter()
+                    .map(|&(x, y, z)| ((x, y, z), fit_one(x, y, z)))
+                    .collect::<Vec<_>>(),
+            }
+            .into_iter()
         })
         .collect();
     progress(total as u64);

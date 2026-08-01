@@ -587,6 +587,18 @@ pub trait Model: Send + Sync {
     fn forward(&self, params: &[f64], aux: &Aux) -> Measurement;
     /// Fit an identity-keyed measurement, returning values in `output_names` order.
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;
+    /// Fit a block of voxels in one call, returning one `output_names`-ordered
+    /// result per input, in input order.
+    ///
+    /// The default fits each voxel independently. Override it when the per-voxel
+    /// work sweeps a large read-only structure — a search grid, a dictionary —
+    /// that a block can share, so it is streamed once per block instead of once
+    /// per voxel. An override must return exactly `ms.len()` results and each
+    /// must equal what [`Model::fit`] would produce for that voxel; the engine
+    /// falls back to per-voxel fitting if the count disagrees.
+    fn fit_block(&self, ms: &[Measurement], aux: &[Aux]) -> Vec<Vec<f64>> {
+        ms.iter().zip(aux).map(|(m, a)| self.fit(m, a)).collect()
+    }
     /// Number of acquired volumes this model's protocol describes.
     fn n_volumes(&self) -> usize;
     /// BIDS write descriptor for the i-th volume (0-based).
