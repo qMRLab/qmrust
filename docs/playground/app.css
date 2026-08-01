@@ -911,9 +911,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 /* A notice, as opposed to the two viewer modals: this one carries a sentence the
    reader has to act on, so it is narrow, centred and has a single way out. */
 .notice-card {
-  /* `.modal-card` is sized for an image viewer (a fixed 86vh), which leaves a
-     sentence floating in an empty column — this one is as tall as its text. */
-  height: auto; max-width: 46ch;
+  /* Sizing comes from `.modal-card.compact`; this is only the message layout. */
   padding: 20px 22px 18px; text-align: center;
   display: flex; flex-direction: column; align-items: center; gap: 10px;
 }
@@ -934,6 +932,19 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   width: min(92vw, 940px); height: min(86vh, 720px);
   display: flex; flex-direction: column; padding: 10px; gap: 8px;
 }
+/* A dialog that carries a message, not a viewer. `.modal-card` fixes a height
+   for an image or a file listing, which leaves a paragraph floating in an empty
+   column. This is qualified by `.modal-card` and declared after it: an equally
+   specific rule earlier in the file loses to it on source order alone. */
+.modal-card.compact {
+  width: auto;
+  height: auto;
+  max-width: min(92vw, 640px);
+  max-height: 86vh;
+}
+.modal-card.compact .modal-body { flex: 0 1 auto; }
+.modal-card.notice-card { max-width: 46ch; }
+
 .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .modal-head .files-name {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
@@ -1244,13 +1255,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    a file listing, far too big for a paragraph of text. This one sizes to its
    content instead, capped so a long BibTeX entry scrolls rather than growing
    past the viewport. */
-#cite-modal .modal-card {
-  width: auto;
-  height: auto;
-  max-width: min(92vw, 640px);
-  max-height: 86vh;
-}
-#cite-modal .modal-body { flex: 0 1 auto; }
+
 .cite-body {
   display: grid;
   gap: 10px;
