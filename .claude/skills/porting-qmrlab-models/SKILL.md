@@ -76,9 +76,26 @@ the identity on one side only, and no predicted sample matches its volume. The
 fit keeps working, because it queries one key by name; the only symptom is a
 missing forward curve in the app. Assert the two agree, don't eyeball it:
 ```rust
-let ids = engine::build_volume_ids(m.measurement(), &proto, m.n_volumes())?;
-// every ids[i] (VolumeId::Params) == m.forward(..).series()[i].params
+// Compared by volume index: any drift between the protocol-derived identity
+// and the sample `forward` emits for that volume fails here, immediately.
+let ids = crate::engine::build_volume_ids(m.measurement(), &proto, m.n_volumes()).unwrap();
+let sig = m.forward(&params, &Aux::new());
+let samples = sig.series();
+assert_eq!(samples.len(), ids.len());
+for (id, sample) in ids.iter().zip(samples) {
+    let crate::core::model::VolumeId::Params(row) = id else {
+        panic!("a Series model must yield param-row identities")
+    };
+    assert_eq!(
+        *row, sample.params,
+        "volume identity {row:?} has no matching forward sample {:?}",
+        sample.params
+    );
+}
 ```
+`models/vfa_t1/model.rs` carries this as
+`forward_samples_carry_the_volume_identities_the_bids_path_builds`; copy it and
+swap the model.
 → *Gate: confirm the translation; round-trip test passes.*
 
 **Phase 3 — Wire.** Confirm the registry line and grouping block the scaffold added;
