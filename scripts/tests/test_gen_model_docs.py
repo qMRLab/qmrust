@@ -32,9 +32,9 @@ def minimal_model(**over):
         "recipes": {"bids": BIDS_RECIPE, "non_bids": NON_BIDS_RECIPE, "sim": None},
         "params": [{"name": "T1", "lower": None, "upper": None, "fixed": False}],
         "outputs": [{"name": "T1", "bids_suffix": "T1map", "unit": "s",
-                     "diagnostic": False},
+                     "datatype": "anat", "diagnostic": False},
                     {"name": "res", "bids_suffix": None, "unit": None,
-                     "diagnostic": True}],
+                     "datatype": None, "diagnostic": True}],
         "measurement": {"kind": "series", "roles": [],
                         "rows": [{"InversionTime": 0.35}, {"InversionTime": 0.5}]},
         "protocol_schema": [{"name": "InversionTime", "source": "field",
@@ -62,11 +62,11 @@ class TestRendering(unittest.TestCase):
         """An output absent from `params` is derived, not fitted: never 'free'."""
         m = minimal_model(outputs=[
             {"name": "T1", "bids_suffix": "T1map", "unit": "s",
-             "diagnostic": False},
+             "datatype": "anat", "diagnostic": False},
             {"name": "MTR", "bids_suffix": "MTRmap", "unit": "%",
-             "diagnostic": False},
+             "datatype": "anat", "diagnostic": False},
             {"name": "res", "bids_suffix": None, "unit": None,
-             "diagnostic": True},
+             "datatype": None, "diagnostic": True},
         ])
         table = g.render_outputs_table(m)
         self.assertIn("| `MTR` | `MTRmap` | % | — | — |", table)

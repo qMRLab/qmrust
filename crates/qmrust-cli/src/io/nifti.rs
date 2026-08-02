@@ -313,6 +313,50 @@ mod tests {
         path
     }
 
+    /// Per-volume files carry the acquisition axis *between* them, so the
+    /// stack's 4th axis has to follow `paths` exactly. A silent reorder here
+    /// would pair every volume with the wrong sidecar.
+    #[test]
+    fn stacking_follows_the_order_the_paths_were_given() {
+        let dir = TempDir::new("stack-order");
+        let a = write_nifti(&dir.0, "a.nii", &[2, 3, 1]);
+        let b = write_nifti(&dir.0, "b.nii", &[2, 3, 1]);
+        let (fwd, _) = stack_nii_volumes(&[a.clone(), b.clone()]).unwrap();
+        let (rev, _) = stack_nii_volumes(&[b, a]).unwrap();
+        assert_eq!(fwd.dim(), (2, 3, 1, 2));
+        // Same two files, opposite order: every voxel swaps between volumes.
+        for x in 0..2 {
+            for y in 0..3 {
+                assert_eq!(fwd[[x, y, 0, 0]], rev[[x, y, 0, 1]]);
+                assert_eq!(fwd[[x, y, 0, 1]], rev[[x, y, 0, 0]]);
+            }
+        }
+    }
+
+    /// Volumes of different sizes cannot be one series, and stacking them would
+    /// otherwise write whichever geometry came first over all of them.
+    #[test]
+    fn stacking_rejects_volumes_of_different_dimensions() {
+        let dir = TempDir::new("stack-dims");
+        let a = write_nifti(&dir.0, "a.nii", &[2, 3, 1]);
+        let b = write_nifti(&dir.0, "b.nii", &[2, 4, 1]);
+        let err = stack_nii_volumes(&[a, b]).unwrap_err().to_string();
+        assert!(err.contains("expected"), "unhelpful dims error: {err}");
+    }
+
+    /// The output geometry is the first volume's, matching what the 4D reader
+    /// returns for a single file.
+    #[test]
+    fn stacking_keeps_the_first_volumes_header() {
+        let dir = TempDir::new("stack-header");
+        let a = write_nifti(&dir.0, "a.nii", &[2, 3, 1]);
+        let b = write_nifti(&dir.0, "b.nii", &[2, 3, 1]);
+        let (_, first) = read_map_nifti_with_header(&a).unwrap();
+        let (_, stacked) = stack_nii_volumes(&[a, b]).unwrap();
+        assert_eq!(stacked.srow_x, first.srow_x);
+        assert_eq!(stacked.pixdim, first.pixdim);
+    }
+
     /// NIfTI's `dim[0]` counts dimensions, and a value of 3 declares three
     /// *spatial* axes — there is no temporal axis in the file at all. Reading
     /// the third one as time turns a 143x218x220 brain into one slice imaged

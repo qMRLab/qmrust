@@ -102,7 +102,7 @@ Auxiliary maps and the mask applied to this fit.
 | `T2r` | `T2Rmap` | s | 3e-06 … 5e-05 | free |
 
 :::{dropdown} Diagnostic outputs
-Written alongside the quantitative maps, but not quantitative measurements — they describe the fit, not the tissue.
+Reported by the fit but not written as BIDS derivatives: they describe the fit rather than the tissue, and have no BIDS suffix to be written under.
 
 | Output |
 |---|

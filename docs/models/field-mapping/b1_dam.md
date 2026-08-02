@@ -66,7 +66,7 @@ The 2 acquired volumes, each labeled with the identity the model reads it by.
 | `B1` | `TB1map` | — | 0 … 2 | free |
 
 :::{dropdown} Diagnostic outputs
-Written alongside the quantitative maps, but not quantitative measurements — they describe the fit, not the tissue.
+Reported by the fit but not written as BIDS derivatives: they describe the fit rather than the tissue, and have no BIDS suffix to be written under.
 
 | Output |
 |---|
@@ -112,7 +112,7 @@ qmrust fit --bids-dir ds-mydata \
 Fitted maps are written as BIDS derivatives:
 
 ```text
-out/derivatives/qmrust/sub-01/anat/
+out/derivatives/qmrust/sub-01/fmap/
   sub-01_TB1map.nii.gz
   sub-01_TB1map.json
 ```

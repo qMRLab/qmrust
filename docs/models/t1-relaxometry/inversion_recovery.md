@@ -81,7 +81,7 @@ Auxiliary maps and the mask applied to this fit.
 | `T1` | `T1map` | s | unbounded … unbounded | free |
 
 :::{dropdown} Diagnostic outputs
-Written alongside the quantitative maps, but not quantitative measurements — they describe the fit, not the tissue.
+Reported by the fit but not written as BIDS derivatives: they describe the fit rather than the tissue, and have no BIDS suffix to be written under.
 
 | Output |
 |---|

@@ -507,7 +507,8 @@ fn collection_sources(c: &Collection, bids_dir: &Path) -> Vec<String> {
 
 /// Write `model`'s declared BIDS output maps (`Model::bids_outputs()`) from a
 /// fitted `results` into a BIDS-derivatives tree rooted at `deriv_root`:
-/// `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`
+/// `deriv_root/qmrust/<subject>[/<session>]/<datatype>/<subject>[_<session>]_<suffix>.nii.gz`,
+/// where the datatype is the one that suffix implies (`rust_bids::datatype_for_suffix`)
 /// plus a full provenance JSON sidecar (`prov.sidecar(units)`) next to each.
 /// Outputs `bids_outputs()` doesn't declare (diagnostics like
 /// `res`/`idx`/`kf`/`resnorm`) are never written —
@@ -851,9 +852,20 @@ fn load_aux_and_mask(
 ) -> Result<(AuxMaps, Option<Array3<bool>>, Vec<String>)> {
     let paths = rust_bids::resolve_input_paths(table, model, identity, mask_spec)?;
     // An input the recipe asked for and the dataset does not hold: the fit
-    // still runs, so this is said out loud rather than raised.
+    // still runs, so this is said out loud rather than raised. Named by
+    // collection, since a run over many subjects would otherwise repeat an
+    // unattributable line per subject.
+    let who = ["subject", "session", "run"]
+        .iter()
+        .filter_map(|k| identity.get(*k).map(|v| format!("{k}-{v}")))
+        .collect::<Vec<_>>()
+        .join(" ");
     for w in &paths.warnings {
-        eprintln!("warning: {w}");
+        if who.is_empty() {
+            eprintln!("warning: {w}");
+        } else {
+            eprintln!("warning ({who}): {w}");
+        }
     }
     let mut maps: Vec<(String, Option<Array3<f64>>)> = Vec::new();
     for (name, path) in &paths.aux {

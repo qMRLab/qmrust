@@ -90,6 +90,10 @@ pub struct Output {
     pub name: String,
     pub bids_suffix: Option<String>,
     pub unit: Option<String>,
+    /// Datatype directory this map is written into, from the same rule the
+    /// writers use. `None` for a diagnostic, which is not written as a
+    /// derivative at all.
+    pub datatype: Option<String>,
     pub diagnostic: bool,
     /// The declared display window `[min, max]` in this output's unit, when the
     /// model declares one; `None` leaves the scale to the data.
@@ -179,6 +183,7 @@ fn card(entry: &ModelEntry, repo_root: &Path) -> Result<ModelCard> {
                 Some((_, suffix, unit)) => Output {
                     display_range: window(&name),
                     name,
+                    datatype: Some(rust_bids::datatype_for_suffix(suffix).to_string()),
                     bids_suffix: Some(suffix.to_string()),
                     unit: Some(unit.to_string()),
                     diagnostic: false,
@@ -188,6 +193,7 @@ fn card(entry: &ModelEntry, repo_root: &Path) -> Result<ModelCard> {
                     name,
                     bids_suffix: None,
                     unit: None,
+                    datatype: None,
                     diagnostic: true,
                 },
             },

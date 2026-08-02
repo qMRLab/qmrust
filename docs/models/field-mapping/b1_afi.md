@@ -108,7 +108,7 @@ qmrust fit --bids-dir ds-mydata \
 Fitted maps are written as BIDS derivatives:
 
 ```text
-out/derivatives/qmrust/sub-01/anat/
+out/derivatives/qmrust/sub-01/fmap/
   sub-01_TB1map.nii.gz
   sub-01_TB1map.json
 ```

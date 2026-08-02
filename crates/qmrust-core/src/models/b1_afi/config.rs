@@ -19,9 +19,39 @@ pub struct B1AfiConfig {
 }
 
 impl B1AfiConfig {
-    /// Config-intrinsic validation. The model has no fit options, so there is
-    /// nothing to check without a protocol.
+    /// Config-intrinsic validation.
+    ///
+    /// The model has no fit options, but the shape of the acquisition array is
+    /// intrinsic: `describe` runs only this, and a half-stated protocol would
+    /// reach the fitter, which reads both repetition times by index. Empty is
+    /// legitimate (nothing has been resolved yet); anything other than the pair
+    /// the method is defined on is not.
     pub fn validate_options(&self) -> Result<()> {
+        if !matches!(self.repetition_times.len(), 0 | 2) {
+            bail!(
+                "b1_afi is defined on exactly 2 repetition times [TR1, TR2], got {}",
+                self.repetition_times.len()
+            );
+        }
+        // Stated positively so a non-finite value is rejected too: `tr <= 0.0`
+        // is false for NaN, which would otherwise fit an all-NaN map, or be
+        // written into a sidecar as `null` by a `bidsify` that never reaches
+        // `validate_protocol`.
+        if !self
+            .repetition_times
+            .iter()
+            .all(|&tr| tr > 0.0 && tr.is_finite())
+        {
+            bail!(
+                "b1_afi repetition times must be finite and > 0 seconds, got {:?}",
+                self.repetition_times
+            );
+        }
+        if let Some(fa) = self.flip_angle {
+            if !(fa > 0.0 && fa.is_finite()) {
+                bail!("b1_afi nominal flip angle must be a finite value > 0 degrees, got {fa}");
+            }
+        }
         Ok(())
     }
 
@@ -34,12 +64,6 @@ impl B1AfiConfig {
                 self.repetition_times.len()
             );
         }
-        if self.repetition_times.iter().any(|&tr| tr <= 0.0) {
-            bail!(
-                "b1_afi repetition times must be > 0 seconds, got {:?}",
-                self.repetition_times
-            );
-        }
         // The estimator divides by `n - r` with n = TR2/TR1; equal repetition
         // times collapse it to 0/0 for every voxel, and the acquisition would
         // not be an AFI pair in the first place.
@@ -49,13 +73,12 @@ impl B1AfiConfig {
                 self.repetition_times[0]
             );
         }
-        match self.flip_angle {
-            None => bail!("b1_afi requires a nominal 'flip_angle' in degrees"),
-            Some(fa) if fa <= 0.0 => {
-                bail!("b1_afi nominal flip angle must be > 0 degrees, got {fa}")
-            }
-            Some(_) => Ok(()),
+        // The value itself is checked by `validate_options`; what a resolved
+        // protocol adds is that there has to be one.
+        if self.flip_angle.is_none() {
+            bail!("b1_afi requires a nominal 'flip_angle' in degrees");
         }
+        Ok(())
     }
 }
 
@@ -81,18 +104,42 @@ mod tests {
     }
 
     #[test]
+    fn validate_options_rejects_values_no_protocol_could_make_sense_of() {
+        // These are properties of the values themselves, so they are checked by
+        // the gate `describe` runs: `bidsify` never reaches `validate_protocol`,
+        // and would otherwise write a NaN into a sidecar as `null`, or describe
+        // a one-volume collection whose fitter reads two by index.
+        let cfg = |trs: Vec<f64>, fa: Option<f64>| B1AfiConfig {
+            repetition_times: trs,
+            flip_angle: fa,
+        };
+        assert!(cfg(vec![0.02], Some(60.0)).validate_options().is_err());
+        assert!(cfg(vec![0.0, 0.1], Some(60.0)).validate_options().is_err());
+        assert!(cfg(vec![f64::NAN, 0.1], Some(60.0))
+            .validate_options()
+            .is_err());
+        assert!(cfg(vec![0.02, f64::INFINITY], Some(60.0))
+            .validate_options()
+            .is_err());
+        assert!(cfg(vec![0.02, 0.1], Some(f64::NAN))
+            .validate_options()
+            .is_err());
+        assert!(cfg(vec![0.02, 0.1], Some(0.0)).validate_options().is_err());
+        // Nothing resolved yet is not an error: that is what `describe` sees.
+        assert!(cfg(vec![], None).validate_options().is_ok());
+    }
+
+    #[test]
     fn validate_protocol_requires_two_distinct_times_and_a_flip_angle() {
         let cfg = |trs: Vec<f64>, fa: Option<f64>| B1AfiConfig {
             repetition_times: trs,
             flip_angle: fa,
         };
         assert!(cfg(vec![0.02], Some(60.0)).validate_protocol().is_err());
-        assert!(cfg(vec![0.0, 0.1], Some(60.0)).validate_protocol().is_err());
         assert!(cfg(vec![0.05, 0.05], Some(60.0))
             .validate_protocol()
             .is_err());
         assert!(cfg(vec![0.02, 0.1], None).validate_protocol().is_err());
-        assert!(cfg(vec![0.02, 0.1], Some(0.0)).validate_protocol().is_err());
         // Either acquisition order is accepted; the fitter reads TR1/TR2 by
         // value, not by position.
         cfg(vec![0.1, 0.02], Some(60.0))

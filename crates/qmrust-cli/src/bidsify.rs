@@ -750,6 +750,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// One 3D file per volume: the count is the whole contract, because a
+    /// per-volume file carries no acquisition axis to check against. Given the
+    /// wrong number, every sidecar after the first mismatch would describe a
+    /// different volume than the one beside it.
+    #[test]
+    fn a_per_volume_source_must_supply_exactly_the_protocol_s_volumes() {
+        let dir = tmp_dir("nii-count");
+        let model = ir_model(&[0.350, 0.650, 0.950], None);
+        let paths: Vec<std::path::PathBuf> = (0..2)
+            .map(|i| {
+                let p = dir.join(format!("v{i}.nii"));
+                let data = ndarray::Array3::<f64>::zeros((2, 2, 1));
+                nifti::writer::WriterOptions::new(&p)
+                    .write_nifti(&data)
+                    .unwrap();
+                p
+            })
+            .collect();
+
+        // Two files, three inversion times.
+        let err = read_nifti_source(&paths, None, model.as_ref())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("2 --nii-data volumes given") && err.contains("has 3"),
+            "unhelpful count error: {err}"
+        );
+
+        // The matching count reads, and the volume axis is the file axis.
+        let three = ir_model(&[0.350, 0.650], None);
+        let (data, _, _, _) = read_nifti_source(&paths, None, three.as_ref()).unwrap();
+        assert_eq!(data.dim(), (2, 2, 1, 2));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A NIfTI source's spatial header must be carried into the written volumes
     /// (the orientation-preservation contract). With `Some(source_header)`, the
     /// distinctive affine survives to the output; the `None` path (a synthesized

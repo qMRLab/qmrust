@@ -48,7 +48,7 @@ import { THEMES, initTheme, onThemeChange, setFamily, setMode } from "./themes.j
 import { createLevelControl, repaintLevels } from "./level.js";
 import { fitSlice } from "./fit.js";
 import { loadModel } from "./model.js";
-import { buildModelTree } from "./picker.js";
+import { buildModelTree, compareByTaxonomy } from "./picker.js";
 
 // ---------------------------------------------------------------------------
 // Tooltips for the panel info buttons. One element, moved and refilled — a
@@ -389,11 +389,10 @@ async function populateModels() {
   // Taxonomy order, not the index's alphabetical one: the first option is what
   // loads on arrival, and that should be the first model a reader is offered
   // rather than whichever name sorts first.
-  const ordered = Object.keys(metas).sort(
-    (a, b) =>
-      (metas[a].category_order ?? 0) - (metas[b].category_order ?? 0) ||
-      metas[a].title.localeCompare(metas[b].title),
-  );
+  const ordered = Object.keys(metas)
+    .map((name) => ({ name, meta: metas[name] }))
+    .sort(compareByTaxonomy)
+    .map((e) => e.name);
   for (const name of ordered) {
     const opt = document.createElement("option");
     opt.value = name;

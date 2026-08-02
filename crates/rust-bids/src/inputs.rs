@@ -174,9 +174,11 @@ pub fn resolve_input_paths(
                         "the recipe selects a mask ({what}) that this dataset has no match \
                          for; fitting the whole image unmasked"
                     ),
-                    None => "the recipe asks for a mask, but this dataset holds none; \
-                             fitting the whole image unmasked"
-                        .to_string(),
+                    None => format!(
+                        "the recipe asks for a '{}' file and this dataset has none for \
+                         this collection; fitting the whole image unmasked",
+                        spec.suffix
+                    ),
                 });
             }
             found
@@ -364,7 +366,7 @@ mod tests {
         let spec = MaskSpec::from_recipe(&raw, &vocab).unwrap().unwrap();
         let identity = BTreeMap::from([("subject".to_string(), "01".to_string())]);
 
-        // A dataset with no mask at all — the b1_dam/b1_afi example case.
+        // A dataset holding no mask at all.
         let paths = resolve_input_paths(&[], &NoAuxModel, &identity, Some(&spec)).unwrap();
         assert!(paths.mask.is_none());
         assert_eq!(paths.warnings.len(), 1, "{:?}", paths.warnings);

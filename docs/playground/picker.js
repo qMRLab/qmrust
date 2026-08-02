@@ -16,6 +16,18 @@ import { icon } from "./vendor/icons.js";
 import { $ } from "./dom.js";
 
 /**
+ * Registry reading order: `category_order` first, then title within a category.
+ * Shared so the picker's tree and the `<select>` it mirrors cannot drift into
+ * two different orders.
+ */
+export function compareByTaxonomy(a, b) {
+  return (
+    (a.meta.category_order ?? 0) - (b.meta.category_order ?? 0) ||
+    a.meta.title.localeCompare(b.meta.title)
+  );
+}
+
+/**
  * The taxonomy as a tree, from a flat list of `{name, meta}` entries.
  *
  * `[{family, groups: [{subgroup, models}]}]`, in the registry's reading order.
@@ -24,11 +36,7 @@ import { $ } from "./dom.js";
  * family with no subgroups yields a single group whose `subgroup` is null.
  */
 export function modelTree(entries) {
-  const ordered = [...entries].sort(
-    (a, b) =>
-      (a.meta.category_order ?? 0) - (b.meta.category_order ?? 0) ||
-      a.meta.title.localeCompare(b.meta.title),
-  );
+  const ordered = [...entries].sort(compareByTaxonomy);
   const tree = [];
   for (const entry of ordered) {
     const family = entry.meta.family ?? "";
@@ -59,14 +67,11 @@ export function buildModelTree(metas, onPick) {
   const picker = $("model-picker");
   if (!select || !picker) return;
 
+  // The options are already in taxonomy order; `modelTree` sorts anyway, so
+  // this only has to carry them across.
   entries = [...select.options]
     .map((o) => ({ name: o.value, meta: metas[o.value] }))
-    .filter((e) => e.meta)
-    .sort(
-      (a, b) =>
-        (a.meta.category_order ?? 0) - (b.meta.category_order ?? 0) ||
-        a.meta.title.localeCompare(b.meta.title),
-    );
+    .filter((e) => e.meta);
   if (entries.length === 0) return;
 
   // The native control keeps the value but stops being the visible one. It is
@@ -167,6 +172,9 @@ function renderTree(onPick) {
 
     const body = document.createElement("div");
     body.className = "model-family-body";
+    // A `treeitem`'s children must sit in a `group` for the tree to be
+    // navigable; without it the rows read as siblings of their family.
+    body.setAttribute("role", "group");
     for (const group of node.groups) {
       if (!group.subgroup) {
         // No subdivision: the models sit directly on the family's own level.
@@ -182,6 +190,7 @@ function renderTree(onPick) {
       // A third level, so it gets its own indent step and guide line.
       const nested = document.createElement("div");
       nested.className = "model-subgroup-body";
+      nested.setAttribute("role", "group");
       for (const entry of group.models) {
         nested.append(optionRow(entry, entry.name === active?.name));
       }

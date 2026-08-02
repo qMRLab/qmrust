@@ -251,6 +251,13 @@ impl Vocabulary {
 /// suffixes (`TB1*`, `RB1*`) and B0 field maps are `fmap`; everything else a
 /// qMRI model reads or writes (weighted series, relaxation and MT maps, brain
 /// masks) is `anat`.
+///
+/// Scope: the suffixes qmrust's own models declare, via `Model::bids`,
+/// `Model::bids_outputs` and `Model::required_inputs`. It is not a general BIDS
+/// classifier, and the generic field-map suffixes (`epi`, `phasediff`,
+/// `phase1`/`phase2`, `magnitude*`) deliberately have no branch here because no
+/// registered model names one; the `anat` default would be wrong for them, so
+/// a model that starts using one must add it rather than inherit the fallback.
 pub fn datatype_for_suffix(suffix: &str) -> &'static str {
     if suffix.starts_with("TB1")
         || suffix.starts_with("RB1")
