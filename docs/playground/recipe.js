@@ -511,6 +511,18 @@ function arrowIcon(pointsLeft) {
   return svg;
 }
 
+// Disarmed protocol inputs cannot be fitted: the recipe would then state an
+// acquisition the sidecars also supply, which the core refuses. The button is
+// disabled rather than left to fail, so the state is visible before the click.
+export function syncFitArmed() {
+  const fit = $("fit");
+  if (!fit) return;
+  fit.disabled = Boolean(app.overrideProtocol);
+  fit.title = app.overrideProtocol
+    ? "Arm the protocol inputs to fit: edited values cannot be fitted against a BIDS dataset"
+    : "";
+}
+
 // Slide to override: a deliberate sweep rather than a click, because unlocking
 // these fields lets the recipe contradict the dataset it is fitted against —
 // and a value typed here is recorded in the output provenance as if the
@@ -533,7 +545,7 @@ function overrideControl() {
   slider.value = unlocked ? "100" : "0";
   slider.setAttribute(
     "aria-label",
-    unlocked ? "Slide to lock the protocol" : "Slide to edit the protocol",
+    unlocked ? "Slide to arm the protocol inputs" : "Slide to disarm the protocol inputs",
   );
 
   const knob = document.createElement("span");
@@ -542,7 +554,9 @@ function overrideControl() {
 
   const label = document.createElement("span");
   label.className = "override-label";
-  label.textContent = unlocked ? "Slide to Lock Protocol" : "Slide to Edit Protocol";
+  label.textContent = unlocked
+    ? "Slide to Arm Protocol Inputs"
+    : "Slide to Disarm Protocol Inputs";
 
   const setProgress = (v) => {
     // Travel drives the knob's position and fades the prompt, so a partial
@@ -558,6 +572,7 @@ function overrideControl() {
     const done = unlocked ? v <= 0 : v >= 100;
     if (done) {
       app.overrideProtocol = !unlocked;
+      syncFitArmed();
       if (unlocked) {
         // Coming back to the dataset: drop whatever the recipe overrode, so
         // the sidecar values are the only source again and the provenance
