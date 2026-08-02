@@ -3,7 +3,7 @@
 import { $, hideProgress, nextFrame, setProgress, showProgress, status } from "./dom.js";
 import { app, editor, nvOut } from "./state.js";
 import { buildMapVolume, readVolumeSeries } from "./nifti.js";
-import { clearVolumes, showOutput, syncMapViewControls } from "./viewers.js";
+import { clearVolumes, linkViewers, showOutput, syncMapViewControls } from "./viewers.js";
 import { plotVoxel } from "./curve.js";
 import { reresolveInputs } from "./model.js";
 import { showNotice } from "./modal.js";
@@ -95,6 +95,7 @@ export async function fitSlice() {
   app.lastMaps = maps;
 
   clearVolumes(nvOut);
+  linkViewers();
   app.outputVolumes = [];
   for (const o of meta.outputs) {
     const flat = maps[o.name];

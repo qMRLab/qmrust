@@ -25,6 +25,7 @@ import {
 } from "./inputs.js";
 import {
   applyViewerTheme,
+  linkViewers,
   onColormapChange,
   populateColormaps,
   showMapView,
@@ -148,11 +149,11 @@ function setUpViewers() {
   applyViewerTheme();
   populateColormaps();
 
-  // Synced crosshairs both ways, so dragging in either viewer moves the other;
-  // location handling is registered on both, so a click on the fitted map
-  // updates the voxel curve exactly as one on the inputs viewer does.
-  nvIn.broadcastTo([nvOut], { "2d": true, "3d": true });
-  nvOut.broadcastTo([nvIn], { "2d": true, "3d": true });
+  // Synced crosshairs both ways, so dragging in either viewer moves the other —
+  // established here empty, and re-established by `linkViewers` as the fitted map
+  // comes and goes. Location handling is registered on both, so a click on the
+  // fitted map updates the voxel curve exactly as one on the inputs viewer does.
+  linkViewers();
   nvIn.onLocationChange = onLocation;
   nvOut.onLocationChange = onLocation;
   // NiiVue steps a volume's 4D frame on its own (ArrowLeft/ArrowRight, bound
