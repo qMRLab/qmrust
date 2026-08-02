@@ -7,7 +7,7 @@
 //! BIDS path folds them from each role's sidecar in `ingest_protocol`.
 
 use crate::core::model::{
-    Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, InputSpec, Measurement, MeasurementKind, Model,
+    Aux, BidsMap, BidsSpec, BidsVolume, InputSpec, Measurement, MeasurementKind, Model,
     ModelConfig, ProtoParam, Protocol, Scope, Source,
 };
 use crate::models::mt_sat::config::MtSatConfig;
@@ -41,8 +41,6 @@ pub struct MtSatModel {
 /// the `MTS` grouping's `named_set` role of the same name, and (BIDS path) to
 /// the reordered per-role protocol row `i`.
 const ROLES: &[&str] = &["MTw", "PDw", "T1w"];
-const MTS_ENTITIES: &[EntityRole] = &[EntityRole::Flip, EntityRole::Mt];
-
 fn deg2rad(d: f64) -> f64 {
     d * std::f64::consts::PI / 180.0
 }
@@ -208,10 +206,7 @@ impl Model for MtSatModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "MTS",
-            entities: MTS_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "MTS" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         vec![

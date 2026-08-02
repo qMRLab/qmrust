@@ -1,8 +1,8 @@
 //! IR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
+    Aux, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
+    ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::inversion_recovery::config::IrConfig;
 use crate::models::inversion_recovery::fit::IrFitter;
@@ -41,8 +41,6 @@ impl IrModel {
         AXIS.assemble(m, self.fitter.ti()).into()
     }
 }
-
-const IR_ENTITIES: &[EntityRole] = &[EntityRole::Inv];
 
 impl Model for IrModel {
     fn param_names(&self) -> Vec<&'static str> {
@@ -95,10 +93,7 @@ impl Model for IrModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "IRT1",
-            entities: IR_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "IRT1" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         vec![

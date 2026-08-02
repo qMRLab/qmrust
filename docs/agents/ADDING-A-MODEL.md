@@ -210,6 +210,10 @@ before any data is resolved; `build` is the fit-ready path.
    own `--config` grouping. This is the one shell-side edit a new model needs;
    the CLI/wasm/`bidsify`/engine paths are all registry-driven.
 
+   That block is also the *only* home for which entities index the suffix.
+   `Model::bids()` names the suffix and nothing else, so the grouping grammar
+   and the model cannot disagree about it.
+
    Which datatype directory the suffix is written to and read from is *not* a
    model decision: `rust_bids::datatype_for_suffix` answers it for raw
    acquisitions, preprocessed aux maps and derivative outputs alike, so a

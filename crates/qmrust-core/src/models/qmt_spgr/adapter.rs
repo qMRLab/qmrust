@@ -1,8 +1,8 @@
 //! qMT-SPGR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement,
-    MeasurementKind, Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsMap, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind,
+    Model, ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::qmt_spgr::config::QmtSpgrConfig;
 use crate::models::qmt_spgr::QmtSpgrFitter;
@@ -65,8 +65,6 @@ fn qmt_rows(protocol: &[[f64; 2]]) -> Vec<BTreeMap<String, f64>> {
 }
 
 // Order matches the qMRLab QMTSPGR filename convention: flip-<i>_mt-<i>.
-const QMT_ENTITIES: &[EntityRole] = &[EntityRole::Flip, EntityRole::Mt];
-
 impl Model for QmtModel {
     fn param_names(&self) -> Vec<&'static str> {
         vec!["F", "kr", "R1f", "R1r", "T2f", "T2r"]
@@ -218,10 +216,7 @@ impl Model for QmtModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "QMTSPGR",
-            entities: QMT_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "QMTSPGR" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         // Matches the "Angle"/"Offset" keys `qmt_rows`/`forward`/`fit` use, so

@@ -39,12 +39,15 @@ pub(crate) fn load_config_raw(
     qmrust_core::config::parse_config(&contents)
 }
 
-/// If a `mt_sat` recipe carries `b1_correction: { fitvalues: <path> }`,
-/// load and parse the artifact and inline it so the model config deserializes
-/// a real `FitValues` instead of the path form. Keeps file I/O in the shell;
-/// the core only ever deserializes data it is handed. A recipe without
-/// `b1_correction` (or a non-`mt_sat` model) is left untouched.
-fn inject_mt_sat_b1_correction(raw: &mut serde_yaml::Value) -> Result<()> {
+/// Inline a `b1_correction: { fitvalues: <path> }` option, replacing the path
+/// with the artifact's contents so the model config deserializes a real
+/// `FitValues`. Keeps file I/O in the shell; the core only ever deserializes
+/// data it is handed.
+///
+/// Applied by what the recipe declares, not by which model declared it: a
+/// recipe with no `b1_correction` key is left untouched, so this is a no-op for
+/// every model that does not offer the option. `mt_sat` is the only one today.
+fn inline_file_backed_options(raw: &mut serde_yaml::Value) -> Result<()> {
     let Some(b1c) = raw.get("b1_correction").cloned() else {
         return Ok(());
     };
@@ -327,9 +330,7 @@ pub fn run_fit(
     };
 
     let (cfg, mut raw) = load_config_raw(&config_path)?;
-    if cfg.model == "mt_sat" {
-        inject_mt_sat_b1_correction(&mut raw)?;
-    }
+    inline_file_backed_options(&mut raw)?;
     // The mat/NIfTI path carries no BIDS sidecar metadata — the model reads
     // its whole acquisition (TIs, flip angles, …) from `--config` directly,
     // so it can be built before the data is read. That order matters: a 3D
@@ -596,9 +597,7 @@ pub fn run_fit_bids(
     }
 
     let (cfg, mut raw) = load_config_raw(&config_path)?;
-    if cfg.model == "mt_sat" {
-        inject_mt_sat_b1_correction(&mut raw)?;
-    }
+    inline_file_backed_options(&mut raw)?;
     let entry = qmrust_core::registry::by_name(&cfg.model).ok_or_else(|| {
         anyhow::anyhow!(
             "Unknown model: '{}'. Available: {}",
@@ -1698,7 +1697,7 @@ mod tests {
         run_dump_config(config_path).expect("dump-config does not enforce protocol completeness");
     }
 
-    /// A minimal, valid `FitValues` YAML — enough for `inject_mt_sat_b1_correction`
+    /// A minimal, valid `FitValues` YAML — enough for `inline_file_backed_options`
     /// to parse and inline, and for the resulting model to apply a nonzero
     /// correction.
     fn sample_fitvalues_yaml() -> String {
@@ -1750,7 +1749,7 @@ mod tests {
     /// `run_fit_bids` follow.
     fn build_mt_sat_with_b1(raw: &serde_yaml::Value) -> Result<Box<dyn Model>> {
         let mut raw = raw.clone();
-        inject_mt_sat_b1_correction(&mut raw)?;
+        inline_file_backed_options(&mut raw)?;
         let entry = qmrust_core::registry::by_name("mt_sat").unwrap();
         (entry.build)(&raw, &Protocol::default())
     }
@@ -1796,7 +1795,7 @@ mod tests {
         );
         let raw: serde_yaml::Value = serde_yaml::from_str(&recipe).unwrap();
         let mut raw_mut = raw.clone();
-        inject_mt_sat_b1_correction(&mut raw_mut)
+        inline_file_backed_options(&mut raw_mut)
             .expect("a stray recipe b1_ref must be ignored, not error");
         // The inlined b1_correction carries the artifact's b1_ref (6.8), not
         // the recipe's stray 9.9.
@@ -1823,7 +1822,7 @@ mod tests {
             "model: inversion_recovery\nmethod: magnitude\ninversion_times: [0.35, 0.5, 0.8]\n",
         )
         .unwrap();
-        inject_mt_sat_b1_correction(&mut raw).unwrap();
+        inline_file_backed_options(&mut raw).unwrap();
         assert!(raw.get("b1_correction").is_none());
     }
 

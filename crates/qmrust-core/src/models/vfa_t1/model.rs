@@ -1,8 +1,8 @@
 //! VFA adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement,
-    MeasurementKind, Meta, Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
+    Aux, BidsMap, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind, Meta,
+    Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::vfa_t1::config::VfaT1Config;
 use crate::models::vfa_t1::fit::{VfaT1Fitter, M0_BOUNDS, T1_BOUNDS};
@@ -24,8 +24,6 @@ impl VfaT1Model {
         }
     }
 }
-
-const VFA_ENTITIES: &[EntityRole] = &[EntityRole::Flip];
 
 /// Excitation repetition time in seconds. BIDS names it
 /// `RepetitionTimeExcitation` for a VFA series, but a dataset converted from a
@@ -106,10 +104,7 @@ impl Model for VfaT1Model {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "VFA",
-            entities: VFA_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "VFA" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         // Flip angle is the acquisition axis, so it alone identifies a volume:

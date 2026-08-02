@@ -5,8 +5,8 @@
 //! acquisition parameter beyond the angles themselves and no iterative fit.
 
 use crate::core::model::{
-    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
+    Aux, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
+    ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::b1_dam::config::B1DamConfig;
 use crate::models::b1_dam::fit::{B1DamFitter, B1_BOUNDS};
@@ -17,8 +17,6 @@ use std::collections::BTreeMap;
 pub struct B1DamModel {
     fitter: B1DamFitter,
 }
-
-const B1DAM_ENTITIES: &[EntityRole] = &[EntityRole::Flip];
 
 /// The acquisition axis: one volume per nominal flip angle.
 const AXIS: SeriesAxis = SeriesAxis::new("FlipAngle");
@@ -83,10 +81,7 @@ impl Model for B1DamModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "TB1DAM",
-            entities: B1DAM_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "TB1DAM" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         // Flip angle is the whole acquisition axis, so it alone identifies a

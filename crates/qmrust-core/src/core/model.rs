@@ -32,21 +32,15 @@ pub struct InputSpec {
     pub bids: Option<BidsMap>,
 }
 
-/// Role an entity plays in indexing a model's acquisition axis. Seam for the
-/// BIDS protocol mapping that the shell / `rust-bids` crate fills in.
-pub enum EntityRole {
-    Inv,
-    Flip,
-    Mt,
-    Echo,
-    Other(&'static str),
-}
-
-/// A model's BIDS identity: its grouping suffix and the entities that index
-/// its protocol axis.
+/// A model's BIDS identity: the grouping suffix its acquisitions are written
+/// and resolved under.
+///
+/// Which entities index that suffix's volumes lives in the grouping grammar
+/// (`rust-bids/src/default_grouping.yaml`), which is what actually assembles a
+/// collection. Stating it here as well gave the same fact two homes, and the
+/// copy here was never read, so the two could disagree in silence.
 pub struct BidsSpec {
     pub suffix: &'static str,
-    pub entities: &'static [EntityRole],
 }
 
 /// Resolved acquisition protocol, in BIDS-sidecar shape: one metadata map per

@@ -1,8 +1,8 @@
 //! mono_t2 adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
+    Aux, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
+    ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::mono_t2::config::MonoT2Config;
 use crate::models::mono_t2::fit::{MonoT2Fitter, M0_BOUNDS, T2_BOUNDS};
@@ -32,8 +32,6 @@ impl MonoT2Model {
         }
     }
 }
-
-const MONO_T2_ENTITIES: &[EntityRole] = &[EntityRole::Echo];
 
 impl Model for MonoT2Model {
     fn param_names(&self) -> Vec<&'static str> {
@@ -81,10 +79,7 @@ impl Model for MonoT2Model {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "MESE",
-            entities: MONO_T2_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "MESE" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         vec![ProtoParam {

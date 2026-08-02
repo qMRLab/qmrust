@@ -6,8 +6,8 @@
 //! values name the shorter and longer repetition time (`tr1`/`tr2`).
 
 use crate::core::model::{
-    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
+    Aux, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
+    ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::b1_afi::config::B1AfiConfig;
 use crate::models::b1_afi::fit::{B1AfiFitter, B1_BOUNDS, T1_BOUNDS};
@@ -18,8 +18,6 @@ use std::collections::BTreeMap;
 pub struct B1AfiModel {
     fitter: B1AfiFitter,
 }
-
-const B1AFI_ENTITIES: &[EntityRole] = &[EntityRole::Other("acq")];
 
 /// The acquisition axis: one volume per RepetitionTimeExcitation.
 const AXIS: SeriesAxis = SeriesAxis::new("RepetitionTimeExcitation");
@@ -93,10 +91,7 @@ impl Model for B1AfiModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "TB1AFI",
-            entities: B1AFI_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "TB1AFI" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         // The repetition time is the acquisition axis, so it alone identifies a

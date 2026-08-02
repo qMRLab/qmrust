@@ -6,7 +6,7 @@
 //! `MToff` level of 1 so the sim round-trip recovers a known MTR exactly.
 
 use crate::core::model::{
-    Aux, BidsSpec, BidsVolume, EntityRole, InputSpec, Measurement, MeasurementKind, Model,
+    Aux, BidsSpec, BidsVolume, InputSpec, Measurement, MeasurementKind, Model,
 };
 use crate::models::mt_ratio::config::MtRatioConfig;
 use crate::models::mt_ratio::fit;
@@ -19,8 +19,6 @@ pub struct MtRatioModel;
 /// Volume roles, in acquisition order. Index `i` maps to `bids_volume(i)` and
 /// to the BIDS grouping's `named_set` role of the same name.
 const ROLES: &[&str] = &["MTon", "MToff"];
-const MTR_ENTITIES: &[EntityRole] = &[EntityRole::Mt];
-
 impl MtRatioModel {
     pub fn new(_cfg: MtRatioConfig) -> Self {
         Self
@@ -79,10 +77,7 @@ impl Model for MtRatioModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "MTR",
-            entities: MTR_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "MTR" })
     }
     fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
         vec![("MTR", "MTRmap", "%")]
