@@ -12,12 +12,13 @@ import { load as yamlLoad, dump as yamlDump } from "./vendor/js-yaml.js";
 import hljs from "./vendor/highlight-core.js";
 import hljsYaml from "./vendor/highlight-yaml.js";
 import hljsJson from "./vendor/highlight-json.js";
+import { icon } from "./vendor/icons.js";
 import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
 import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers, resolvedProtocolJson, clearProtocolOverrides } from "./surface.js";
 import { debounce } from "./debounce.js";
 import { inlineCodeHtml } from "./inline-code.js";
-import { fieldLabel, fieldUnit, groupLabel } from "./labels.js";
+import { fieldHelp, fieldLabel, fieldUnit, groupLabel } from "./labels.js";
 
 // Knob diameter in px, mirrored in `.override-knob`; the pointer guard and the
 // knob's travel both need it as a number.
@@ -148,6 +149,21 @@ function fieldRow(path, widget) {
   labelSpan.className = "field-label";
   labelSpan.textContent = fieldLabel(path);
   labelWrap.append(labelSpan);
+  // An option gets a hover saying what choosing it costs; an acquisition field
+  // does not, because its name already is the quantity. Built as the same
+  // `.info` button the panel headings use, which `wireTips` picks up by
+  // delegation, so a row created after startup is covered without wiring.
+  const help = fieldHelp(path);
+  if (help) {
+    const info = document.createElement("button");
+    info.type = "button";
+    info.className = "info";
+    info.setAttribute("aria-label", help);
+    info.dataset.tip = help;
+    info.innerHTML = icon("info", 12);
+    labelSpan.append(" ");
+    labelSpan.append(info);
+  }
   // The symbol and unit sit under the quantity rather than trailing it in
   // parentheses: the name is what a reader scans for, and a row that also
   // carries the BIDS mark was running to three pieces on one line. The second

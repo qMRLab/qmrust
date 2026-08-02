@@ -3,7 +3,7 @@
 // shared across models — `flip_angle` means the same thing wherever it appears.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fieldLabel, fieldUnit, groupLabel } from "../../docs/playground/labels.js";
+import { fieldHelp, fieldLabel, fieldUnit, groupLabel } from "../../docs/playground/labels.js";
 
 // Every key the table names, so the format checks below cover all of them
 // rather than the handful someone thought to list.
@@ -71,6 +71,41 @@ test("every unit line ends in a parenthesised abbreviation", () => {
     if (unit === null) continue;
     assert.match(unit, /\([^()]+\)$/, `${key}: unit does not end in "(abbrev)"`);
     assert.ok(!unit.includes("["), `${key}: unit uses brackets rather than parentheses`);
+  }
+});
+
+// The acquisition axes, which the sidecars supply and whose names already say
+// what they carry.
+const ACQUISITION = [
+  "inversion_times", "inversion_time", "echo_times", "echo_time",
+  "flip_angle", "flip_angles", "repetition_time", "repetition_times",
+  "angles", "offsets", "mtdata", "saturation_time",
+];
+
+test("options are explained and acquisition fields are not", () => {
+  // The hover exists because nothing on screen says what choosing an option
+  // costs. A protocol row needs no such note, and one on every row would be
+  // noise; that asymmetry is the whole rule, so it is asserted both ways.
+  for (const key of ACQUISITION) {
+    assert.equal(fieldHelp([key]), null, `${key}: acquisition field has a hover`);
+  }
+  for (const key of ["fit_type", "drop_first_echo", "offset_term", "export_mtr",
+                     "b1_correction_factor", "method"]) {
+    assert.ok(fieldHelp([key]), `${key}: option has no hover`);
+  }
+  for (const path of [["t1_range", "start"], ["zoom", "points"], ["mask", "desc"]]) {
+    assert.ok(fieldHelp(path), `${path.join(".")}: option has no hover`);
+  }
+});
+
+test("an option's hover is one plain sentence, not a paragraph", () => {
+  // It renders in a tooltip beside a form label. Anything longer belongs in
+  // the model's documentation page, which the panel already links to.
+  for (const key of [...ALL_KEYS, "method", "mask.desc"]) {
+    const help = fieldHelp(key.split("."));
+    if (!help) continue;
+    assert.ok(help.length <= 200, `${key}: hover is ${help.length} chars`);
+    assert.ok(/[.!?]$/.test(help), `${key}: hover does not end in a full stop`);
   }
 });
 
