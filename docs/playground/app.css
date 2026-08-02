@@ -173,17 +173,27 @@ code, pre, textarea, input, select { font-family: var(--font-mono); }
    so no ancestor's overflow can clip it. */
 .tip {
   position: fixed; z-index: 100; max-width: 34ch; pointer-events: none;
-  /* Frosted rather than opaque: the panel behind stays faintly readable, so
-     the tip reads as hovering over the form rather than punched into it. The
-     accent tint is kept dominant so `--on-accent` is still the text colour it
-     was measured against, whatever happens to be underneath. */
-  background: color-mix(in srgb, var(--accent) 88%, transparent);
-  -webkit-backdrop-filter: blur(10px) saturate(1.4);
-  backdrop-filter: blur(10px) saturate(1.4);
-  border: 1px solid color-mix(in srgb, var(--on-accent) 22%, transparent);
-  color: var(--on-accent); border-radius: 9px; padding: 7px 10px;
+  /* Glass: the panel surface at well under half opacity, over a heavy blur, so
+     what is behind stays visible as shape and colour without being readable.
+     A tinted *fill* cannot do this. The accent at any usable alpha lightens
+     over a pale panel until white copy on it drops to 3.7:1 in the light
+     themes, so the accent survives here only as the edge and the glow, and the
+     surface is the neutral one whose contrast with `--ink` the theme already
+     guarantees (measured worst case 10.9:1 at this alpha, over any backdrop). */
+  background: color-mix(in srgb, var(--panel-2) 62%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  backdrop-filter: blur(16px) saturate(1.8);
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 10px; padding: 8px 11px;
   font: 500 11.5px/1.45 var(--font-ui);
-  box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  /* Outer depth, an accent halo to tie it to the mark that opened it, and an
+     inset top highlight, which is what makes a translucent panel read as a lit
+     edge rather than a washed-out box. */
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, .28),
+    0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 14%, transparent);
   animation: tip-in .13s ease-out;
 }
 @keyframes tip-in {

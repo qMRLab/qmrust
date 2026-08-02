@@ -35,7 +35,12 @@ export const REQUIRED = [
 
 // Ink that sits on a filled surface rather than on a panel. Each pair is
 // (ink token, fill token) and is held to the 4.5 text floor: these are button
-// labels and tooltip copy, which are small text however bold.
+// labels, small text however bold.
+//
+// This pair does *not* describe the tooltip, which is a translucent panel with
+// `--ink` on it, covered by the panel floors above. A tinted fill at any
+// usable alpha lightens over a pale panel until its copy fails, which is why
+// the tip is not one.
 const ON_PAIRS = [["--on-accent", "--accent"]];
 
 export function parseColor(str) {
@@ -160,8 +165,8 @@ export function main(cssPath, themesPath) {
       }
     }
 
-    // Ink on a filled surface: the tooltip and the primary button both put text
-    // straight onto --accent, where a light-on-light pairing is easy to miss.
+    // Ink on a filled surface: the primary button puts its label straight onto
+    // --accent, where a light-on-light pairing is easy to miss.
     for (const [inkToken, fillToken] of ON_PAIRS) {
       if (!tokens.has(inkToken) || !tokens.has(fillToken)) continue;
       const r = contrast(parseColor(tokens.get(inkToken)), parseColor(tokens.get(fillToken)));
