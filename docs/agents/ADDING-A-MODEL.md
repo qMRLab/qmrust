@@ -253,6 +253,13 @@ before any data is resolved; `build` is the fit-ready path.
    round-trip against known truth, agreement with qMRLab where the source
    prescribes something unobvious (an out-of-domain branch, a clamp), config
    parse/validate, and any labelling rule of its own.
+
+   Every *fitting option* the model adds also needs a sentence in `HELP`
+   (`docs/playground/labels.js`) saying what choosing it costs. An acquisition
+   field needs none: it is named by the quantity it carries.
+   `scripts/tests/option_help.test.mjs` reads the option surface out of
+   `qmrust catalog` and fails naming any option without one, so this is
+   enforced rather than remembered.
 7. Two `--config` recipes (`recipes/README.md`): `recipes/non-bids/<name>_config.yaml`
    **with** the acquisition arrays (the non-BIDS/`--mat`/`bidsify` protocol source),
    mask via the `--mask` flag; and `recipes/bids/<name>_config.yaml` **without** them

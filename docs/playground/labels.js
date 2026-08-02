@@ -88,7 +88,8 @@ const HELP = new Map([
     + "imperfect and biases T2 low. Costs one point from an already short "
     + "series."],
   ["offset_term", "Fit an additive constant alongside the decay, absorbing "
-    + "residual signal that does not decay. Exponential fits only."],
+    + "residual signal that does not decay. Rejected with the linear fit, "
+    + "which has no term to put it in."],
   ["b1_correction_factor", "Empirical scaling of the transmit correction "
     + "(Helms 2015). Applied only when the dataset supplies a B1 map; ignored "
     + "otherwise."],
@@ -164,6 +165,17 @@ export function fieldUnit(path) {
  */
 export function fieldHelp(path) {
   return HELP.get(path.join(".")) ?? HELP.get(path.at(-1) ?? "") ?? null;
+}
+
+/**
+ * Every field path these tables name, dotted.
+ *
+ * Exported so a check over "all of them" iterates the tables themselves rather
+ * than a list someone maintains alongside: a new entry is covered the moment it
+ * is added, which is the only way such a check stays true.
+ */
+export function labelledPaths() {
+  return [...new Set([...BY_PATH.keys(), ...BY_KEY.keys(), ...HELP.keys()])];
 }
 
 /**

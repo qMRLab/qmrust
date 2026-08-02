@@ -3,16 +3,13 @@
 // shared across models — `flip_angle` means the same thing wherever it appears.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fieldHelp, fieldLabel, fieldUnit, groupLabel } from "../../docs/playground/labels.js";
-
-// Every key the table names, so the format checks below cover all of them
-// rather than the handful someone thought to list.
-const ALL_KEYS = [
-  "flip_angle", "flip_angles", "repetition_time", "repetition_times",
-  "echo_time", "echo_times", "inversion_time", "inversion_times",
-  "saturation_time", "offsets", "angles", "mtdata", "b1_correction_factor",
-  "b1_correction", "export_mtr", "fit_type", "drop_first_echo", "offset_term",
-];
+import {
+  fieldHelp,
+  fieldLabel,
+  fieldUnit,
+  groupLabel,
+  labelledPaths,
+} from "../../docs/playground/labels.js";
 
 test("a quantity reads the same wherever it appears", () => {
   // mt_sat nests it per role, vfa_t1 has it at the top level: same label.
@@ -66,8 +63,8 @@ test("every unit line ends in a parenthesised abbreviation", () => {
   // The line reads as a phrase: `TI (s)` where there is a conventional symbol,
   // `seconds (s)` where there is not. Asserted over the whole table so a new
   // entry cannot quietly reintroduce a bare unit or a bracketed one.
-  for (const key of ALL_KEYS) {
-    const unit = fieldUnit([key]);
+  for (const key of labelledPaths()) {
+    const unit = fieldUnit(key.split("."));
     if (unit === null) continue;
     assert.match(unit, /\([^()]+\)$/, `${key}: unit does not end in "(abbrev)"`);
     assert.ok(!unit.includes("["), `${key}: unit uses brackets rather than parentheses`);
@@ -101,7 +98,7 @@ test("options are explained and acquisition fields are not", () => {
 test("an option's hover is one plain sentence, not a paragraph", () => {
   // It renders in a tooltip beside a form label. Anything longer belongs in
   // the model's documentation page, which the panel already links to.
-  for (const key of [...ALL_KEYS, "method", "mask.desc"]) {
+  for (const key of labelledPaths()) {
     const help = fieldHelp(key.split("."));
     if (!help) continue;
     assert.ok(help.length <= 200, `${key}: hover is ${help.length} chars`);
