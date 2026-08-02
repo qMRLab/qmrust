@@ -274,16 +274,6 @@ impl crate::core::model::ModelConfig for MtSatConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<MtSatConfig>(v)
-}
-
-/// Registry builder (see [`build_model`](crate::core::model::build_model)).
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<MtSatConfig>(v, proto)
-}
-
 /// Build `mt_sat` in calibration mode: `fit` emits raw (pre-empirical-factor,
 /// pre-CF) MTsat + B1-corrected R1, applying neither the empirical Helms
 /// factor nor the Tardif CF — the coordinates the correction surface is
@@ -304,20 +294,7 @@ pub fn build_calibration(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<
     Ok(model)
 }
 
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<MtSatConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<MtSatConfig>(v, proto)
-}
+crate::model_entry_points!(MtSatConfig);
 
 #[cfg(test)]
 mod tests {

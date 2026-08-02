@@ -2,7 +2,7 @@
 
 use crate::core::model::{
     Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::inversion_recovery::config::IrConfig;
 use crate::models::inversion_recovery::fit::IrFitter;
@@ -16,14 +16,8 @@ pub struct IrModel {
     repetition_time: Option<f64>,
 }
 
-/// One `{"InversionTime": ti}` identity row per fitter TI, in canonical order.
-fn ir_rows(fitter: &IrFitter) -> Vec<BTreeMap<String, f64>> {
-    fitter
-        .ti()
-        .iter()
-        .map(|&ti| BTreeMap::from([("InversionTime".to_string(), ti)]))
-        .collect()
-}
+/// The acquisition axis: one volume per inversion time.
+const AXIS: SeriesAxis = SeriesAxis::new("InversionTime");
 
 impl IrModel {
     pub fn new(cfg: IrConfig) -> Self {
@@ -41,25 +35,10 @@ impl IrModel {
         }
     }
 
-    /// Assemble a measurement's signal in the fitter's own TI order by matching
-    /// each expected TI to its sample by value. Identities must match: assembly
-    /// is never positional. A TI with no matching sample is a mislabeled
-    /// measurement → panic (the engine records the voxel as a failed fit).
-    /// TIs are assumed unique; first match wins (values pass through
-    /// unmodified, so a duplicate TI is a misconfiguration, not a hazard).
+    /// The measurement's signal in the fitter's own TI order, as the array the
+    /// RD-NLS solver takes.
     fn assemble(&self, m: &Measurement) -> ndarray::Array1<f64> {
-        let samples = m.series();
-        self.fitter
-            .ti()
-            .iter()
-            .map(|&ti| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("InversionTime") == Some(&ti))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| panic!("measurement has no sample with InversionTime={ti}"))
-            })
-            .collect()
+        AXIS.assemble(m, self.fitter.ti()).into()
     }
 }
 
@@ -84,7 +63,7 @@ impl Model for IrModel {
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {
-            rows: ir_rows(&self.fitter),
+            rows: AXIS.rows(self.fitter.ti()),
         }
     }
     fn strategy(&self) -> FitStrategy {
@@ -92,17 +71,7 @@ impl Model for IrModel {
     }
     fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
         let values = self.fitter.forward(params[0], params[1], params[2]);
-        let samples = self
-            .fitter
-            .ti()
-            .iter()
-            .zip(values)
-            .map(|(&ti, value)| Sample {
-                params: BTreeMap::from([("InversionTime".to_string(), ti)]),
-                value,
-            })
-            .collect();
-        Measurement::Series(samples)
+        AXIS.samples(self.fitter.ti(), values)
     }
     fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
         self.fitter.fit_voxel(&self.assemble(m))
@@ -171,15 +140,9 @@ impl crate::core::model::ModelConfig for IrConfig {
     }
 
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        if !proto.volumes.is_empty() {
-            let tis: Vec<f64> = proto
-                .volumes
-                .iter()
-                .filter_map(|m| m.get("InversionTime").copied())
-                .collect();
-            if !tis.is_empty() {
-                self.inversion_times = tis;
-            }
+        let tis = AXIS.ingest(proto);
+        if !tis.is_empty() {
+            self.inversion_times = tis;
         }
         if let Some(&tr) = proto.global.get("RepetitionTime") {
             self.repetition_time = Some(tr);
@@ -196,32 +159,7 @@ impl crate::core::model::ModelConfig for IrConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`]).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<IrConfig>(v)
-}
-
-/// Registry builder (see [`build_model`]): the shared parse → ingest protocol →
-/// validate → construct pipeline.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<IrConfig>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
-/// the fully-resolved effective config as YAML.
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<IrConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<IrConfig>(v, proto)
-}
+crate::model_entry_points!(IrConfig);
 
 #[cfg(test)]
 mod tests {

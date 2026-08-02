@@ -287,35 +287,7 @@ impl crate::core::model::ModelConfig for QmtSpgrConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`]).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<QmtSpgrConfig>(v)
-}
-
-/// Registry builder (see [`build_model`]): the shared parse → ingest protocol →
-/// validate → construct pipeline. On the BIDS path `proto` carries the
-/// sidecar-resolved `Angle`/`Offset` per volume, which `ingest_protocol` folds
-/// into `mtdata`; on the non-BIDS path `proto` is empty and `mtdata` comes from
-/// `--config`.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<QmtSpgrConfig>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
-/// the fully-resolved effective config as YAML.
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<QmtSpgrConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<QmtSpgrConfig>(v, proto)
-}
+crate::model_entry_points!(QmtSpgrConfig);
 
 #[cfg(test)]
 mod tests {

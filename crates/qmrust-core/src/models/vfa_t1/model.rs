@@ -2,7 +2,7 @@
 
 use crate::core::model::{
     Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement,
-    MeasurementKind, Meta, Model, ProtoParam, Protocol, Sample, Scope, Source,
+    MeasurementKind, Meta, Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::vfa_t1::config::VfaT1Config;
 use crate::models::vfa_t1::fit::{VfaT1Fitter, M0_BOUNDS, T1_BOUNDS};
@@ -14,15 +14,8 @@ pub struct VfaT1Model {
     fitter: VfaT1Fitter,
 }
 
-/// One `{"FlipAngle": deg}` identity row per fitter flip angle, in canonical
-/// order.
-fn vfa_t1_rows(fitter: &VfaT1Fitter) -> Vec<BTreeMap<String, f64>> {
-    fitter
-        .flip_angles()
-        .iter()
-        .map(|&fa| BTreeMap::from([("FlipAngle".to_string(), fa)]))
-        .collect()
-}
+/// The acquisition axis: one volume per FlipAngle.
+const AXIS: SeriesAxis = SeriesAxis::new("FlipAngle");
 
 impl VfaT1Model {
     pub fn new(cfg: VfaT1Config) -> Self {
@@ -77,7 +70,7 @@ impl Model for VfaT1Model {
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {
-            rows: vfa_t1_rows(&self.fitter),
+            rows: AXIS.rows(self.fitter.flip_angles()),
         }
     }
     fn strategy(&self) -> FitStrategy {
@@ -87,37 +80,10 @@ impl Model for VfaT1Model {
         let values = self
             .fitter
             .forward(params[0], params[1], aux.get("B1map").unwrap_or(1.0));
-        let samples = self
-            .fitter
-            .flip_angles()
-            .iter()
-            .zip(values)
-            .map(|(&fa, value)| Sample {
-                params: BTreeMap::from([("FlipAngle".to_string(), fa)]),
-                value,
-            })
-            .collect();
-        Measurement::Series(samples)
+        AXIS.samples(self.fitter.flip_angles(), values)
     }
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
-        // Assemble the signal in the fitter's own flip-angle order by matching
-        // each expected angle to its sample by identity — never positionally. An
-        // angle with no matching sample is a mislabeled measurement → panic (the
-        // engine records the voxel as a failed fit). Angles are assumed unique;
-        // first match wins.
-        let samples = m.series();
-        let signal: Vec<f64> = self
-            .fitter
-            .flip_angles()
-            .iter()
-            .map(|&fa| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("FlipAngle") == Some(&fa))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| panic!("measurement has no sample with FlipAngle={fa}"))
-            })
-            .collect();
+        let signal = AXIS.assemble(m, self.fitter.flip_angles());
         self.fitter
             .fit_voxel(&signal, aux.get("B1map").unwrap_or(1.0))
     }
@@ -185,11 +151,7 @@ impl crate::core::model::ModelConfig for VfaT1Config {
     }
 
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        let angles: Vec<f64> = proto
-            .volumes
-            .iter()
-            .filter_map(|m| m.get("FlipAngle").copied())
-            .collect();
+        let angles = AXIS.ingest(proto);
         if !angles.is_empty() {
             self.flip_angles = angles;
         }
@@ -210,32 +172,7 @@ impl crate::core::model::ModelConfig for VfaT1Config {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<VfaT1Config>(v)
-}
-
-/// Registry builder (see [`build_model`](crate::core::model::build_model)): the
-/// shared parse → ingest protocol → validate → construct pipeline.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<VfaT1Config>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
-/// the fully-resolved effective config as YAML.
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<VfaT1Config>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<VfaT1Config>(v, proto)
-}
+crate::model_entry_points!(VfaT1Config);
 
 #[cfg(test)]
 mod tests {

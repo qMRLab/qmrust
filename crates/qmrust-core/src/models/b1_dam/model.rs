@@ -6,7 +6,7 @@
 
 use crate::core::model::{
     Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::b1_dam::config::B1DamConfig;
 use crate::models::b1_dam::fit::{B1DamFitter, B1_BOUNDS};
@@ -20,14 +20,8 @@ pub struct B1DamModel {
 
 const B1DAM_ENTITIES: &[EntityRole] = &[EntityRole::Flip];
 
-/// One `{"FlipAngle": deg}` identity row per volume, in acquisition order.
-fn b1_dam_rows(fitter: &B1DamFitter) -> Vec<BTreeMap<String, f64>> {
-    fitter
-        .flip_angles()
-        .iter()
-        .map(|&fa| BTreeMap::from([("FlipAngle".to_string(), fa)]))
-        .collect()
-}
+/// The acquisition axis: one volume per nominal flip angle.
+const AXIS: SeriesAxis = SeriesAxis::new("FlipAngle");
 
 impl B1DamModel {
     pub fn new(cfg: B1DamConfig) -> Self {
@@ -60,7 +54,7 @@ impl Model for B1DamModel {
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {
-            rows: b1_dam_rows(&self.fitter),
+            rows: AXIS.rows(self.fitter.flip_angles()),
         }
     }
     fn strategy(&self) -> FitStrategy {
@@ -68,36 +62,13 @@ impl Model for B1DamModel {
     }
     fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
         let values = self.fitter.forward(params[0], params[1]);
-        let samples = self
-            .fitter
-            .flip_angles()
-            .iter()
-            .zip(values)
-            .map(|(&fa, value)| Sample {
-                params: BTreeMap::from([("FlipAngle".to_string(), fa)]),
-                value,
-            })
-            .collect();
-        Measurement::Series(samples)
+        AXIS.samples(self.fitter.flip_angles(), values)
     }
     fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
-        // Assemble in the fitter's own angle order by matching each expected
-        // angle to its sample by identity — never positionally. Swapping the
-        // two volumes would otherwise invert the ratio silently.
-        let samples = m.series();
-        let signal: Vec<f64> = self
-            .fitter
-            .flip_angles()
-            .iter()
-            .map(|&fa| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("FlipAngle") == Some(&fa))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| panic!("measurement has no sample with FlipAngle={fa}"))
-            })
-            .collect();
-        self.fitter.fit_voxel(&signal)
+        // By identity, never by position: swapping the two volumes would
+        // otherwise invert the ratio silently.
+        self.fitter
+            .fit_voxel(&AXIS.assemble(m, self.fitter.flip_angles()))
     }
     fn n_volumes(&self) -> usize {
         self.fitter.flip_angles().len()
@@ -149,11 +120,7 @@ impl crate::core::model::ModelConfig for B1DamConfig {
     }
 
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        let angles: Vec<f64> = proto
-            .volumes
-            .iter()
-            .filter_map(|m| m.get("FlipAngle").copied())
-            .collect();
+        let angles = AXIS.ingest(proto);
         if !angles.is_empty() {
             self.flip_angles = angles;
         }
@@ -169,30 +136,7 @@ impl crate::core::model::ModelConfig for B1DamConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<B1DamConfig>(v)
-}
-
-/// Registry builder (see [`build_model`](crate::core::model::build_model)).
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<B1DamConfig>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<B1DamConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<B1DamConfig>(v, proto)
-}
+crate::model_entry_points!(B1DamConfig);
 
 #[cfg(test)]
 mod tests {

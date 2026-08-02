@@ -7,7 +7,7 @@
 
 use crate::core::model::{
     Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::b1_afi::config::B1AfiConfig;
 use crate::models::b1_afi::fit::{B1AfiFitter, B1_BOUNDS, T1_BOUNDS};
@@ -21,15 +21,8 @@ pub struct B1AfiModel {
 
 const B1AFI_ENTITIES: &[EntityRole] = &[EntityRole::Other("acq")];
 
-/// One `{"RepetitionTimeExcitation": s}` identity row per volume, in
-/// acquisition order.
-fn b1_afi_rows(fitter: &B1AfiFitter) -> Vec<BTreeMap<String, f64>> {
-    fitter
-        .repetition_times()
-        .iter()
-        .map(|&tr| BTreeMap::from([("RepetitionTimeExcitation".to_string(), tr)]))
-        .collect()
-}
+/// The acquisition axis: one volume per RepetitionTimeExcitation.
+const AXIS: SeriesAxis = SeriesAxis::new("RepetitionTimeExcitation");
 
 impl B1AfiModel {
     pub fn new(cfg: B1AfiConfig) -> Self {
@@ -63,7 +56,7 @@ impl Model for B1AfiModel {
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {
-            rows: b1_afi_rows(&self.fitter),
+            rows: AXIS.rows(self.fitter.repetition_times()),
         }
     }
     fn strategy(&self) -> FitStrategy {
@@ -71,38 +64,13 @@ impl Model for B1AfiModel {
     }
     fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
         let values = self.fitter.forward(params[0], params[1]);
-        let samples = self
-            .fitter
-            .repetition_times()
-            .iter()
-            .zip(values)
-            .map(|(&tr, value)| Sample {
-                params: BTreeMap::from([("RepetitionTimeExcitation".to_string(), tr)]),
-                value,
-            })
-            .collect();
-        Measurement::Series(samples)
+        AXIS.samples(self.fitter.repetition_times(), values)
     }
     fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
-        // Assemble in the fitter's own repetition-time order by matching each
-        // expected time to its sample by identity — never positionally.
-        // Swapping the two volumes would otherwise invert the ratio.
-        let samples = m.series();
-        let signal: Vec<f64> = self
-            .fitter
-            .repetition_times()
-            .iter()
-            .map(|&tr| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("RepetitionTimeExcitation") == Some(&tr))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| {
-                        panic!("measurement has no sample with RepetitionTimeExcitation={tr}")
-                    })
-            })
-            .collect();
-        self.fitter.fit_voxel(&signal)
+        // By identity, never by position: swapping the two volumes would
+        // otherwise invert the ratio.
+        self.fitter
+            .fit_voxel(&AXIS.assemble(m, self.fitter.repetition_times()))
     }
     fn n_volumes(&self) -> usize {
         self.fitter.repetition_times().len()
@@ -169,11 +137,7 @@ impl crate::core::model::ModelConfig for B1AfiConfig {
     }
 
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        let times: Vec<f64> = proto
-            .volumes
-            .iter()
-            .filter_map(|m| m.get("RepetitionTimeExcitation").copied())
-            .collect();
+        let times = AXIS.ingest(proto);
         if !times.is_empty() {
             self.repetition_times = times;
         }
@@ -194,30 +158,7 @@ impl crate::core::model::ModelConfig for B1AfiConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<B1AfiConfig>(v)
-}
-
-/// Registry builder (see [`build_model`](crate::core::model::build_model)).
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<B1AfiConfig>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<B1AfiConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<B1AfiConfig>(v, proto)
-}
+crate::model_entry_points!(B1AfiConfig);
 
 #[cfg(test)]
 mod tests {

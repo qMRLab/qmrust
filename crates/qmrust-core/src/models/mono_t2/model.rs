@@ -2,7 +2,7 @@
 
 use crate::core::model::{
     Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::mono_t2::config::MonoT2Config;
 use crate::models::mono_t2::fit::{MonoT2Fitter, M0_BOUNDS, T2_BOUNDS};
@@ -15,14 +15,8 @@ pub struct MonoT2Model {
     output_names: Vec<String>,
 }
 
-/// One `{"EchoTime": te}` identity row per fitter echo, in canonical order.
-fn mono_t2_rows(fitter: &MonoT2Fitter) -> Vec<BTreeMap<String, f64>> {
-    fitter
-        .te()
-        .iter()
-        .map(|&te| BTreeMap::from([("EchoTime".to_string(), te)]))
-        .collect()
-}
+/// The acquisition axis: one volume per EchoTime.
+const AXIS: SeriesAxis = SeriesAxis::new("EchoTime");
 
 impl MonoT2Model {
     pub fn new(cfg: MonoT2Config) -> Self {
@@ -62,7 +56,7 @@ impl Model for MonoT2Model {
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {
-            rows: mono_t2_rows(&self.fitter),
+            rows: AXIS.rows(self.fitter.te()),
         }
     }
     fn strategy(&self) -> FitStrategy {
@@ -70,38 +64,10 @@ impl Model for MonoT2Model {
     }
     fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
         let values = self.fitter.forward(params[0], params[1]);
-        let samples = self
-            .fitter
-            .te()
-            .iter()
-            .zip(values)
-            .map(|(&te, value)| Sample {
-                params: BTreeMap::from([("EchoTime".to_string(), te)]),
-                value,
-            })
-            .collect();
-        Measurement::Series(samples)
+        AXIS.samples(self.fitter.te(), values)
     }
     fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
-        // Assemble the signal in the fitter's own echo order by matching each
-        // expected TE to its sample by identity — never positionally. A TE with
-        // no matching sample is a mislabeled measurement → panic (the engine
-        // records the voxel as a failed fit). TEs are assumed unique; first
-        // match wins.
-        let samples = m.series();
-        let signal: Vec<f64> = self
-            .fitter
-            .te()
-            .iter()
-            .map(|&te| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("EchoTime") == Some(&te))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| panic!("measurement has no sample with EchoTime={te}"))
-            })
-            .collect();
-        self.fitter.fit_voxel(&signal)
+        self.fitter.fit_voxel(&AXIS.assemble(m, self.fitter.te()))
     }
     fn n_volumes(&self) -> usize {
         self.fitter.te().len()
@@ -146,15 +112,9 @@ impl crate::core::model::ModelConfig for MonoT2Config {
     }
 
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        if !proto.volumes.is_empty() {
-            let tes: Vec<f64> = proto
-                .volumes
-                .iter()
-                .filter_map(|m| m.get("EchoTime").copied())
-                .collect();
-            if !tes.is_empty() {
-                self.echo_times = tes;
-            }
+        let tes = AXIS.ingest(proto);
+        if !tes.is_empty() {
+            self.echo_times = tes;
         }
         Ok(())
     }
@@ -168,32 +128,7 @@ impl crate::core::model::ModelConfig for MonoT2Config {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`]).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<MonoT2Config>(v)
-}
-
-/// Registry builder (see [`build_model`]): the shared parse → ingest protocol →
-/// validate → construct pipeline.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<MonoT2Config>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
-/// the fully-resolved effective config as YAML.
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<MonoT2Config>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<MonoT2Config>(v, proto)
-}
+crate::model_entry_points!(MonoT2Config);
 
 #[cfg(test)]
 mod tests {
