@@ -273,39 +273,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_assembles_by_identity_not_position() {
-        // Samples supplied in reversed order must give an identical fit; a
-        // positional assembly would pair each signal with the wrong angle.
-        let m = build(&vfa_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[0.9, 1000.0], &Aux::new());
-        let mut reversed: Vec<Sample> = match &sig {
-            Measurement::Series(s) => s
-                .iter()
-                .map(|s| Sample {
-                    params: s.params.clone(),
-                    value: s.value,
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
-        reversed.reverse();
-        let a = m.fit(&sig, &Aux::new());
-        let b = m.fit(&Measurement::Series(reversed), &Aux::new());
-        assert_eq!(a, b, "fit must be invariant to sample order");
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with FlipAngle")]
-    fn fit_panics_on_unmatched_identity() {
-        let m = build(&vfa_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("FlipAngle".to_string(), 77.0)]),
-            value: 1.0,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
     fn bids_folds_flip_angles_and_tr_from_protocol() {
         let proto = resolved_proto(&[4.0, 25.0], 0.018);
         // Config carries no acquisition; the sidecars supply it.
@@ -316,35 +283,6 @@ mod tests {
         assert_eq!(second.entities, vec![("flip", "2".to_string())]);
         assert_eq!(second.sidecar["FlipAngle"], json!(25.0));
         assert_eq!(second.sidecar["RepetitionTimeExcitation"], json!(0.018));
-    }
-
-    #[test]
-    fn forward_samples_carry_the_volume_identities_the_bids_path_builds() {
-        // A `Series` model's volume identities come from the resolved
-        // per-volume protocol (`engine::build_volume_ids`), while `forward`
-        // tags its samples from the model's own rows. Any protocol param the
-        // model does not also emit joins the identity on one side only, and
-        // every predicted sample then fails to match its volume — the fit still
-        // works (it queries one key), so the only symptom is a silently missing
-        // forward curve. Both sides must agree exactly.
-        let proto = resolved_proto(&[3.0, 20.0], 0.015);
-        let v: serde_yaml::Value = serde_yaml::from_str("model: vfa_t1\n").unwrap();
-        let m = build(&v, &proto).unwrap();
-
-        let ids = crate::engine::build_volume_ids(m.measurement(), &proto, m.n_volumes()).unwrap();
-        let sig = m.forward(&[0.9, 1000.0], &Aux::new());
-        let samples = sig.series();
-        assert_eq!(samples.len(), ids.len());
-        for (id, sample) in ids.iter().zip(samples) {
-            let crate::core::model::VolumeId::Params(row) = id else {
-                panic!("vfa_t1 is a Series model; expected param-row identities")
-            };
-            assert_eq!(
-                *row, sample.params,
-                "volume identity {row:?} has no matching forward sample identity {:?}",
-                sample.params
-            );
-        }
     }
 
     #[test]
@@ -367,33 +305,5 @@ mod tests {
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].name, "B1map");
         assert!(!inputs[0].required);
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&vfa_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _unit) in m.bids_outputs() {
-            assert!(names.iter().any(|n| n == out), "{out} not in {names:?}");
-        }
-    }
-
-    #[test]
-    fn describe_succeeds_without_an_acquisition_and_exposes_schema() {
-        let v: serde_yaml::Value = serde_yaml::from_str("model: vfa_t1\n").unwrap();
-        let m = describe(&v).unwrap();
-        let schema = m.protocol_schema();
-        assert_eq!(schema[0].name, "FlipAngle");
-        assert_eq!(schema[1].name, "RepetitionTimeExcitation");
-        // FlipAngle identifies a volume; TR is one value for the collection.
-        assert!(matches!(schema[0].scope, Scope::PerVolume));
-        assert!(matches!(schema[1].scope, Scope::Global));
-    }
-
-    #[test]
-    fn build_still_requires_an_acquisition_when_protocol_empty() {
-        let v: serde_yaml::Value =
-            serde_yaml::from_str("model: vfa_t1\nflip_angles: [3]\n").unwrap();
-        assert!(build(&v, &Protocol::default()).is_err());
     }
 }

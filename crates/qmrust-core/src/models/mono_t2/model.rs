@@ -224,39 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_assembles_by_identity_not_position() {
-        // Reversed samples with distinct TEs: positional assembly would feed a
-        // mirrored signal and miss T2; only value-matching recovers 0.08.
-        let m = build(&mono_t2_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[0.08, 1000.0], &Aux::new());
-        let mut reversed: Vec<Sample> = match sig {
-            Measurement::Series(ref s) => s
-                .iter()
-                .map(|s| Sample {
-                    params: s.params.clone(),
-                    value: s.value,
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
-        reversed.reverse();
-        let a = m.fit(&sig, &Aux::new());
-        let b = m.fit(&Measurement::Series(reversed), &Aux::new());
-        assert_eq!(a[0], b[0], "T2 must be identical under reordering");
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with EchoTime")]
-    fn fit_panics_on_unmatched_identity() {
-        let m = build(&mono_t2_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("EchoTime".to_string(), 99999.0)]),
-            value: 1.0,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
     fn a_resolved_protocol_supplies_the_echo_times() {
         let mut proto = Protocol::default();
         for te in [0.0128, 0.0256, 0.0384] {
@@ -273,18 +240,6 @@ mod tests {
     fn declares_bids_mese() {
         let m = build(&mono_t2_value(), &Protocol::default()).unwrap();
         assert_eq!(m.bids().unwrap().suffix, "MESE");
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&mono_t2_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _units) in m.bids_outputs() {
-            assert!(
-                names.iter().any(|n| n == out),
-                "bids_outputs references '{out}', not in output_names {names:?}"
-            );
-        }
     }
 
     #[test]

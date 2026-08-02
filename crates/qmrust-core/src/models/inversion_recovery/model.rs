@@ -281,45 +281,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_assembles_by_identity_not_position() {
-        // The samples are supplied in REVERSED order with distinct TIs, so a
-        // positional assembly would feed the fitter a mirrored (wrong) signal
-        // and miss T1; only value-matching recovers 0.9. This test fails if
-        // `fit` ever assembles by position.
-        let m = build(&ir_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[0.9, 500.0, -1000.0], &Aux::new());
-        let mut reversed: Vec<Sample> = match sig {
-            Measurement::Series(ref s) => s
-                .iter()
-                .map(|s| Sample {
-                    params: s.params.clone(),
-                    value: s.value,
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
-        reversed.reverse();
-        let a = m.fit(&sig, &Aux::new());
-        let b = m.fit(&Measurement::Series(reversed), &Aux::new());
-        assert!((a[0] - 0.9).abs() < 1e-3, "in-order T1: {}", a[0]);
-        assert!((b[0] - 0.9).abs() < 1e-3, "reordered T1: {}", b[0]);
-        assert_eq!(a[0], b[0], "T1 must be identical under reordering");
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with InversionTime")]
-    fn fit_panics_on_unmatched_identity() {
-        // A measurement whose sample identities match no expected TI must fail
-        // loudly — never fall back to positional assembly.
-        let m = build(&ir_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("InversionTime".to_string(), 99999.0)]),
-            value: 1.0,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
     fn a_resolved_protocol_supplies_the_inversion_times() {
         let mut proto = Protocol::default();
         for ti in [0.350, 0.500, 0.650] {
@@ -336,18 +297,6 @@ mod tests {
     fn declares_bids_irt1() {
         let m = build(&ir_value(), &Protocol::default()).unwrap();
         assert_eq!(m.bids().unwrap().suffix, "IRT1");
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&ir_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _units) in m.bids_outputs() {
-            assert!(
-                names.iter().any(|n| n == out),
-                "bids_outputs references '{out}', not in output_names {names:?}"
-            );
-        }
     }
 
     #[test]

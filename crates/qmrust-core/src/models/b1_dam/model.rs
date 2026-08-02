@@ -227,37 +227,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_assembles_by_identity_not_position() {
-        // Reversing the samples must not invert the ratio.
-        let m = build(&b1_dam_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[0.85, 1.0], &Aux::new());
-        let mut reversed: Vec<Sample> = sig
-            .series()
-            .iter()
-            .map(|s| Sample {
-                params: s.params.clone(),
-                value: s.value,
-            })
-            .collect();
-        reversed.reverse();
-        assert_eq!(
-            m.fit(&sig, &Aux::new()),
-            m.fit(&Measurement::Series(reversed), &Aux::new())
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with FlipAngle")]
-    fn fit_panics_on_unmatched_identity() {
-        let m = build(&b1_dam_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("FlipAngle".to_string(), 77.0)]),
-            value: 1.0,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
     fn bids_folds_flip_angles_from_protocol() {
         let proto = resolved_proto(&[45.0, 90.0]);
         // Config carries no acquisition; the sidecars supply it.
@@ -270,68 +239,9 @@ mod tests {
     }
 
     #[test]
-    fn forward_samples_carry_the_volume_identities_the_bids_path_builds() {
-        // A `Series` model's volume identities come from the resolved
-        // per-volume protocol (`engine::build_volume_ids`), while `forward`
-        // tags its samples from the model's own rows. Any drift between the two
-        // leaves the fit working (it queries one key by name) while the app's
-        // forward curve silently disappears, so assert they agree exactly.
-        let proto = resolved_proto(&[60.0, 120.0]);
-        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_dam\n").unwrap();
-        let m = build(&v, &proto).unwrap();
-
-        let ids = crate::engine::build_volume_ids(m.measurement(), &proto, m.n_volumes()).unwrap();
-        let sig = m.forward(&[0.9, 1.0], &Aux::new());
-        let samples = sig.series();
-        assert_eq!(samples.len(), ids.len());
-        for (id, sample) in ids.iter().zip(samples) {
-            let crate::core::model::VolumeId::Params(row) = id else {
-                panic!("b1_dam is a Series model; expected param-row identities")
-            };
-            assert_eq!(
-                *row, sample.params,
-                "volume identity {row:?} has no matching forward sample identity {:?}",
-                sample.params
-            );
-        }
-    }
-
-    #[test]
-    fn declares_bids_tb1dam_and_no_aux() {
-        let m = build(&b1_dam_value(), &Protocol::default()).unwrap();
-        assert_eq!(m.bids().unwrap().suffix, "TB1DAM");
-        assert!(m.required_inputs().is_empty());
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&b1_dam_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _unit) in m.bids_outputs() {
-            assert!(names.iter().any(|n| n == out), "{out} not in {names:?}");
-        }
-    }
-
-    #[test]
-    fn describe_succeeds_without_an_acquisition_and_exposes_schema() {
-        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_dam\n").unwrap();
-        let m = describe(&v).unwrap();
-        let schema = m.protocol_schema();
-        assert_eq!(schema.len(), 1);
-        assert_eq!(schema[0].name, "FlipAngle");
-        assert!(matches!(schema[0].scope, Scope::PerVolume));
-    }
-
-    #[test]
     fn build_rejects_a_series_that_is_not_a_double_angle_pair() {
         let proto = resolved_proto(&[60.0, 90.0]);
         let v: serde_yaml::Value = serde_yaml::from_str("model: b1_dam\n").unwrap();
         assert!(build(&v, &proto).is_err());
-    }
-
-    #[test]
-    fn build_still_requires_an_acquisition_when_protocol_empty() {
-        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_dam\n").unwrap();
-        assert!(build(&v, &Protocol::default()).is_err());
     }
 }

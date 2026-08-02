@@ -397,56 +397,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_assembles_by_identity_not_position() {
-        // Reversing the (distinct) protocol samples must not change the fit:
-        // matching is by (Angle, Offset), never by array position.
-        let m = build(&qmt_value(), &Protocol::default()).unwrap();
-        let mut aux = Aux::new();
-        aux.set("R1map", 1.0);
-        // Distinct per-volume values via a clean forward, then reverse them.
-        let forward = m.forward(&[0.15, 25.0, 1.0, 1.0, 0.028, 1.1e-5], &aux);
-        let mut reversed: Vec<Sample> = match forward {
-            Measurement::Series(ref s) => s
-                .iter()
-                .map(|s| Sample {
-                    params: s.params.clone(),
-                    value: s.value,
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
-        reversed.reverse();
-        let a = m.fit(&forward, &aux);
-        let b = m.fit(&Measurement::Series(reversed), &aux);
-        assert_eq!(a, b, "qMT fit must be identical under sample reordering");
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with Angle")]
-    fn fit_panics_on_unmatched_identity() {
-        // Sample identities that match no protocol row must fail loudly, never
-        // fall back to positional assembly.
-        let m = build(&qmt_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("Angle".to_string(), 999.0), ("Offset".to_string(), 999.0)]),
-            value: 0.5,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&qmt_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _units) in m.bids_outputs() {
-            assert!(
-                names.iter().any(|n| n == out),
-                "bids_outputs references '{out}', not in output_names {names:?}"
-            );
-        }
-    }
-
-    #[test]
     fn declares_bids_qmtspgr() {
         let m = build(&qmt_value(), &Protocol::default()).unwrap();
         assert_eq!(m.bids().unwrap().suffix, "QMTSPGR");

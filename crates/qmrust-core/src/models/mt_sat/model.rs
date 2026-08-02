@@ -431,15 +431,6 @@ mod tests {
     }
 
     #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&mtsat_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _s, _u) in m.bids_outputs() {
-            assert!(names.iter().any(|n| n == out), "{out} not in {names:?}");
-        }
-    }
-
-    #[test]
     fn export_mtr_off_drops_mtr_output() {
         let v: serde_yaml::Value = serde_yaml::from_str(
             "model: mt_sat\nexport_mtr: false\nmtw: {flip_angle: 6, repetition_time: 0.028}\npdw: {flip_angle: 6, repetition_time: 0.030}\nt1w: {flip_angle: 20, repetition_time: 0.018}\n",

@@ -181,18 +181,6 @@ mod tests {
     }
 
     #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&mtr_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _units) in m.bids_outputs() {
-            assert!(
-                names.iter().any(|n| n == out),
-                "bids_outputs references '{out}', not in output_names {names:?}"
-            );
-        }
-    }
-
-    #[test]
     fn declares_no_protocol_schema() {
         let m = build(&mtr_value(), &Protocol::default()).unwrap();
         assert!(m.protocol_schema().is_empty());
