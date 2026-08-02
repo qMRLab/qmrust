@@ -1,0 +1,17 @@
+model: b1_afi
+
+# B1 = acos((r*n - 1) / (n - r)) / nomFA, with r the signal ratio of the two
+# interleaved repetition times, n = TR2/TR1, and the map dimensionless
+# (1.0 = the nominal flip angle was achieved). BIDS input:
+# RepetitionTimeExcitation and FlipAngle are read from the JSON sidecars via
+# the model's protocol_schema(), so neither is declared here. The TB1AFI
+# collection is assembled by the `acq` entity (acq-tr1 / acq-tr2). Example:
+#
+#   qmrust fit --bids-dir <dataset> \
+#     --config recipes/bids/b1_afi_config.yaml --output-dir out
+
+# BIDS mask selection. Left blank: this example dataset ships no mask, and
+# naming one here would claim otherwise. Blank means "whatever mask is
+# present", so a dataset of your own that has one is masked by it.
+mask:
+  desc: ""

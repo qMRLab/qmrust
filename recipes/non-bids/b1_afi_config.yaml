@@ -1,0 +1,26 @@
+model: b1_afi
+
+# non-BIDS: protocol from this file; mask via --mask.
+# Times in seconds (BIDS/SI), flip angle in degrees (BIDS-MRI convention).
+# qMRLab's b1_afi default protocol is nomFA = 60 deg with TR1/TR2 of 20/100 ms;
+# its Sequence matrix records those two in milliseconds, so they are converted
+# once here at the shell boundary. Only their ratio enters the estimate.
+repetition_times:
+- 0.02
+- 0.10
+flip_angle: 60
+
+# There are no fit options: the estimate is closed form.
+#
+# Two uses:
+#   - bidsify a qMRLab dataset (AFIData1.nii.gz / AFIData2.nii.gz) by naming
+#     one --nii-data per volume, in acquisition order:
+#
+#       qmrust bidsify --model b1_afi \
+#         --nii-data AFIData1.nii.gz --nii-data AFIData2.nii.gz \
+#         --config recipes/non-bids/b1_afi_config.yaml --subject 01 --out ds
+#
+#   - fit a stacked 4D NIfTI whose two volumes are [TR1, TR2]:
+#
+#       qmrust fit --data afi.nii.gz --mask Mask.nii.gz \
+#         --config recipes/non-bids/b1_afi_config.yaml --output-dir out_b1

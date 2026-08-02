@@ -20,8 +20,19 @@ pub struct ModelCard {
     pub name: String,
     pub bids_suffix: String,
     pub title: String,
+    /// Documentation directory slug. Several categories may share one.
     pub category: String,
+    /// Top-level heading a reader browses by.
+    pub family: String,
+    /// Lucide icon name for the family.
+    pub family_icon: String,
+    /// Heading within the family, when the family is subdivided.
+    pub subgroup: Option<String>,
+    /// The most specific heading: the subgroup when there is one, else family.
     pub category_title: String,
+    /// Position in the taxonomy's reading order; sort by this and group
+    /// consecutive runs to rebuild the family/subgroup tree.
+    pub category_order: u8,
     pub summary: String,
     pub equation: String,
     pub symbols: Vec<Symbol>,
@@ -249,7 +260,11 @@ fn card(entry: &ModelEntry, repo_root: &Path) -> Result<ModelCard> {
         bids_suffix: entry.bids_suffix.to_string(),
         title: doc.title.to_string(),
         category: doc.category.slug().to_string(),
+        family: doc.category.family().to_string(),
+        family_icon: doc.category.icon().to_string(),
+        subgroup: doc.category.subgroup().map(str::to_string),
         category_title: doc.category.title().to_string(),
+        category_order: doc.category.order(),
         summary: doc.summary.to_string(),
         equation: doc.equation.to_string(),
         symbols: doc

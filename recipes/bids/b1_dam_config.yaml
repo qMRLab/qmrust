@@ -1,0 +1,15 @@
+model: b1_dam
+
+# B1 = |acos(S(2a) / (2 * S(a)))| / a, with the map dimensionless (1.0 = the
+# nominal flip angle was achieved). BIDS input: the two flip angles are read
+# from the JSON sidecars via the model's protocol_schema(), so they are not
+# declared here. The TB1DAM collection is assembled by flip index. Example:
+#
+#   qmrust fit --bids-dir <dataset> \
+#     --config recipes/bids/b1_dam_config.yaml --output-dir out
+
+# BIDS mask selection. Left blank: this example dataset ships no mask, and
+# naming one here would claim otherwise. Blank means "whatever mask is
+# present", so a dataset of your own that has one is masked by it.
+mask:
+  desc: ""

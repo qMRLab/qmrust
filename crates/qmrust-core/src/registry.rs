@@ -14,26 +14,89 @@ pub type Effective = fn(&serde_yaml::Value, &Protocol) -> Result<EffectiveConfig
 /// Method family a model belongs to. Determines its documentation directory,
 /// so the generated URL is derived from the registry, never hand-chosen. Add a
 /// variant only when a model needs it — an empty category has no page.
+///
+/// The taxonomy is two levels: every category names a [`family`](Self::family)
+/// a reader browses by, and some additionally sit in a
+/// [`subgroup`](Self::subgroup) within it. Only the family reaches the URL, so
+/// a subdivision can be introduced (or reorganized) without moving any page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
-    Relaxometry,
-    MagnetizationTransfer,
+    T1Relaxometry,
+    T2Relaxometry,
+    FieldMapping,
+    SemiQuantitativeMt,
+    QuantitativeMt,
 }
 
 impl Category {
-    /// URL/directory slug beneath the documentation's `models/` root.
+    /// URL/directory slug beneath the documentation's `models/` root. Both
+    /// magnetization-transfer categories share one, because the split between
+    /// them is a reading aid rather than a different kind of method.
     pub fn slug(&self) -> &'static str {
         match self {
-            Category::Relaxometry => "relaxometry",
-            Category::MagnetizationTransfer => "magnetization-transfer",
+            Category::T1Relaxometry => "t1-relaxometry",
+            Category::T2Relaxometry => "t2-relaxometry",
+            Category::FieldMapping => "field-mapping",
+            Category::SemiQuantitativeMt | Category::QuantitativeMt => "magnetization-transfer",
         }
     }
 
-    /// Human-readable heading for the model gallery.
-    pub fn title(&self) -> &'static str {
+    /// Top-level heading a reader browses by.
+    pub fn family(&self) -> &'static str {
         match self {
-            Category::Relaxometry => "Relaxometry",
-            Category::MagnetizationTransfer => "Magnetization transfer",
+            Category::T1Relaxometry => "T1 Relaxometry",
+            Category::T2Relaxometry => "T2 Relaxometry",
+            Category::FieldMapping => "Field Mapping",
+            Category::SemiQuantitativeMt | Category::QuantitativeMt => "Magnetization Transfer",
+        }
+    }
+
+    /// Heading within the family, for families worth subdividing. `None` when
+    /// the family's models sit directly under it.
+    pub fn subgroup(&self) -> Option<&'static str> {
+        match self {
+            Category::SemiQuantitativeMt => Some("Semi-quantitative MT"),
+            Category::QuantitativeMt => Some("Quantitative MT"),
+            _ => None,
+        }
+    }
+
+    /// The most specific heading this category carries — its subgroup when it
+    /// has one, its family otherwise.
+    pub fn title(&self) -> &'static str {
+        self.subgroup().unwrap_or_else(|| self.family())
+    }
+
+    /// Lucide icon name for this category's family, for surfaces that show one.
+    ///
+    /// Named here for the same reason the title and the order are: a family is
+    /// a registry fact, and a picker that mapped headings to glyphs itself
+    /// would need editing every time the taxonomy moved. Categories sharing a
+    /// family share its icon.
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Category::T1Relaxometry => "spline-pointer",
+            Category::T2Relaxometry => "spline-pointer-mirrored",
+            Category::FieldMapping => "circle-dot",
+            Category::SemiQuantitativeMt | Category::QuantitativeMt => "waves-arrow-up",
+        }
+    }
+
+    /// Where this category sits in the order a reader is offered them.
+    ///
+    /// The registry lists models alphabetically, which is the wrong order to
+    /// read a method taxonomy in, and every surface that groups models — the
+    /// documentation gallery, the playground's picker — wants the same one.
+    /// Sorting by this and then grouping consecutive runs yields the whole
+    /// two-level tree, so the order lives here rather than being restated
+    /// wherever a list is drawn.
+    pub fn order(&self) -> u8 {
+        match self {
+            Category::T1Relaxometry => 0,
+            Category::T2Relaxometry => 1,
+            Category::FieldMapping => 2,
+            Category::SemiQuantitativeMt => 3,
+            Category::QuantitativeMt => 4,
         }
     }
 }
@@ -103,6 +166,82 @@ pub struct ModelEntry {
 pub fn all() -> &'static [ModelEntry] {
     &[
         ModelEntry {
+            name: "b1_afi",
+            bids_suffix: "TB1AFI",
+            build: models::b1_afi::build,
+            describe: models::b1_afi::describe,
+            dump: models::b1_afi::dump,
+            effective: models::b1_afi::effective,
+            doc: ModelDoc {
+                title: "Actual Flip Angle B1+",
+                category: Category::FieldMapping,
+                summary: "Maps the transmit (B1+) field from a single spoiled \
+                    gradient-echo sequence that interleaves two excitation \
+                    repetition times at one nominal flip angle. In the pulsed \
+                    steady state the ratio of the two signals depends on the \
+                    achieved flip angle alone, so proton density and receive \
+                    sensitivity cancel. The result is dimensionless — the \
+                    achieved flip angle as a fraction of the nominal one — and \
+                    feeds the B1 correction of models such as MTsat and VFA. \
+                    The closed form assumes the repetition times are short \
+                    against T1, and underestimates B1 as that assumption \
+                    weakens.",
+                equation: r"\cos\theta = \frac{r n - 1}{n - r},\quad r = \left|\frac{S_{\mathrm{TR}_2}}{S_{\mathrm{TR}_1}}\right|,\quad n = \frac{\mathrm{TR}_2}{\mathrm{TR}_1},\quad B_1^{+} = \frac{\theta}{\theta_\mathrm{nom}}",
+                symbols: &[
+                    ("B1", "Relative transmit field", ""),
+                    ("T1", "Longitudinal relaxation time", "s"),
+                ],
+                citations: &["yarnykh2007"],
+                source_dir: "crates/qmrust-core/src/models/b1_afi",
+                recipes: Recipes {
+                    bids: "recipes/bids/b1_afi_config.yaml",
+                    non_bids: "recipes/non-bids/b1_afi_config.yaml",
+                    sim: None,
+                },
+                enums: &[],
+                display_ranges: &[
+                    // A well-shimmed transmit coil sits within a few tens of
+                    // percent of nominal; this window keeps 1.0 mid-scale.
+                    ("B1", 0.5, 1.5),
+                ],
+            },
+        },
+        ModelEntry {
+            name: "b1_dam",
+            bids_suffix: "TB1DAM",
+            build: models::b1_dam::build,
+            describe: models::b1_dam::describe,
+            dump: models::b1_dam::dump,
+            effective: models::b1_dam::effective,
+            doc: ModelDoc {
+                title: "Double Angle B1+",
+                category: Category::FieldMapping,
+                summary: "Maps the transmit (B1+) field from two spoiled \
+                    gradient-echo volumes acquired at flip angles alpha and \
+                    twice alpha. The ratio of the two signals depends only on \
+                    the achieved flip angle, so proton density and receive \
+                    sensitivity cancel and the map needs no calibration. The \
+                    result is dimensionless — the achieved flip angle as a \
+                    fraction of the nominal one — and feeds the B1 correction \
+                    of models such as MTsat and VFA.",
+                equation: r"B_1^{+} = \frac{\left|\arccos\left(\frac{S_{2\alpha}}{2 S_{\alpha}}\right)\right|}{\alpha}",
+                symbols: &[("B1", "Relative transmit field", "")],
+                citations: &["insko1993"],
+                source_dir: "crates/qmrust-core/src/models/b1_dam",
+                recipes: Recipes {
+                    bids: "recipes/bids/b1_dam_config.yaml",
+                    non_bids: "recipes/non-bids/b1_dam_config.yaml",
+                    sim: None,
+                },
+                enums: &[],
+                display_ranges: &[
+                    // A well-shimmed transmit coil sits within a few tens of
+                    // percent of nominal; this window keeps 1.0 mid-scale.
+                    ("B1", 0.5, 1.5),
+                ],
+            },
+        },
+        ModelEntry {
             name: "mt_ratio",
             bids_suffix: "MTR",
             build: models::mt_ratio::build,
@@ -110,8 +249,8 @@ pub fn all() -> &'static [ModelEntry] {
             dump: models::mt_ratio::dump,
             effective: models::mt_ratio::effective,
             doc: ModelDoc {
-                title: "Magnetization transfer ratio",
-                category: Category::MagnetizationTransfer,
+                title: "MT Ratio",
+                category: Category::SemiQuantitativeMt,
                 summary: "Computes the magnetization transfer ratio from two \
                     images: one acquired with an off-resonance saturation pulse \
                     and one without. MTR is a semi-quantitative percentage that \
@@ -143,8 +282,8 @@ pub fn all() -> &'static [ModelEntry] {
             dump: models::mt_sat::dump,
             effective: models::mt_sat::effective,
             doc: ModelDoc {
-                title: "MT saturation",
-                category: Category::MagnetizationTransfer,
+                title: "MT Saturation",
+                category: Category::SemiQuantitativeMt,
                 summary: "Derives the MT saturation parameter from three spoiled \
                     gradient-echo volumes — MT-weighted, PD-weighted and \
                     T1-weighted. Unlike MTR, MTsat removes the leading-order \
@@ -183,8 +322,8 @@ pub fn all() -> &'static [ModelEntry] {
             dump: models::mono_t2::dump,
             effective: models::mono_t2::effective,
             doc: ModelDoc {
-                title: "Mono-exponential T2",
-                category: Category::Relaxometry,
+                title: "Monoexp T2",
+                category: Category::T2Relaxometry,
                 summary: "Fits the transverse relaxation time T2 from a \
                     multi-echo spin-echo series as a mono-exponential decay with \
                     a free amplitude. The fit runs either as a log-linear \
@@ -222,8 +361,8 @@ pub fn all() -> &'static [ModelEntry] {
             dump: models::inversion_recovery::dump,
             effective: models::inversion_recovery::effective,
             doc: ModelDoc {
-                title: "Inversion recovery T1",
-                category: Category::Relaxometry,
+                title: "Inversion Recovery",
+                category: Category::T1Relaxometry,
                 summary: "Fits the longitudinal relaxation time T1 from a series \
                     of inversion-recovery images acquired at different inversion \
                     times. The magnitude signal is modelled as an exponential \
@@ -257,8 +396,8 @@ pub fn all() -> &'static [ModelEntry] {
             dump: models::vfa_t1::dump,
             effective: models::vfa_t1::effective,
             doc: ModelDoc {
-                title: "Variable flip angle T1",
-                category: Category::Relaxometry,
+                title: "Variable Flip Angle",
+                category: Category::T1Relaxometry,
                 summary: "Fits the longitudinal relaxation time T1 from spoiled \
                     gradient-echo images acquired at two or more excitation flip \
                     angles and a single repetition time. Dividing the \
@@ -296,7 +435,7 @@ pub fn all() -> &'static [ModelEntry] {
             effective: models::qmt_spgr::effective,
             doc: ModelDoc {
                 title: "qMT-SPGR",
-                category: Category::MagnetizationTransfer,
+                category: Category::QuantitativeMt,
                 summary: "Two-pool quantitative magnetization transfer from a \
                     spoiled gradient-echo sequence with off-resonance saturation \
                     sampled across a grid of saturation flip angles and \
@@ -416,12 +555,53 @@ mod tests {
         for e in all() {
             let slug = e.doc.category.slug();
             assert!(
-                slug.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                slug.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
                 "{}: category slug '{}' is not URL-safe",
                 e.name,
                 slug
             );
             assert!(!e.doc.category.title().is_empty());
+            assert!(!e.doc.category.family().is_empty());
+        }
+    }
+
+    /// Several categories may share a documentation directory — the two
+    /// magnetization-transfer ones do — but only within a single family. Two
+    /// families writing into one directory would interleave their pages under
+    /// a heading naming just one of them, and the gallery links (built from the
+    /// slug) would point into the wrong section.
+    #[test]
+    fn categories_sharing_a_slug_belong_to_one_family() {
+        let mut family_of: std::collections::BTreeMap<&str, &str> = Default::default();
+        for e in all() {
+            let (slug, family) = (e.doc.category.slug(), e.doc.category.family());
+            if let Some(seen) = family_of.insert(slug, family) {
+                assert_eq!(
+                    seen, family,
+                    "slug '{slug}' is claimed by both '{seen}' and '{family}'"
+                );
+            }
+        }
+    }
+
+    /// Reading order must be a total order over the categories in play: two
+    /// categories at the same rank would group and sort unpredictably in both
+    /// the gallery and the picker, which sort by exactly this.
+    #[test]
+    fn category_order_is_unambiguous() {
+        let mut by_order: std::collections::BTreeMap<u8, &str> = Default::default();
+        for e in all() {
+            let c = e.doc.category;
+            if let Some(seen) = by_order.insert(c.order(), c.title()) {
+                assert_eq!(
+                    seen,
+                    c.title(),
+                    "order {} is shared by '{seen}' and '{}'",
+                    c.order(),
+                    c.title()
+                );
+            }
         }
     }
 }
