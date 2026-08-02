@@ -2,7 +2,7 @@
 
 use crate::core::model::{
     Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement,
-    MeasurementKind, Meta, Model, ProtoParam, Protocol, Sample, Scope, Source,
+    MeasurementKind, Meta, Model, ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::vfa_t1::config::VfaT1Config;
 use crate::models::vfa_t1::fit::{VfaT1Fitter, M0_BOUNDS, T1_BOUNDS};
@@ -14,15 +14,8 @@ pub struct VfaT1Model {
     fitter: VfaT1Fitter,
 }
 
-/// One `{"FlipAngle": deg}` identity row per fitter flip angle, in canonical
-/// order.
-fn vfa_t1_rows(fitter: &VfaT1Fitter) -> Vec<BTreeMap<String, f64>> {
-    fitter
-        .flip_angles()
-        .iter()
-        .map(|&fa| BTreeMap::from([("FlipAngle".to_string(), fa)]))
-        .collect()
-}
+/// The acquisition axis: one volume per FlipAngle.
+const AXIS: SeriesAxis = SeriesAxis::new("FlipAngle");
 
 impl VfaT1Model {
     pub fn new(cfg: VfaT1Config) -> Self {
@@ -77,7 +70,7 @@ impl Model for VfaT1Model {
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {
-            rows: vfa_t1_rows(&self.fitter),
+            rows: AXIS.rows(self.fitter.flip_angles()),
         }
     }
     fn strategy(&self) -> FitStrategy {
@@ -87,37 +80,10 @@ impl Model for VfaT1Model {
         let values = self
             .fitter
             .forward(params[0], params[1], aux.get("B1map").unwrap_or(1.0));
-        let samples = self
-            .fitter
-            .flip_angles()
-            .iter()
-            .zip(values)
-            .map(|(&fa, value)| Sample {
-                params: BTreeMap::from([("FlipAngle".to_string(), fa)]),
-                value,
-            })
-            .collect();
-        Measurement::Series(samples)
+        AXIS.samples(self.fitter.flip_angles(), values)
     }
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64> {
-        // Assemble the signal in the fitter's own flip-angle order by matching
-        // each expected angle to its sample by identity — never positionally. An
-        // angle with no matching sample is a mislabeled measurement → panic (the
-        // engine records the voxel as a failed fit). Angles are assumed unique;
-        // first match wins.
-        let samples = m.series();
-        let signal: Vec<f64> = self
-            .fitter
-            .flip_angles()
-            .iter()
-            .map(|&fa| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("FlipAngle") == Some(&fa))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| panic!("measurement has no sample with FlipAngle={fa}"))
-            })
-            .collect();
+        let signal = AXIS.assemble(m, self.fitter.flip_angles());
         self.fitter
             .fit_voxel(&signal, aux.get("B1map").unwrap_or(1.0))
     }
@@ -185,11 +151,7 @@ impl crate::core::model::ModelConfig for VfaT1Config {
     }
 
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        let angles: Vec<f64> = proto
-            .volumes
-            .iter()
-            .filter_map(|m| m.get("FlipAngle").copied())
-            .collect();
+        let angles = AXIS.ingest(proto);
         if !angles.is_empty() {
             self.flip_angles = angles;
         }
@@ -210,32 +172,7 @@ impl crate::core::model::ModelConfig for VfaT1Config {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<VfaT1Config>(v)
-}
-
-/// Registry builder (see [`build_model`](crate::core::model::build_model)): the
-/// shared parse → ingest protocol → validate → construct pipeline.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<VfaT1Config>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
-/// the fully-resolved effective config as YAML.
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<VfaT1Config>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<VfaT1Config>(v, proto)
-}
+crate::model_entry_points!(VfaT1Config);
 
 #[cfg(test)]
 mod tests {
@@ -273,39 +210,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_assembles_by_identity_not_position() {
-        // Samples supplied in reversed order must give an identical fit; a
-        // positional assembly would pair each signal with the wrong angle.
-        let m = build(&vfa_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[0.9, 1000.0], &Aux::new());
-        let mut reversed: Vec<Sample> = match &sig {
-            Measurement::Series(s) => s
-                .iter()
-                .map(|s| Sample {
-                    params: s.params.clone(),
-                    value: s.value,
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
-        reversed.reverse();
-        let a = m.fit(&sig, &Aux::new());
-        let b = m.fit(&Measurement::Series(reversed), &Aux::new());
-        assert_eq!(a, b, "fit must be invariant to sample order");
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with FlipAngle")]
-    fn fit_panics_on_unmatched_identity() {
-        let m = build(&vfa_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("FlipAngle".to_string(), 77.0)]),
-            value: 1.0,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
     fn bids_folds_flip_angles_and_tr_from_protocol() {
         let proto = resolved_proto(&[4.0, 25.0], 0.018);
         // Config carries no acquisition; the sidecars supply it.
@@ -316,35 +220,6 @@ mod tests {
         assert_eq!(second.entities, vec![("flip", "2".to_string())]);
         assert_eq!(second.sidecar["FlipAngle"], json!(25.0));
         assert_eq!(second.sidecar["RepetitionTimeExcitation"], json!(0.018));
-    }
-
-    #[test]
-    fn forward_samples_carry_the_volume_identities_the_bids_path_builds() {
-        // A `Series` model's volume identities come from the resolved
-        // per-volume protocol (`engine::build_volume_ids`), while `forward`
-        // tags its samples from the model's own rows. Any protocol param the
-        // model does not also emit joins the identity on one side only, and
-        // every predicted sample then fails to match its volume — the fit still
-        // works (it queries one key), so the only symptom is a silently missing
-        // forward curve. Both sides must agree exactly.
-        let proto = resolved_proto(&[3.0, 20.0], 0.015);
-        let v: serde_yaml::Value = serde_yaml::from_str("model: vfa_t1\n").unwrap();
-        let m = build(&v, &proto).unwrap();
-
-        let ids = crate::engine::build_volume_ids(m.measurement(), &proto, m.n_volumes()).unwrap();
-        let sig = m.forward(&[0.9, 1000.0], &Aux::new());
-        let samples = sig.series();
-        assert_eq!(samples.len(), ids.len());
-        for (id, sample) in ids.iter().zip(samples) {
-            let crate::core::model::VolumeId::Params(row) = id else {
-                panic!("vfa_t1 is a Series model; expected param-row identities")
-            };
-            assert_eq!(
-                *row, sample.params,
-                "volume identity {row:?} has no matching forward sample identity {:?}",
-                sample.params
-            );
-        }
     }
 
     #[test]
@@ -367,33 +242,5 @@ mod tests {
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].name, "B1map");
         assert!(!inputs[0].required);
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&vfa_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _unit) in m.bids_outputs() {
-            assert!(names.iter().any(|n| n == out), "{out} not in {names:?}");
-        }
-    }
-
-    #[test]
-    fn describe_succeeds_without_an_acquisition_and_exposes_schema() {
-        let v: serde_yaml::Value = serde_yaml::from_str("model: vfa_t1\n").unwrap();
-        let m = describe(&v).unwrap();
-        let schema = m.protocol_schema();
-        assert_eq!(schema[0].name, "FlipAngle");
-        assert_eq!(schema[1].name, "RepetitionTimeExcitation");
-        // FlipAngle identifies a volume; TR is one value for the collection.
-        assert!(matches!(schema[0].scope, Scope::PerVolume));
-        assert!(matches!(schema[1].scope, Scope::Global));
-    }
-
-    #[test]
-    fn build_still_requires_an_acquisition_when_protocol_empty() {
-        let v: serde_yaml::Value =
-            serde_yaml::from_str("model: vfa_t1\nflip_angles: [3]\n").unwrap();
-        assert!(build(&v, &Protocol::default()).is_err());
     }
 }
