@@ -88,6 +88,31 @@ export function applyViewerTheme() {
   }
 }
 
+// Crosshair sync between the two viewers, live only while both hold a volume.
+//
+// A sync hands the crosshair to the other instance and asks it to format the new
+// location, which it does to a precision derived from its own scene extent. An
+// instance holding no volume has no extent, and the decimal count that falls out
+// of an empty one is not a number `toFixed` accepts — so the sync throws. It
+// throws inside `drawScene`, which during a drag is the first thing NiiVue's
+// mousemove handler calls, before the code that would move the crosshair: the
+// gesture dies at the press that began it, leaving the crosshair pinned there
+// for the rest of the drag. So the link follows the data, and an empty fitted-map
+// viewer is nobody's sync target.
+const SYNC = { "2d": true, "3d": true };
+
+// Linking also aligns, because the map arrives at whatever position its own
+// viewer was left at: the reader has been probing a voxel, and the curve and the
+// value readout already describe that one, so the fitted map has to open on it
+// rather than in the middle. Alignment goes through world coordinates, the way a
+// sync does, so the two grids need not be the same.
+export function linkViewers() {
+  const both = nvIn.volumes.length > 0 && nvOut.volumes.length > 0;
+  nvIn.broadcastTo(both ? [nvOut] : [], SYNC);
+  nvOut.broadcastTo(both ? [nvIn] : [], SYNC);
+  if (both) nvOut.scene.crosshairPos = nvOut.mm2frac(nvIn.frac2mm(nvIn.scene.crosshairPos));
+}
+
 // Slice or multiplanar, for the fitted map. Available whatever the data is: a
 // single-slice fit shows its one plane in the multiplanar layout rather than
 // having the view withheld.
@@ -113,8 +138,9 @@ export function showOutput(name) {
   const entry = app.outputVolumes.find((o) => o.name === name);
   clearVolumes(nvOut);
   app.shownOutput = entry ?? null;
+  if (entry) nvOut.addVolume(entry.volume);
+  linkViewers();
   if (!entry) return;
-  nvOut.addVolume(entry.volume);
   const cmapSelect = $("colormap");
   const preferred = CMAP_BY_UNIT[entry.unit] ?? "inferno";
   const cmap = availableColormaps.includes(preferred) ? preferred : availableColormaps[0];
