@@ -273,7 +273,7 @@ qmrust fit --bids-dir <dir> ─► StdFs (native DatasetFs) ─► rust_bids::co
    for each Collection: resolve_protocol + load 4-D volumes
    resolve_aux_and_mask(table, model, identity, mask_spec) ─► AuxMaps + Option<mask>
    build_volume_ids(model.measurement(), protocol) ─► engine::run ─► FitResults
-   io::nifti writes output_dir/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz
+   io::nifti writes output_dir/qmrust/<subject>[/<session>]/<datatype>/<subject>[_<session>]_<Suffix>.nii.gz
 ```
 
 A BIDS collection is just another way to arrive at a `Protocol` and an ordered volume
@@ -292,8 +292,10 @@ declared role order (its grouping `named_set` role names must match the model's
 `measurement()` roles).
 
 Output is written in the BIDS-derivatives convention too — `output_dir/qmrust/<subject>
-[/<session>]/anat/<subject>[_<session>]_<Suffix>.nii.gz`, per each model's declared
-`bids_outputs()` — and `qmrust bidsify` is the reverse direction, turning a qMRLab `.mat`
+[/<session>]/<datatype>/<subject>[_<session>]_<Suffix>.nii.gz`, per each model's declared
+`bids_outputs()`, with `<datatype>` decided by the suffix itself
+(`rust_bids::datatype_for_suffix`: `anat/` for a tissue parameter, `fmap/` for a field
+map) rather than by the model — and `qmrust bidsify` is the reverse direction, turning a qMRLab `.mat`
 or NIfTI dataset into a byte-identical BIDS input for this path. See [`DATA-PIPELINE.md`
 ](DATA-PIPELINE.md#6-the-output-side--bids_outputs-and-the-derivatives-layout) for both.
 

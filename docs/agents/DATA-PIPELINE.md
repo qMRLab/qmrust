@@ -313,7 +313,9 @@ becomes a dataset again, in BIDS-derivatives form.
 - **`write_derivatives`** (`qmrust-cli/src/commands.rs`), used by
   `run_fit_bids`, writes each declared `(output, suffix, units)` triple
   present in a fit's `FitResults` to
-  `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`,
+  `deriv_root/qmrust/<subject>[/<session>]/<datatype>/<subject>[_<session>]_<suffix>.nii.gz`
+  (the datatype from `rust_bids::datatype_for_suffix`, so a fitted `TB1map`
+  lands in `fmap/` beside the field maps a later fit reads it as),
   plus a full provenance JSON sidecar (`crate::provenance::FitProvenance`,
   `qmrust-cli/src/provenance.rs`) carrying: software + build environment
   (version, commit, rustc, target, build profile, OS/arch), the exact input
