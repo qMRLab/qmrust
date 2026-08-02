@@ -22,6 +22,7 @@ qmrust/                         Cargo workspace
 ├── recipes/                     example `--config` manifests (bids/non-bids/sim, YAML)
 ├── docs/                        agents/ARCHITECTURE.md (this file) + MyST human-docs site
 ├── ci/integration_osf.sh        end-to-end fit against qMRLab's OSF datasets
+├── ci/datasets.sh               which archives, and how each becomes BIDS (shared)
 └── .github/workflows/           ci.yml (lint · native · wasm · integration) + docs.yml (MyST → Pages)
 ```
 

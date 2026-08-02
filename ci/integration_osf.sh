@@ -16,94 +16,13 @@ abs() {
   esac
 }
 
-echo "Downloading qMRLab OSF datasets..."
-curl -L --fail -o "$DATA/ir.zip"       "https://osf.io/cmg9z/download?version=3"
-curl -L --fail -o "$DATA/qmt.zip"      "https://osf.io/pzqyn/download?version=2"
-curl -L --fail -o "$DATA/mono_t2.zip"  "https://osf.io/kujp3/download?version=3"
-curl -L --fail -o "$DATA/mtr.zip"      "https://osf.io/erm2s/download?version=2"
-curl -L --fail -o "$DATA/mtsat.zip"    "https://osf.io/c5wdb/download?version=4"
-curl -L --fail -o "$DATA/vfa_t1.zip"   "https://osf.io/7wcvh/download?version=3"
-curl -L --fail -o "$DATA/b1_dam.zip"   "https://osf.io/mw3sq/download?version=3"
-curl -L --fail -o "$DATA/b1_afi.zip"   "https://osf.io/csjgx/download?version=9"
-unzip -o -q "$DATA/ir.zip"      -d "$DATA/ir"
-unzip -o -q "$DATA/qmt.zip"     -d "$DATA/qmt"
-unzip -o -q "$DATA/mono_t2.zip" -d "$DATA/mono_t2"
-unzip -o -q "$DATA/mtr.zip"     -d "$DATA/mtr"
-unzip -o -q "$DATA/mtsat.zip"   -d "$DATA/mtsat"
-unzip -o -q "$DATA/vfa_t1.zip"  -d "$DATA/vfa_t1"
-unzip -o -q "$DATA/b1_dam.zip"  -d "$DATA/b1_dam"
-unzip -o -q "$DATA/b1_afi.zip"  -d "$DATA/b1_afi"
-
-# Locate the datasets by their key files (robust to archive folder layout).
-IR_MAT="$(find "$DATA/ir" -name 'IRData.mat' | head -1)"
-QMT_MAT="$(find "$DATA/qmt" -name 'MTdata.mat' | head -1)"
-[ -n "$IR_MAT" ]  || { echo "IRData.mat not found in IR archive"; exit 1; }
-[ -n "$QMT_MAT" ] || { echo "MTdata.mat not found in qMT archive"; exit 1; }
-IR_DIR="$(dirname "$IR_MAT")"
-QMT_DIR="$(dirname "$QMT_MAT")"
-
-# Mask.mat may live in a different directory than IRData.mat within the
-# archive; locate it independently rather than assuming it's alongside.
-IR_MASK="$(find "$DATA/ir" -name 'Mask.mat' | head -1)"
-[ -n "$IR_MASK" ] || { echo "Mask.mat not found in IR archive"; exit 1; }
-
-# mono_t2 ships as NIfTI (SEdata.nii.gz) with a qMRLab reference (FitResults/).
-MONO_SE="$(find "$DATA/mono_t2" -name 'SEdata.nii.gz' | head -1)"
-MONO_MASK="$(find "$DATA/mono_t2" -name 'Mask.nii.gz' | head -1)"
-MONO_REF_T2="$(find "$DATA/mono_t2" -path '*FitResults*' -name 'T2.nii.gz' | head -1)"
-[ -n "$MONO_SE" ]     || { echo "SEdata.nii.gz not found in mono_t2 archive"; exit 1; }
-[ -n "$MONO_MASK" ]   || { echo "Mask.nii.gz not found in mono_t2 archive"; exit 1; }
-[ -n "$MONO_REF_T2" ] || { echo "FitResults/T2.nii.gz not found in mono_t2 archive"; exit 1; }
-
-# mt_ratio ships as a named set of separate .mat files (MTon.mat/MToff.mat,
-# + Mask.mat) with a qMRLab reference (FitResults/MTR.nii.gz).
-MTR_ON="$(find "$DATA/mtr" -name 'MTon.mat' | head -1)"
-MTR_REF="$(find "$DATA/mtr" -path '*FitResults*' -name 'MTR.nii.gz' | head -1)"
-[ -n "$MTR_ON" ]  || { echo "MTon.mat not found in MTR archive"; exit 1; }
-[ -n "$MTR_REF" ] || { echo "FitResults/MTR.nii.gz not found in MTR archive"; exit 1; }
-MTR_DIR="$(dirname "$MTR_ON")"
-
-# mt_sat ships as three per-role NIfTIs (MTw/PDw/T1w) with a qMRLab reference
-# (FitResults/MTSAT.nii.gz, T1.nii.gz, MTR.nii.gz).
-MTSAT_MTW="$(find "$DATA/mtsat" -name 'MTw.nii.gz' | head -1)"
-MTSAT_REF_SAT="$(find "$DATA/mtsat" -path '*FitResults*' -name 'MTSAT.nii.gz' | head -1)"
-MTSAT_REF_T1="$(find "$DATA/mtsat" -path '*FitResults*' -name 'T1.nii.gz' | head -1)"
-MTSAT_REF_MTR="$(find "$DATA/mtsat" -path '*FitResults*' -name 'MTR.nii.gz' | head -1)"
-[ -n "$MTSAT_MTW" ]     || { echo "MTw.nii.gz not found in MTsat archive"; exit 1; }
-[ -n "$MTSAT_REF_SAT" ] || { echo "FitResults/MTSAT.nii.gz not found in MTsat archive"; exit 1; }
-MTSAT_DIR="$(dirname "$MTSAT_MTW")"
-
-# vfa_t1 ships as a 4D NIfTI (VFAData.nii.gz, flip angles in the 4th axis) plus
-# a transmit field map and a mask, with a qMRLab reference (FitResults/).
-VFA_DATA="$(find "$DATA/vfa_t1" -name 'VFAData.nii.gz' | head -1)"
-VFA_B1="$(find "$DATA/vfa_t1" -name 'B1map.nii.gz' | head -1)"
-VFA_MASK="$(find "$DATA/vfa_t1" -name 'Mask.nii.gz' | head -1)"
-VFA_REF_T1="$(find "$DATA/vfa_t1" -path '*FitResults*' -name 'T1.nii.gz' | head -1)"
-VFA_REF_M0="$(find "$DATA/vfa_t1" -path '*FitResults*' -name 'M0.nii.gz' | head -1)"
-[ -n "$VFA_DATA" ]   || { echo "VFAData.nii.gz not found in VFA archive"; exit 1; }
-[ -n "$VFA_B1" ]     || { echo "B1map.nii.gz not found in VFA archive"; exit 1; }
-[ -n "$VFA_MASK" ]   || { echo "Mask.nii.gz not found in VFA archive"; exit 1; }
-[ -n "$VFA_REF_T1" ] || { echo "FitResults/T1.nii.gz not found in VFA archive"; exit 1; }
-[ -n "$VFA_REF_M0" ] || { echo "FitResults/M0.nii.gz not found in VFA archive"; exit 1; }
-
-# b1_dam ships as two separate 3D NIfTIs — one per flip angle, alpha and
-# 2*alpha — and no mask, with a qMRLab reference (FitResults/B1map.nii.gz).
-B1DAM_A="$(find "$DATA/b1_dam" -name 'SFalpha.nii.gz' | head -1)"
-B1DAM_2A="$(find "$DATA/b1_dam" -name 'SF2alpha.nii.gz' | head -1)"
-B1DAM_REF="$(find "$DATA/b1_dam" -path '*FitResults*' -name 'B1map.nii.gz' | head -1)"
-[ -n "$B1DAM_A" ]   || { echo "SFalpha.nii.gz not found in b1_dam archive"; exit 1; }
-[ -n "$B1DAM_2A" ]  || { echo "SF2alpha.nii.gz not found in b1_dam archive"; exit 1; }
-[ -n "$B1DAM_REF" ] || { echo "FitResults/B1map.nii.gz not found in b1_dam archive"; exit 1; }
-
-# b1_afi ships as two separate 3D NIfTIs — one per interleaved repetition time
-# — and no mask, with a qMRLab reference (FitResults/B1map_raw.nii.gz; the
-# `_filtered` map is FilterClass smoothing, which is not part of this model).
-B1AFI_TR1="$(find "$DATA/b1_afi" -name 'AFIData1.nii.gz' | head -1)"
-B1AFI_TR2="$(find "$DATA/b1_afi" -name 'AFIData2.nii.gz' | head -1)"
-B1AFI_REF="$(find "$DATA/b1_afi" -path '*FitResults*' -name 'B1map_raw.nii.gz' | head -1)"
-[ -n "$B1AFI_TR1" ] || { echo "AFIData1.nii.gz not found in b1_afi archive"; exit 1; }
-[ -n "$B1AFI_TR2" ] || { echo "AFIData2.nii.gz not found in b1_afi archive"; exit 1; }
-[ -n "$B1AFI_REF" ] || { echo "FitResults/B1map_raw.nii.gz not found in b1_afi archive"; exit 1; }
+# Where the data comes from and how each archive is bidsified: ci/datasets.sh,
+# shared with scripts/make_bids_examples.sh so an archive cannot be pinned to
+# one version here and another there.
+# shellcheck source=ci/datasets.sh
+. "$(dirname "$0")/datasets.sh"
+fetch_all
+locate_references
 
 echo "Running IR fit..."
 "$BIN" fit --mat-data "$IR_MAT" --mask "$IR_MASK" \
@@ -122,8 +41,7 @@ echo "Running mono_t2 bidsify + BIDS-path fit..."
 # written into the sidecars); the BIDS-path fit then reads those sidecars and
 # uses the BIDS recipe (no echo_times — avoids duplicating the acquisition axis
 # into the output provenance's Parameters block).
-"$BIN" bidsify --model mono_t2 --nii-data "$MONO_SE" --nii-mask "$MONO_MASK" \
-  --config recipes/non-bids/mono_t2_config.yaml --subject 01 --out "$DATA/mono_t2_bids"
+bidsify_mono_t2 "$DATA/mono_t2_bids"
 "$BIN" fit --bids-dir "$DATA/mono_t2_bids" \
   --config recipes/bids/mono_t2_config.yaml --output-dir "$DATA/out_mono_t2"
 
@@ -132,8 +50,7 @@ echo "Running mt_ratio bidsify + BIDS-path fit..."
 # Mask.mat; MTR has no acquisition arrays, so the recipes carry only the model
 # name (+ the BIDS recipe's mask block). The BIDS-path fit reassembles the
 # mt-on/mt-off named collection.
-"$BIN" bidsify --model mt_ratio --mat-dir "$MTR_DIR" \
-  --config recipes/non-bids/mt_ratio_config.yaml --subject 01 --out "$DATA/mtr_bids"
+bidsify_mt_ratio "$DATA/mtr_bids"
 "$BIN" fit --bids-dir "$DATA/mtr_bids" \
   --config recipes/bids/mt_ratio_config.yaml --output-dir "$DATA/out_mtr"
 
@@ -141,8 +58,7 @@ echo "Running mt_sat bidsify + BIDS-path fit..."
 # bidsify reads the per-role NIfTIs (MTw/PDw/T1w) from --nii-dir; the non-BIDS
 # recipe supplies each role's FlipAngle/RepetitionTimeExcitation, written into
 # the MTS sidecars. The BIDS-path fit folds those per-role sidecars back in.
-"$BIN" bidsify --model mt_sat --nii-dir "$MTSAT_DIR" \
-  --config recipes/non-bids/mt_sat_config.yaml --subject 01 --out "$DATA/mtsat_bids"
+bidsify_mt_sat "$DATA/mtsat_bids"
 "$BIN" fit --bids-dir "$DATA/mtsat_bids" \
   --config recipes/bids/mt_sat_config.yaml --output-dir "$DATA/out_mtsat"
 
@@ -151,9 +67,7 @@ echo "Running vfa_t1 bidsify + BIDS-path fit..."
 # the non-BIDS recipe supplies the flip angles and TR, written into the VFA
 # sidecars. The BIDS-path fit folds those sidecars back in and resolves the
 # TB1map derivative as the model's optional B1map input.
-"$BIN" bidsify --model vfa_t1 --nii-data "$VFA_DATA" --nii-mask "$VFA_MASK" \
-  --aux "B1map=$VFA_B1" \
-  --config recipes/non-bids/vfa_t1_config.yaml --subject 01 --out "$DATA/vfa_t1_bids"
+bidsify_vfa_t1 "$DATA/vfa_t1_bids"
 "$BIN" fit --bids-dir "$DATA/vfa_t1_bids" \
   --config recipes/bids/vfa_t1_config.yaml --output-dir "$DATA/out_vfa_t1"
 
@@ -162,9 +76,7 @@ echo "Running b1_dam bidsify + BIDS-path fit..."
 # repeated once per volume in acquisition order; the non-BIDS recipe supplies
 # the flip angles, written into the TB1DAM sidecars. The BIDS-path fit folds
 # those sidecars back in.
-"$BIN" bidsify --model b1_dam \
-  --nii-data "$B1DAM_A" --nii-data "$B1DAM_2A" \
-  --config recipes/non-bids/b1_dam_config.yaml --subject 01 --out "$DATA/b1_dam_bids"
+bidsify_b1_dam "$DATA/b1_dam_bids"
 "$BIN" fit --bids-dir "$DATA/b1_dam_bids" \
   --config recipes/bids/b1_dam_config.yaml --output-dir "$DATA/out_b1_dam"
 
@@ -174,9 +86,7 @@ echo "Running b1_afi bidsify + BIDS-path fit..."
 # recipe supplies the repetition times and the nominal flip angle, written
 # into the TB1AFI sidecars. The BIDS-path fit folds those sidecars back in and
 # reassembles the acq-tr1/acq-tr2 collection.
-"$BIN" bidsify --model b1_afi \
-  --nii-data "$B1AFI_TR1" --nii-data "$B1AFI_TR2" \
-  --config recipes/non-bids/b1_afi_config.yaml --subject 01 --out "$DATA/b1_afi_bids"
+bidsify_b1_afi "$DATA/b1_afi_bids"
 "$BIN" fit --bids-dir "$DATA/b1_afi_bids" \
   --config recipes/bids/b1_afi_config.yaml --output-dir "$DATA/out_b1_afi"
 
