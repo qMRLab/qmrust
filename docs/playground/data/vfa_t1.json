@@ -1,6 +1,11 @@
 {
  "model": "vfa_t1",
- "title": "Variable flip angle T1",
+ "title": "Variable Flip Angle",
+ "bids_suffix": "VFA",
+ "family": "T1 Relaxometry",
+ "family_icon": "spline-pointer",
+ "subgroup": null,
+ "category_order": 0,
  "dims": [
   128,
   128,

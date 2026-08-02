@@ -1,0 +1,109 @@
+{
+ "model": "b1_dam",
+ "title": "Double Angle B1+",
+ "bids_suffix": "TB1DAM",
+ "family": "Field Mapping",
+ "family_icon": "circle-dot",
+ "subgroup": null,
+ "category_order": 2,
+ "dims": [
+  64,
+  64,
+  1,
+  2
+ ],
+ "factor": 1,
+ "volume_ids": [
+  {
+   "FlipAngle": 60.0
+  },
+  {
+   "FlipAngle": 120.0
+  }
+ ],
+ "labels": [
+  "FlipAngle=60",
+  "FlipAngle=120"
+ ],
+ "params": [
+  "B1",
+  "A"
+ ],
+ "outputs": [
+  {
+   "name": "B1",
+   "unit": "",
+   "display_range": [
+    0.5,
+    1.5
+   ]
+  }
+ ],
+ "enums": [],
+ "config": "model: b1_dam\n\n# non-BIDS: protocol from this file; mask via --mask.\n# Nominal flip angles in degrees (BIDS-MRI convention), in acquisition order.\n# The double-angle identity only holds when the second angle is twice the\n# first, so the pair is validated before the fit runs. qMRLab's b1_dam default\n# protocol is alpha = 60 degrees.\nflip_angles:\n- 60\n- 120\n\n# There are no fit options: the estimate is closed form.\n#\n# Two uses:\n#   - bidsify a qMRLab dataset (SFalpha.mat / SF2alpha.mat plus Mask.mat) from\n#     --mat-dir; this config is the --config input:\n#\n#       qmrust bidsify --model b1_dam --mat-dir <dir> \\\n#         --config recipes/non-bids/b1_dam_config.yaml --subject 01 --out ds\n#\n#   - fit a stacked 4D NIfTI whose two volumes are [alpha, 2*alpha]:\n#\n#       qmrust fit --data sfalpha_sf2alpha.nii.gz --mask Mask.mat \\\n#         --config recipes/non-bids/b1_dam_config.yaml --output-dir out_b1\n",
+ "config_bids": "model: b1_dam\n\n# B1 = |acos(S(2a) / (2 * S(a)))| / a, with the map dimensionless (1.0 = the\n# nominal flip angle was achieved). BIDS input: the two flip angles are read\n# from the JSON sidecars via the model's protocol_schema(), so they are not\n# declared here. The TB1DAM collection is assembled by flip index. Example:\n#\n#   qmrust fit --bids-dir <dataset> \\\n#     --config recipes/bids/b1_dam_config.yaml --output-dir out\n\n# BIDS mask selection. Left blank: this example dataset ships no mask, and\n# naming one here would claim otherwise. Blank means \"whatever mask is\n# present\", so a dataset of your own that has one is masked by it.\nmask:\n  desc: \"\"\n",
+ "archive": "ds-tb1dam.zip",
+ "files": {
+  "data": "b1_dam.nii.gz",
+  "mask": null,
+  "aux": {}
+ },
+ "probes": [
+  {
+   "x": 32,
+   "y": 32,
+   "expected": {
+    "B1": 0.9143969256837542
+   }
+  },
+  {
+   "x": 29,
+   "y": 29,
+   "expected": {
+    "B1": 0.9100976261270164
+   }
+  },
+  {
+   "x": 29,
+   "y": 35,
+   "expected": {
+    "B1": 0.9081585700225492
+   }
+  },
+  {
+   "x": 35,
+   "y": 29,
+   "expected": {
+    "B1": 0.9401362108666856
+   }
+  },
+  {
+   "x": 35,
+   "y": 35,
+   "expected": {
+    "B1": 0.9576968485584598
+   }
+  },
+  {
+   "x": 32,
+   "y": 38,
+   "expected": {
+    "B1": 0.9165485297676551
+   }
+  },
+  {
+   "x": 38,
+   "y": 32,
+   "expected": {
+    "B1": 0.923119926577423
+   }
+  },
+  {
+   "x": 26,
+   "y": 26,
+   "expected": {
+    "B1": 0.9323702485199705
+   }
+  }
+ ]
+}

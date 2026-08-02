@@ -1,6 +1,11 @@
 {
  "model": "inversion_recovery",
- "title": "Inversion recovery T1",
+ "title": "Inversion Recovery",
+ "bids_suffix": "IRT1",
+ "family": "T1 Relaxometry",
+ "family_icon": "spline-pointer",
+ "subgroup": null,
+ "category_order": 0,
  "dims": [
   128,
   128,
