@@ -62,7 +62,18 @@
       <button id="recipe-collapse" class="collapse-btn" type="button" aria-expanded="true">Hide</button>
     </div>
     <div class="section-h recipe-title"><span class="panel-title">Recipe</span><button class="info" type="button" aria-label="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit." data-tip="A recipe is protocol + options. For BIDS data the protocol (echo times, flip angles, inversion times) is read from the dataset's JSON sidecars, so only fitting options appear here. Edits apply to the next fit."><span data-icon="info" data-icon-size="14"></span></button></div>
-    <div class="model-line">model: <select id="model"></select></div>
+    <!-- The <select> stays as the value: it is what `loadModel` and a dropped
+         dataset both read and write, and it keeps the control working before
+         the tree is built. `buildModelTree` hides it and mirrors it. -->
+    <div class="model-line">
+      <div class="model-label"><span data-icon="list-collapse" data-icon-size="14"></span>Models</div>
+      <select id="model" aria-label="Model"></select>
+      <div class="model-picker" id="model-picker" hidden>
+        <button id="model-button" class="model-button" type="button"
+                aria-haspopup="tree" aria-expanded="false"></button>
+        <div class="model-tree" id="model-tree" role="tree" aria-label="Models" hidden></div>
+      </div>
+    </div>
     <div class="recipe-scroll">
     <div id="form-view"><div id="cfg-error" class="cfg-error" hidden></div><div id="form-fields" class="form-fields"></div></div>
     <div id="yaml-view" class="yaml-wrap" hidden>

@@ -1,0 +1,24 @@
+model: b1_dam
+
+# non-BIDS: protocol from this file; mask via --mask.
+# Nominal flip angles in degrees (BIDS-MRI convention), in acquisition order.
+# The double-angle identity only holds when the second angle is twice the
+# first, so the pair is validated before the fit runs. qMRLab's b1_dam default
+# protocol is alpha = 60 degrees.
+flip_angles:
+- 60
+- 120
+
+# There are no fit options: the estimate is closed form.
+#
+# Two uses:
+#   - bidsify a qMRLab dataset (SFalpha.mat / SF2alpha.mat plus Mask.mat) from
+#     --mat-dir; this config is the --config input:
+#
+#       qmrust bidsify --model b1_dam --mat-dir <dir> \
+#         --config recipes/non-bids/b1_dam_config.yaml --subject 01 --out ds
+#
+#   - fit a stacked 4D NIfTI whose two volumes are [alpha, 2*alpha]:
+#
+#       qmrust fit --data sfalpha_sf2alpha.nii.gz --mask Mask.mat \
+#         --config recipes/non-bids/b1_dam_config.yaml --output-dir out_b1

@@ -18,6 +18,8 @@ def named_model(**over):
     m = {
         "name": "mt_ratio_demo", "bids_suffix": "MTR",
         "title": "MTR demo",
+        "family": "Magnetization Transfer", "family_icon": "waves-arrow-up",
+        "subgroup": "Semi-quantitative MT", "category_order": 3,
         "measurement": {
             "kind": "named",
             "roles": [

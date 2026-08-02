@@ -23,12 +23,16 @@ curl -L --fail -o "$DATA/mono_t2.zip"  "https://osf.io/kujp3/download?version=3"
 curl -L --fail -o "$DATA/mtr.zip"      "https://osf.io/erm2s/download?version=2"
 curl -L --fail -o "$DATA/mtsat.zip"    "https://osf.io/c5wdb/download?version=4"
 curl -L --fail -o "$DATA/vfa_t1.zip"   "https://osf.io/7wcvh/download?version=3"
+curl -L --fail -o "$DATA/b1_dam.zip"   "https://osf.io/mw3sq/download?version=3"
+curl -L --fail -o "$DATA/b1_afi.zip"   "https://osf.io/csjgx/download?version=9"
 unzip -o -q "$DATA/ir.zip"      -d "$DATA/ir"
 unzip -o -q "$DATA/qmt.zip"     -d "$DATA/qmt"
 unzip -o -q "$DATA/mono_t2.zip" -d "$DATA/mono_t2"
 unzip -o -q "$DATA/mtr.zip"     -d "$DATA/mtr"
 unzip -o -q "$DATA/mtsat.zip"   -d "$DATA/mtsat"
 unzip -o -q "$DATA/vfa_t1.zip"  -d "$DATA/vfa_t1"
+unzip -o -q "$DATA/b1_dam.zip"  -d "$DATA/b1_dam"
+unzip -o -q "$DATA/b1_afi.zip"  -d "$DATA/b1_afi"
 
 # Locate the datasets by their key files (robust to archive folder layout).
 IR_MAT="$(find "$DATA/ir" -name 'IRData.mat' | head -1)"
@@ -82,6 +86,25 @@ VFA_REF_M0="$(find "$DATA/vfa_t1" -path '*FitResults*' -name 'M0.nii.gz' | head 
 [ -n "$VFA_REF_T1" ] || { echo "FitResults/T1.nii.gz not found in VFA archive"; exit 1; }
 [ -n "$VFA_REF_M0" ] || { echo "FitResults/M0.nii.gz not found in VFA archive"; exit 1; }
 
+# b1_dam ships as two separate 3D NIfTIs — one per flip angle, alpha and
+# 2*alpha — and no mask, with a qMRLab reference (FitResults/B1map.nii.gz).
+B1DAM_A="$(find "$DATA/b1_dam" -name 'SFalpha.nii.gz' | head -1)"
+B1DAM_2A="$(find "$DATA/b1_dam" -name 'SF2alpha.nii.gz' | head -1)"
+B1DAM_REF="$(find "$DATA/b1_dam" -path '*FitResults*' -name 'B1map.nii.gz' | head -1)"
+[ -n "$B1DAM_A" ]   || { echo "SFalpha.nii.gz not found in b1_dam archive"; exit 1; }
+[ -n "$B1DAM_2A" ]  || { echo "SF2alpha.nii.gz not found in b1_dam archive"; exit 1; }
+[ -n "$B1DAM_REF" ] || { echo "FitResults/B1map.nii.gz not found in b1_dam archive"; exit 1; }
+
+# b1_afi ships as two separate 3D NIfTIs — one per interleaved repetition time
+# — and no mask, with a qMRLab reference (FitResults/B1map_raw.nii.gz; the
+# `_filtered` map is FilterClass smoothing, which is not part of this model).
+B1AFI_TR1="$(find "$DATA/b1_afi" -name 'AFIData1.nii.gz' | head -1)"
+B1AFI_TR2="$(find "$DATA/b1_afi" -name 'AFIData2.nii.gz' | head -1)"
+B1AFI_REF="$(find "$DATA/b1_afi" -path '*FitResults*' -name 'B1map_raw.nii.gz' | head -1)"
+[ -n "$B1AFI_TR1" ] || { echo "AFIData1.nii.gz not found in b1_afi archive"; exit 1; }
+[ -n "$B1AFI_TR2" ] || { echo "AFIData2.nii.gz not found in b1_afi archive"; exit 1; }
+[ -n "$B1AFI_REF" ] || { echo "FitResults/B1map_raw.nii.gz not found in b1_afi archive"; exit 1; }
+
 echo "Running IR fit..."
 "$BIN" fit --mat-data "$IR_MAT" --mask "$IR_MASK" \
   --config recipes/non-bids/irt1_config.yaml --output-dir "$DATA/out_ir"
@@ -134,6 +157,29 @@ echo "Running vfa_t1 bidsify + BIDS-path fit..."
 "$BIN" fit --bids-dir "$DATA/vfa_t1_bids" \
   --config recipes/bids/vfa_t1_config.yaml --output-dir "$DATA/out_vfa_t1"
 
+echo "Running b1_dam bidsify + BIDS-path fit..."
+# The two flip-angle volumes ship as separate 3D files, so --nii-data is
+# repeated once per volume in acquisition order; the non-BIDS recipe supplies
+# the flip angles, written into the TB1DAM sidecars. The BIDS-path fit folds
+# those sidecars back in.
+"$BIN" bidsify --model b1_dam \
+  --nii-data "$B1DAM_A" --nii-data "$B1DAM_2A" \
+  --config recipes/non-bids/b1_dam_config.yaml --subject 01 --out "$DATA/b1_dam_bids"
+"$BIN" fit --bids-dir "$DATA/b1_dam_bids" \
+  --config recipes/bids/b1_dam_config.yaml --output-dir "$DATA/out_b1_dam"
+
+echo "Running b1_afi bidsify + BIDS-path fit..."
+# The two interleaved repetition times ship as separate 3D files, so
+# --nii-data is repeated once per volume in acquisition order; the non-BIDS
+# recipe supplies the repetition times and the nominal flip angle, written
+# into the TB1AFI sidecars. The BIDS-path fit folds those sidecars back in and
+# reassembles the acq-tr1/acq-tr2 collection.
+"$BIN" bidsify --model b1_afi \
+  --nii-data "$B1AFI_TR1" --nii-data "$B1AFI_TR2" \
+  --config recipes/non-bids/b1_afi_config.yaml --subject 01 --out "$DATA/b1_afi_bids"
+"$BIN" fit --bids-dir "$DATA/b1_afi_bids" \
+  --config recipes/bids/b1_afi_config.yaml --output-dir "$DATA/out_b1_afi"
+
 echo "Asserting outputs..."
 for f in "$DATA/out_ir/T1.nii.gz" "$DATA/out_ramani/F.nii.gz" "$DATA/out_srp/F.nii.gz" \
          "$DATA/out_mono_t2/qmrust/sub-01/anat/sub-01_T2map.nii.gz" \
@@ -141,7 +187,9 @@ for f in "$DATA/out_ir/T1.nii.gz" "$DATA/out_ramani/F.nii.gz" "$DATA/out_srp/F.n
          "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_MTsat.nii.gz" \
          "$DATA/out_mtsat/qmrust/sub-01/anat/sub-01_T1map.nii.gz" \
          "$DATA/out_vfa_t1/qmrust/sub-01/anat/sub-01_T1map.nii.gz" \
-         "$DATA/out_vfa_t1/qmrust/sub-01/anat/sub-01_M0map.nii.gz"; do
+         "$DATA/out_vfa_t1/qmrust/sub-01/anat/sub-01_M0map.nii.gz" \
+         "$DATA/out_b1_dam/qmrust/sub-01/fmap/sub-01_TB1map.nii.gz" \
+         "$DATA/out_b1_afi/qmrust/sub-01/fmap/sub-01_TB1map.nii.gz"; do
   test -s "$f" || { echo "MISSING or empty: $f"; exit 1; }
 done
 
@@ -188,6 +236,26 @@ python3 ci/compare_maps.py \
 python3 ci/compare_maps.py \
   "$DATA/out_vfa_t1/qmrust/sub-01/anat/sub-01_M0map.nii.gz" "$VFA_REF_M0" \
   --rel-tol 0.001 --min-frac 0.999 --min-corr 0.999 --label vfa_t1-M0
+
+# b1_dam is a closed-form arc-cosine of a signal ratio, dimensionless in both
+# implementations, so every voxel agrees to double-precision round-off — this
+# dataset ships no mask, so that holds over the whole image including the
+# out-of-domain voxels where the ratio exceeds 1 and both take the magnitude of
+# the complex principal value.
+echo "Comparing b1_dam B1 map to qMRLab FitResults..."
+python3 ci/compare_maps.py \
+  "$DATA/out_b1_dam/qmrust/sub-01/fmap/sub-01_TB1map.nii.gz" "$B1DAM_REF" \
+  --rel-tol 0.001 --min-frac 0.999 --min-corr 0.999 --label b1_dam-B1
+
+# b1_afi is likewise closed form and dimensionless in both implementations. Its
+# estimator pins an unphysical signal ratio (r > 1) to B1 = 0 while leaving a
+# non-finite ratio NaN, and reproducing that arithmetic exactly is what keeps
+# the zero and NaN footprints equal to qMRLab's rather than merely the
+# well-behaved voxels agreeing.
+echo "Comparing b1_afi B1 map to qMRLab FitResults..."
+python3 ci/compare_maps.py \
+  "$DATA/out_b1_afi/qmrust/sub-01/fmap/sub-01_TB1map.nii.gz" "$B1AFI_REF" \
+  --rel-tol 0.001 --min-frac 0.999 --min-corr 0.999 --label b1_afi-B1
 
 # The BIDS path and the .mat path must produce identical maps from the same
 # input. CLAUDE.md names this as the definition of a behaviour-preserving

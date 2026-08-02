@@ -1,6 +1,11 @@
 {
  "model": "mono_t2",
- "title": "Mono-exponential T2",
+ "title": "Monoexp T2",
+ "bids_suffix": "MESE",
+ "family": "T2 Relaxometry",
+ "family_icon": "spline-pointer-mirrored",
+ "subgroup": null,
+ "category_order": 1,
  "dims": [
   87,
   107,

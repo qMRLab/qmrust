@@ -33,3 +33,9 @@ MTR:
 VFA:
   sequential_set:
     by: [flip]
+TB1DAM:
+  sequential_set:
+    by: [flip]
+TB1AFI:
+  sequential_set:
+    by: [acq]

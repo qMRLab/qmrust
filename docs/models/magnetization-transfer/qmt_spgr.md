@@ -1,8 +1,8 @@
 ---
 title: qMT-SPGR
-subtitle: Magnetization transfer · BIDS suffix QMTSPGR
+subtitle: Quantitative MT · BIDS suffix QMTSPGR
 keywords:
-  - Magnetization transfer
+  - Quantitative MT
   - QMTSPGR
 thumbnail: ../../figures/qmt_spgr/outputs.webp
 ---
@@ -16,7 +16,7 @@ Config name
 BIDS suffix
 : `QMTSPGR`
 Method family
-: Magnetization transfer
+: Quantitative MT
 Acquired volumes
 : 10
 Fit granularity
@@ -102,7 +102,7 @@ Auxiliary maps and the mask applied to this fit.
 | `T2r` | `T2Rmap` | s | 3e-06 … 5e-05 | free |
 
 :::{dropdown} Diagnostic outputs
-Written alongside the quantitative maps, but not quantitative measurements — they describe the fit, not the tissue.
+Reported by the fit but not written as BIDS derivatives: they describe the fit rather than the tissue, and have no BIDS suffix to be written under.
 
 | Output |
 |---|

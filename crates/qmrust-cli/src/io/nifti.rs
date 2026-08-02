@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use ndarray::{Array3, Array4};
 use nifti::writer::WriterOptions;
 use nifti::{IntoNdArray, NiftiHeader, NiftiObject, ReaderOptions};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Read a NIfTI file and return the raw dynamic-dimension array + header.
 fn read_nifti_raw(path: &Path) -> Result<(ndarray::ArrayD<f64>, NiftiHeader)> {
@@ -151,19 +151,32 @@ pub fn read_map_nifti_with_header(path: &Path) -> Result<(Array3<f64>, NiftiHead
 /// is preserved for the output geometry. Every role file must exist and share
 /// the same spatial dims.
 pub fn read_named_nii_volumes(dir: &Path, roles: &[&str]) -> Result<(Array4<f64>, NiftiHeader)> {
-    let mut vols: Vec<ndarray::Array3<f64>> = Vec::with_capacity(roles.len());
+    let paths: Vec<PathBuf> = roles
+        .iter()
+        .map(|r| dir.join(format!("{r}.nii.gz")))
+        .collect();
+    stack_nii_volumes(&paths)
+}
+
+/// Read one 3D scalar NIfTI per path and stack them into a 4D array in the
+/// given order — column `i` is `paths[i]`. Used wherever a measurement ships
+/// as one file per volume rather than one 4D file: a `Named` model's role
+/// files, or a `Series` model's per-volume files in acquisition order. The
+/// first file's spatial header is preserved for the output geometry. Every
+/// file must exist and share the same spatial dims.
+pub fn stack_nii_volumes(paths: &[PathBuf]) -> Result<(Array4<f64>, NiftiHeader)> {
+    let mut vols: Vec<ndarray::Array3<f64>> = Vec::with_capacity(paths.len());
     let mut header: Option<NiftiHeader> = None;
     let mut dims: Option<(usize, usize, usize)> = None;
-    for &role in roles {
-        let path = dir.join(format!("{role}.nii.gz"));
-        let (v, h) = read_map_nifti_with_header(&path)
-            .with_context(|| format!("reading named role '{role}' from {:?}", path))?;
+    for path in paths {
+        let (v, h) = read_map_nifti_with_header(path)
+            .with_context(|| format!("reading volume from {path:?}"))?;
         let d = v.dim();
         match dims {
             None => dims = Some(d),
             Some(expected) if expected != d => bail!(
-                "role '{}' has spatial dims {:?}, expected {:?} (from the first role)",
-                role,
+                "{:?} has spatial dims {:?}, expected {:?} (from the first volume)",
+                path,
                 d,
                 expected
             ),
@@ -174,8 +187,8 @@ pub fn read_named_nii_volumes(dir: &Path, roles: &[&str]) -> Result<(Array4<f64>
         }
         vols.push(v);
     }
-    let (nx, ny, nz) = dims.with_context(|| "a named model must declare at least one role")?;
-    let mut out = Array4::<f64>::zeros((nx, ny, nz, roles.len()));
+    let (nx, ny, nz) = dims.with_context(|| "at least one volume is required")?;
+    let mut out = Array4::<f64>::zeros((nx, ny, nz, paths.len()));
     for (t, v) in vols.iter().enumerate() {
         out.index_axis_mut(ndarray::Axis(3), t).assign(v);
     }
@@ -298,6 +311,50 @@ mod tests {
         let path = dir.join(name);
         WriterOptions::new(&path).write_nifti(&data).unwrap();
         path
+    }
+
+    /// Per-volume files carry the acquisition axis *between* them, so the
+    /// stack's 4th axis has to follow `paths` exactly. A silent reorder here
+    /// would pair every volume with the wrong sidecar.
+    #[test]
+    fn stacking_follows_the_order_the_paths_were_given() {
+        let dir = TempDir::new("stack-order");
+        let a = write_nifti(&dir.0, "a.nii", &[2, 3, 1]);
+        let b = write_nifti(&dir.0, "b.nii", &[2, 3, 1]);
+        let (fwd, _) = stack_nii_volumes(&[a.clone(), b.clone()]).unwrap();
+        let (rev, _) = stack_nii_volumes(&[b, a]).unwrap();
+        assert_eq!(fwd.dim(), (2, 3, 1, 2));
+        // Same two files, opposite order: every voxel swaps between volumes.
+        for x in 0..2 {
+            for y in 0..3 {
+                assert_eq!(fwd[[x, y, 0, 0]], rev[[x, y, 0, 1]]);
+                assert_eq!(fwd[[x, y, 0, 1]], rev[[x, y, 0, 0]]);
+            }
+        }
+    }
+
+    /// Volumes of different sizes cannot be one series, and stacking them would
+    /// otherwise write whichever geometry came first over all of them.
+    #[test]
+    fn stacking_rejects_volumes_of_different_dimensions() {
+        let dir = TempDir::new("stack-dims");
+        let a = write_nifti(&dir.0, "a.nii", &[2, 3, 1]);
+        let b = write_nifti(&dir.0, "b.nii", &[2, 4, 1]);
+        let err = stack_nii_volumes(&[a, b]).unwrap_err().to_string();
+        assert!(err.contains("expected"), "unhelpful dims error: {err}");
+    }
+
+    /// The output geometry is the first volume's, matching what the 4D reader
+    /// returns for a single file.
+    #[test]
+    fn stacking_keeps_the_first_volumes_header() {
+        let dir = TempDir::new("stack-header");
+        let a = write_nifti(&dir.0, "a.nii", &[2, 3, 1]);
+        let b = write_nifti(&dir.0, "b.nii", &[2, 3, 1]);
+        let (_, first) = read_map_nifti_with_header(&a).unwrap();
+        let (_, stacked) = stack_nii_volumes(&[a, b]).unwrap();
+        assert_eq!(stacked.srow_x, first.srow_x);
+        assert_eq!(stacked.pixdim, first.pixdim);
     }
 
     /// NIfTI's `dim[0]` counts dimensions, and a value of 3 declares three

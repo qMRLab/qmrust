@@ -461,6 +461,13 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
     meta = {
         "model": model["name"],
         "title": model["title"],
+        "bids_suffix": model["bids_suffix"],
+        # The picker groups by these; they come from the registry's own
+        # taxonomy so the tree it draws is never restated in the app.
+        "family": model["family"],
+        "family_icon": model["family_icon"],
+        "subgroup": model["subgroup"],
+        "category_order": model["category_order"],
         "dims": [h, w, 1, nt],
         "factor": factor,
         "volume_ids": volume_ids,

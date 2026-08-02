@@ -291,6 +291,21 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .menu-item .icon { color: var(--accent); flex: none; }
 
+/* Shrink/grow sits in the same menu as the segmentation methods but is not a
+   command: it holds two buttons and a running description, so it opts out of
+   the row hover and keeps its label from pushing the steppers apart. */
+.menu-item.mask-steps { cursor: default; gap: 6px; }
+.menu-item.mask-steps:hover { background: none; color: var(--ink-2); }
+.menu-item.mask-steps span:not(.icon) { flex: 1; }
+.step-btn {
+  flex: none; width: 20px; height: 20px; padding: 0;
+  border: var(--border-w) solid var(--line); border-radius: 5px;
+  background: var(--field); color: var(--ink);
+  font: 600 13px/1 var(--font-ui); cursor: pointer;
+}
+.step-btn:hover { border-color: var(--accent); color: var(--accent); }
+.step-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* Fitting progress: a permanent fixture above the Fit button (idle = empty
    track), not a topbar element that appears/disappears and shifts the rest
    of the page. The stripe is a white sheen rather than a token: it reads as a
@@ -466,6 +481,102 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
 .model-line { margin: 12px 0; color: var(--ink-2); }
 .model-line select { margin-left: 4px; }
+
+/* Model picker: a disclosure tree over the registry's taxonomy. Anchored
+   relative so the tree hangs under the button without a fixed-position
+   measurement, since this one always has room below it inside the panel. */
+.model-label {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+  color: var(--muted); font: 700 10px var(--font-ui);
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.model-label .icon { color: var(--accent); }
+
+.model-picker { position: relative; }
+.model-button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; border: var(--border-w) solid var(--line); border-radius: 8px;
+  background: var(--field); color: var(--ink);
+  font: 600 13px var(--font-ui); text-align: left; cursor: pointer;
+}
+.model-button:hover { border-color: var(--accent); }
+.model-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.model-button .icon { color: var(--muted); flex: none; transition: transform .15s ease; }
+.model-button[aria-expanded="true"] .icon { transform: rotate(90deg); color: var(--accent); }
+.model-button-title { flex: 1; }
+.model-suffix {
+  flex: none; font: 600 10px var(--font-mono); letter-spacing: .04em;
+  padding: 2px 6px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+}
+
+.model-tree {
+  position: absolute; z-index: 60; left: 0; right: 0; top: calc(100% + 4px);
+  max-height: 60vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 1px; padding: 4px;
+  /* Opaque, unlike the shared panel token. This hangs directly over the recipe
+     form, and every theme's `--panel` is translucent (verdigris is .80), so the
+     fields underneath read straight through the list. The tint is kept rather
+     than dropped: the panel colour is layered over an opaque base instead of
+     being the base. */
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--panel), var(--panel)), var(--grad-soft);
+  border: var(--border-w) solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+}
+.model-tree[hidden] { display: none; }
+
+.model-family {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border: 0; border-radius: 6px;
+  background: none; color: var(--ink); cursor: pointer;
+  font: 700 11px var(--font-ui); text-transform: uppercase; letter-spacing: .05em;
+  text-align: left;
+}
+.model-family:hover { background: var(--field); }
+.model-family:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.model-family span:not(.model-count) { flex: 1; }
+/* The chevron is the fold's whole state: right is closed, down is open. */
+/* Two glyphs: the fold chevron turns, the family's own icon does not. */
+.model-family .icon { flex: none; }
+.model-family .icon:first-child { color: var(--muted); transition: transform .15s ease; }
+.model-family.open .icon:first-child { transform: rotate(90deg); color: var(--accent); }
+.model-family .icon:nth-child(2) { color: var(--accent); }
+.model-count {
+  flex: none; min-width: 16px; text-align: center;
+  font: 600 10px var(--font-mono); color: var(--muted);
+}
+
+/* Nesting is shown the way the file tree shows it: one indent step per level
+   with a guide line down its left edge, so the two trees on this page read the
+   same way rather than each inventing its own depth cue. */
+.model-family-body {
+  display: flex; flex-direction: column; gap: 1px;
+  margin-left: 13px; padding-left: 10px; border-left: 1px solid var(--line);
+}
+.model-subgroup-body {
+  display: flex; flex-direction: column; gap: 1px;
+  margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--line);
+}
+.model-subgroup {
+  padding: 5px 8px 2px; color: var(--muted);
+  font: 600 10px var(--font-ui); text-transform: uppercase; letter-spacing: .05em;
+}
+/* The family holding the loaded model, while everything is folded shut. */
+.model-family.holds-active { color: var(--accent); }
+.model-family.holds-active .model-count { color: var(--accent); }
+.model-option {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border: 0; border-left: 2px solid transparent; border-radius: 6px;
+  background: none; color: var(--ink-2); cursor: pointer;
+  font: 500 12px var(--font-ui); text-align: left;
+}
+.model-option span:first-child { flex: 1; }
+.model-option:hover { background: var(--field); color: var(--ink); }
+.model-option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.model-option.active {
+  color: var(--ink); background: var(--field); border-left-color: var(--accent);
+}
+.model-option.active .model-suffix { border-color: var(--accent); color: var(--accent); }
 
 .yaml-wrap { position: relative; }
 .yaml-pill {

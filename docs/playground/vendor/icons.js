@@ -60,6 +60,8 @@ const SHAPES = {
     '<path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" /><path d="M22 10v6" /><path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />',
   "info":
     '<circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />',
+  "list-collapse":
+    '<path d="M10 5h11" /><path d="M10 12h11" /><path d="M10 19h11" /><path d="m3 10 3-3-3-3" /><path d="m3 20 3-3-3-3" />',
   "moon":
     '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />',
   "palette":
@@ -76,6 +78,20 @@ const SHAPES = {
     '<path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" /><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z" />',
   "slice":
     '<path d="M11 16.586V19a1 1 0 0 1-1 1H2L18.37 3.63a1 1 0 1 1 3 3l-9.663 9.663a1 1 0 0 1-1.414 0L8 14" />',
+  "chevron-right":
+    '<path d="m9 18 6-6-6-6" />',
+  "circle-dot":
+    '<circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="1" />',
+  "spline-pointer":
+    '<path d="M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z" /><path d="M5 17A12 12 0 0 1 17 5" /><circle cx="19" cy="5" r="2" /><circle cx="5" cy="19" r="2" />',
+  // The same glyph mirrored top-to-bottom: the curve descends left-to-right and
+  // the pointer sits above it. Carried as its own entry rather than a transform
+  // at the call site, so a category names one icon and nothing downstream has
+  // to know that this particular one is drawn reflected.
+  "spline-pointer-mirrored":
+    '<g transform="translate(0 24) scale(1 -1)"><path d="M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z" /><path d="M5 17A12 12 0 0 1 17 5" /><circle cx="19" cy="5" r="2" /><circle cx="5" cy="19" r="2" /></g>',
+  "waves-arrow-up":
+    '<path d="M12 2v8" /><path d="M2 15c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1" /><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1" /><path d="m8 6 4-4 4 4" />',
   "square":
     '<rect width="18" height="18" x="3" y="3" rx="2" />',
   "square-mouse-pointer":

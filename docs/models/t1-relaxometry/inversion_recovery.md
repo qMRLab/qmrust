@@ -1,8 +1,8 @@
 ---
-title: Inversion recovery T1
-subtitle: Relaxometry · BIDS suffix IRT1
+title: Inversion Recovery
+subtitle: T1 Relaxometry · BIDS suffix IRT1
 keywords:
-  - Relaxometry
+  - T1 Relaxometry
   - IRT1
 thumbnail: ../../figures/inversion_recovery/outputs.webp
 ---
@@ -16,7 +16,7 @@ Config name
 BIDS suffix
 : `IRT1`
 Method family
-: Relaxometry
+: T1 Relaxometry
 Acquired volumes
 : 9
 Fit granularity
@@ -81,7 +81,7 @@ Auxiliary maps and the mask applied to this fit.
 | `T1` | `T1map` | s | unbounded … unbounded | free |
 
 :::{dropdown} Diagnostic outputs
-Written alongside the quantitative maps, but not quantitative measurements — they describe the fit, not the tissue.
+Reported by the fit but not written as BIDS derivatives: they describe the fit rather than the tissue, and have no BIDS suffix to be written under.
 
 | Output |
 |---|

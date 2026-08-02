@@ -20,6 +20,7 @@ import {
   boundingBox,
   cropReversed,
   foregroundMask,
+  growMask,
   normalizeToWhiteMatter,
   placeReversed,
 } from "./volume.js";
@@ -74,7 +75,7 @@ const METHODS = [
     // No weights, no runtime, no GPU and no opinion about the contrast — so it is
     // the only entry that works on a single slice, which is what four of the five
     // example datasets are.
-    menu: "Head Segment any contrast (Otsu)",
+    menu: "Otsu Foreground (any contrast)",
     icon: "fold-vertical",
     label: "head",
     run: runThreshold,
@@ -244,6 +245,8 @@ function hideOverlay() {
 // fit, so clearing it here is what hands the recipe's own mask back.
 export function clearComputedMask() {
   app.computedMask = null;
+  app.segmentBase = null;
+  app.maskSteps = 0;
   hideOverlay();
   if (app.current) app.current.maskU8 = app.current.resolvedMask ?? null;
   syncButton();
@@ -283,6 +286,7 @@ function buildMenu() {
     box.append(item);
   }
   if (app.computedMask) {
+    box.append(stepperRow());
     const clear = document.createElement("button");
     clear.type = "button";
     clear.className = "menu-item";
@@ -295,6 +299,79 @@ function buildMenu() {
     };
     box.append(clear);
   }
+}
+
+// Shrink/grow the mask that is already computed, without segmenting again.
+// Offered here rather than as a separate control because it only means anything
+// while a computed mask exists, which is exactly when this menu shows the entry
+// to clear one.
+function stepperRow() {
+  const row = document.createElement("div");
+  row.className = "menu-item mask-steps";
+  // Glyph as markup, everything else as nodes — the same split the method rows
+  // use, so no label ever reaches innerHTML.
+  row.innerHTML = icon("picture-in-picture", 15);
+
+  const label = document.createElement("span");
+  const describe = () => {
+    const n = app.maskSteps;
+    label.textContent =
+      n === 0 ? "Shrink / grow mask" : `Mask ${n > 0 ? "grown" : "shrunk"} ${Math.abs(n)} voxel${
+        Math.abs(n) === 1 ? "" : "s"
+      }`;
+  };
+  describe();
+
+  const step = (delta) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "step-btn";
+    button.textContent = delta < 0 ? "−" : "+";
+    button.setAttribute("aria-label", delta < 0 ? "Shrink the mask" : "Grow the mask");
+    button.onclick = (e) => {
+      // The menu stays open: adjusting is iterative, and a control that closed
+      // on every press would make each voxel a separate trip through it.
+      e.stopPropagation();
+      applyMaskSteps(app.maskSteps + delta);
+      describe();
+    };
+    return button;
+  };
+
+  row.append(step(-1), label, step(1));
+  return row;
+}
+
+// Re-derive the mask from the segmentation as it was produced, never from the
+// last stepped result: morphology is lossy, so compounding passes would let the
+// order of clicks change the answer.
+function applyMaskSteps(steps) {
+  if (!app.segmentBase || !app.current) return;
+  const [nx, ny, nz] = app.current.meta.dims;
+  // `app.computedMask` is in the fit's layout, so the pass is told that stride
+  // order rather than `volume.js`'s own.
+  const mask = growMask(app.segmentBase, [nx, ny, nz], steps, [ny * nz, nz, 1]);
+  const inside = mask.reduce((n, v) => n + v, 0);
+  if (inside === 0) {
+    status("That would shrink the mask away entirely; keeping the last one", "error");
+    return;
+  }
+  app.maskSteps = steps;
+  app.computedMask = mask;
+  app.current.maskU8 = mask;
+
+  const at = rasToStorage(app.current.volume, nx, ny);
+  const overlay = new Uint8Array(nx * ny * nz);
+  for (let x = 0; x < nx; x++) {
+    for (let y = 0; y < ny; y++) {
+      for (let z = 0; z < nz; z++) {
+        if (mask[(x * ny + y) * nz + z]) overlay[at(x, y, z)] = 1;
+      }
+    }
+  }
+  showOverlay(labelVolume(app.current.volume, overlay));
+  const share = ((inside / mask.length) * 100).toFixed(1);
+  status(`Mask: ${inside.toLocaleString()} voxels (${share}% of the volume). Fit to use it`, "ok");
 }
 
 // Anchored above the button, not below it: the button sits at the bottom of its
@@ -439,6 +516,10 @@ async function choose(method) {
     // The recipe's own mask is kept, so clearing this one restores it without
     // having to resolve the dataset again.
     app.current.resolvedMask ??= app.current.maskU8;
+    // A fresh segmentation is the new starting point, so any previous shrink
+    // or grow is spent rather than silently carried onto a different mask.
+    app.segmentBase = mask;
+    app.maskSteps = 0;
     app.computedMask = mask;
     app.current.maskU8 = mask;
     showOverlay(overlay);

@@ -48,6 +48,7 @@ import { THEMES, initTheme, onThemeChange, setFamily, setMode } from "./themes.j
 import { createLevelControl, repaintLevels } from "./level.js";
 import { fitSlice } from "./fit.js";
 import { loadModel } from "./model.js";
+import { buildModelTree, compareByTaxonomy } from "./picker.js";
 
 // ---------------------------------------------------------------------------
 // Tooltips for the panel info buttons. One element, moved and refilled — a
@@ -373,6 +374,7 @@ async function populateModels() {
   }
   app.modelNames = index.models;
   const select = $("model");
+  const metas = {};
   for (const name of index.models) {
     let meta;
     try {
@@ -382,12 +384,26 @@ async function populateModels() {
       status(`Could not load ${name}: ${e.message}`, "error");
       continue;
     }
+    metas[name] = meta;
+  }
+  // Taxonomy order, not the index's alphabetical one: the first option is what
+  // loads on arrival, and that should be the first model a reader is offered
+  // rather than whichever name sorts first.
+  const ordered = Object.keys(metas)
+    .map((name) => ({ name, meta: metas[name] }))
+    .sort(compareByTaxonomy)
+    .map((e) => e.name);
+  for (const name of ordered) {
     const opt = document.createElement("option");
     opt.value = name;
-    opt.textContent = meta.title;
+    opt.textContent = metas[name].title;
     select.append(opt);
   }
-  return select.options.length > 0;
+  if (select.options.length === 0) return false;
+  // The tree is a view over the select, so it is built once the options are
+  // there and reads the taxonomy out of the payloads just loaded.
+  buildModelTree(metas, (name) => loadModel(name));
+  return true;
 }
 
 async function main() {

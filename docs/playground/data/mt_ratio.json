@@ -1,6 +1,11 @@
 {
  "model": "mt_ratio",
- "title": "Magnetization transfer ratio",
+ "title": "MT Ratio",
+ "bids_suffix": "MTR",
+ "family": "Magnetization Transfer",
+ "family_icon": "waves-arrow-up",
+ "subgroup": "Semi-quantitative MT",
+ "category_order": 3,
  "dims": [
   128,
   135,

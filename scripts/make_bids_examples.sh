@@ -15,6 +15,7 @@
 #   ds-irt1     inversion_recovery   IRT1      ds-mts      mt_sat      MTS
 #   ds-mese     mono_t2              MESE      ds-qmtspgr  qmt_spgr    QMTSPGR
 #   ds-mtr      mt_ratio             MTR       ds-vfa      vfa_t1      VFA
+#   ds-tb1dam   b1_dam               TB1DAM    ds-tb1afi   b1_afi      TB1AFI
 #
 # plus `ds-mts-b1`, the MTS + TB1map dataset the B1-correction path consumes.
 # It is a synthetic phantom rather than OSF data (see its section below).
@@ -67,13 +68,16 @@ locate() {
 }
 
 # Assert every named file exists and is non-empty under a dataset's qmrust
-# derivatives, i.e. that the BIDS-path fit actually produced its maps.
+# derivatives, i.e. that the BIDS-path fit actually produced its maps. Each map
+# lands in the datatype directory its BIDS suffix implies (anat for tissue
+# parameters, fmap for field maps), so search across them rather than assuming.
 assert_maps() {
   local root="$1"; shift
-  local anat="$root/derivatives/qmrust/sub-01/anat"
+  local subj="$root/derivatives/qmrust/sub-01"
   for suffix in "$@"; do
-    local f="$anat/sub-01_${suffix}.nii.gz"
-    test -s "$f" || { echo "MISSING or empty: $f" >&2; exit 1; }
+    local f
+    f="$(find "$subj" -name "sub-01_${suffix}.nii.gz" -size +0 | head -1)"
+    [ -n "$f" ] || { echo "MISSING or empty: $subj/*/sub-01_${suffix}.nii.gz" >&2; exit 1; }
   done
 }
 
@@ -83,6 +87,8 @@ fetch mono_t2  "https://osf.io/kujp3/download?version=3"
 fetch mtr      "https://osf.io/erm2s/download?version=2"
 fetch mtsat    "https://osf.io/c5wdb/download?version=4"
 fetch vfa_t1   "https://osf.io/7wcvh/download?version=3"
+fetch b1_dam   "https://osf.io/mw3sq/download?version=3"
+fetch b1_afi   "https://osf.io/csjgx/download?version=9"
 
 # ─── ds-irt1 — inversion_recovery (IRT1) ───────────────────────────────────
 # Stacked .mat measurement (9 inversion times) + a separate Mask.mat.
@@ -176,6 +182,38 @@ echo "Building $OUT/ds-vfa ..."
   --config recipes/bids/vfa_t1_config.yaml --output-dir "$OUT/ds-vfa/derivatives"
 assert_maps "$OUT/ds-vfa" T1map M0map
 
+# ─── ds-tb1dam — b1_dam (TB1DAM) ───────────────────────────────────────────
+# Two separate 3D NIfTIs, one per flip angle (alpha and 2*alpha), so --nii-data
+# is repeated once per volume in acquisition order. The archive ships no mask,
+# so the dataset has no `derivatives/preprocessed` and the whole image is fit.
+
+B1DAM_A="$(locate b1_dam 'SFalpha.nii.gz')"
+B1DAM_2A="$(locate b1_dam 'SF2alpha.nii.gz')"
+
+echo "Building $OUT/ds-tb1dam ..."
+"$BIN" bidsify --model b1_dam \
+  --nii-data "$B1DAM_A" --nii-data "$B1DAM_2A" \
+  --config recipes/non-bids/b1_dam_config.yaml --subject 01 --out "$OUT/ds-tb1dam"
+"$BIN" fit --bids-dir "$OUT/ds-tb1dam" \
+  --config recipes/bids/b1_dam_config.yaml --output-dir "$OUT/ds-tb1dam/derivatives"
+assert_maps "$OUT/ds-tb1dam" TB1map
+
+# ─── ds-tb1afi — b1_afi (TB1AFI) ───────────────────────────────────────────
+# Two separate 3D NIfTIs, one per interleaved repetition time, so --nii-data is
+# repeated once per volume in acquisition order. The archive ships no mask, so
+# the dataset has no `derivatives/preprocessed` and the whole image is fit.
+
+B1AFI_TR1="$(locate b1_afi 'AFIData1.nii.gz')"
+B1AFI_TR2="$(locate b1_afi 'AFIData2.nii.gz')"
+
+echo "Building $OUT/ds-tb1afi ..."
+"$BIN" bidsify --model b1_afi \
+  --nii-data "$B1AFI_TR1" --nii-data "$B1AFI_TR2" \
+  --config recipes/non-bids/b1_afi_config.yaml --subject 01 --out "$OUT/ds-tb1afi"
+"$BIN" fit --bids-dir "$OUT/ds-tb1afi" \
+  --config recipes/bids/b1_afi_config.yaml --output-dir "$OUT/ds-tb1afi/derivatives"
+assert_maps "$OUT/ds-tb1afi" TB1map
+
 # ─── ds-mts-b1 — mt_sat with a B1 map, for the B1-correction path ──────────
 # The only dataset here that is not OSF-derived: a synthetic concentric phantom
 # (MTS roles + a TB1map spanning a range of transmit efficiencies) whose known
@@ -234,14 +272,22 @@ fi
 # ─── Zip each root as a single fetchable unit ──────────────────────────────
 # `derivatives/qmrust` is excluded: it holds reference fit *outputs*, which are
 # how a fit gets checked, not an input a fit needs.
+#
+# Filesystem cruft is excluded too. A published archive is read by the
+# playground's own BIDS resolver, which reports every file it cannot account
+# for, so a stray `.DS_Store` shows up as "not a recognized BIDS file" in front
+# of the reader. These are also pruned from the tree first, so a re-zip of an
+# untouched root cannot smuggle one back in.
 
 if [ "$ZIP" = 1 ]; then
+  find "$OUT" -name '.DS_Store' -delete
   for root in "$OUT"/ds-*; do
     [ -d "$root" ] || continue
     slug="$(basename "$root")"
     echo "Zipping $slug ..."
     (cd "$OUT" && rm -f "$slug.zip" \
-      && zip -r -q "$slug.zip" "$slug" -x "$slug/derivatives/qmrust/*")
+      && zip -r -q -X "$slug.zip" "$slug" \
+        -x "$slug/derivatives/qmrust/*" "*.DS_Store" "*__MACOSX*")
   done
   ls -lh "$OUT"/ds-*.zip
 fi

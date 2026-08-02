@@ -1,8 +1,8 @@
 ---
-title: Variable flip angle T1
-subtitle: Relaxometry · BIDS suffix VFA
+title: Variable Flip Angle
+subtitle: T1 Relaxometry · BIDS suffix VFA
 keywords:
-  - Relaxometry
+  - T1 Relaxometry
   - VFA
 thumbnail: ../../figures/vfa_t1/outputs.webp
 ---
@@ -16,7 +16,7 @@ Config name
 BIDS suffix
 : `VFA`
 Method family
-: Relaxometry
+: T1 Relaxometry
 Acquired volumes
 : 2
 Fit granularity

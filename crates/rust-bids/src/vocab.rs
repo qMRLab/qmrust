@@ -243,6 +243,33 @@ impl Vocabulary {
     }
 }
 
+/// The datatype directory a BIDS suffix belongs in.
+///
+/// BIDS files a suffix under one datatype wherever it appears, so this is a
+/// property of the suffix alone — the same answer for a raw acquisition, a
+/// preprocessed input, and a derivative output. Transmit- and receive-field
+/// suffixes (`TB1*`, `RB1*`) and B0 field maps are `fmap`; everything else a
+/// qMRI model reads or writes (weighted series, relaxation and MT maps, brain
+/// masks) is `anat`.
+///
+/// Scope: the suffixes qmrust's own models declare, via `Model::bids`,
+/// `Model::bids_outputs` and `Model::required_inputs`. It is not a general BIDS
+/// classifier, and the generic field-map suffixes (`epi`, `phasediff`,
+/// `phase1`/`phase2`, `magnitude*`) deliberately have no branch here because no
+/// registered model names one; the `anat` default would be wrong for them, so
+/// a model that starts using one must add it rather than inherit the fallback.
+pub fn datatype_for_suffix(suffix: &str) -> &'static str {
+    if suffix.starts_with("TB1")
+        || suffix.starts_with("RB1")
+        || suffix.ends_with("B0map")
+        || suffix == "fieldmap"
+    {
+        "fmap"
+    } else {
+        "anat"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,7 +285,7 @@ mod tests {
         // Registered model suffixes are built in (compile-time), so known
         // with no config — but a registered suffix that BIDS itself defines
         // stays canonical, so it needs no `.bidsignore` exemption.
-        for canonical in ["IRT1", "MESE", "MTR", "MTS", "VFA"] {
+        for canonical in ["IRT1", "MESE", "MTR", "MTS", "VFA", "TB1DAM"] {
             assert!(v.is_known_suffix(canonical));
             assert!(!v.is_custom_suffix(canonical), "{canonical} is canonical");
         }
@@ -268,6 +295,22 @@ mod tests {
         assert!(v.is_datatype("anat"));
         assert!(v.is_datatype("fmap"));
         assert!(!v.is_datatype("notadatatype"));
+    }
+
+    #[test]
+    fn field_map_suffixes_are_filed_under_fmap_everything_else_under_anat() {
+        // The rule is keyed on the suffix alone, so a transmit-field
+        // acquisition, its fitted map, and a supplied B1 map all agree — a
+        // model that writes TB1map into `anat/` would be invisible to the B1
+        // input resolver that reads `fmap/`.
+        for fieldmap in ["TB1DAM", "TB1map", "TB1EPI", "RB1COR", "B0map", "fieldmap"] {
+            assert_eq!(datatype_for_suffix(fieldmap), "fmap", "{fieldmap}");
+        }
+        for anat in [
+            "IRT1", "MESE", "MTR", "MTS", "VFA", "QMTSPGR", "T1map", "MTsat",
+        ] {
+            assert_eq!(datatype_for_suffix(anat), "anat", "{anat}");
+        }
     }
 
     #[test]

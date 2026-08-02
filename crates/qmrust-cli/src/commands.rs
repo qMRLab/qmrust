@@ -507,7 +507,8 @@ fn collection_sources(c: &Collection, bids_dir: &Path) -> Vec<String> {
 
 /// Write `model`'s declared BIDS output maps (`Model::bids_outputs()`) from a
 /// fitted `results` into a BIDS-derivatives tree rooted at `deriv_root`:
-/// `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`
+/// `deriv_root/qmrust/<subject>[/<session>]/<datatype>/<subject>[_<session>]_<suffix>.nii.gz`,
+/// where the datatype is the one that suffix implies (`rust_bids::datatype_for_suffix`)
 /// plus a full provenance JSON sidecar (`prov.sidecar(units)`) next to each.
 /// Outputs `bids_outputs()` doesn't declare (diagnostics like
 /// `res`/`idx`/`kf`/`resnorm`) are never written —
@@ -546,9 +547,6 @@ fn write_derivatives(
         Some(ses) => qmrust_root.join(subject).join(ses),
         None => qmrust_root.join(subject),
     };
-    let anat_dir = subject_dir.join("anat");
-    std::fs::create_dir_all(&anat_dir)?;
-
     let entity_stem = match session {
         Some(ses) => format!("{subject}_{ses}"),
         None => subject.to_string(),
@@ -558,10 +556,15 @@ fn write_derivatives(
         let Some(map) = results.get(output_name) else {
             continue;
         };
+        // Each output map lands in the datatype directory its own BIDS suffix
+        // implies, so a fitted transmit map (TB1map) is written where the next
+        // model's B1 input resolver already looks for one.
+        let dir = subject_dir.join(rust_bids::datatype_for_suffix(suffix));
+        std::fs::create_dir_all(&dir)?;
         let base = format!("{entity_stem}_{suffix}");
-        let nii_path = anat_dir.join(format!("{base}.nii.gz"));
+        let nii_path = dir.join(format!("{base}.nii.gz"));
         io::nifti::write_map_nifti(map, header, &nii_path)?;
-        let json_path = anat_dir.join(format!("{base}.json"));
+        let json_path = dir.join(format!("{base}.json"));
         std::fs::write(
             &json_path,
             serde_json::to_string_pretty(&prov.sidecar(units))?,
@@ -848,6 +851,22 @@ fn load_aux_and_mask(
     bids_dir: &Path,
 ) -> Result<(AuxMaps, Option<Array3<bool>>, Vec<String>)> {
     let paths = rust_bids::resolve_input_paths(table, model, identity, mask_spec)?;
+    // An input the recipe asked for and the dataset does not hold: the fit
+    // still runs, so this is said out loud rather than raised. Named by
+    // collection, since a run over many subjects would otherwise repeat an
+    // unattributable line per subject.
+    let who = ["subject", "session", "run"]
+        .iter()
+        .filter_map(|k| identity.get(*k).map(|v| format!("{k}-{v}")))
+        .collect::<Vec<_>>()
+        .join(" ");
+    for w in &paths.warnings {
+        if who.is_empty() {
+            eprintln!("warning: {w}");
+        } else {
+            eprintln!("warning ({who}): {w}");
+        }
+    }
     let mut maps: Vec<(String, Option<Array3<f64>>)> = Vec::new();
     for (name, path) in &paths.aux {
         let map = match path {
@@ -1493,7 +1512,7 @@ mod tests {
             model: "inversion_recovery".to_string(),
             mat_data: Some(ir_mat),
             mat_dir: None,
-            nii_data: None,
+            nii_data: Vec::new(),
             nii_dir: None,
             nii_mask: None,
             mask: Some(ir_mask),
@@ -1604,7 +1623,7 @@ mod tests {
             model: "qmt_spgr".to_string(),
             mat_data: Some(qmt_mat),
             mat_dir: None,
-            nii_data: None,
+            nii_data: Vec::new(),
             nii_dir: None,
             nii_mask: None,
             mask: None,

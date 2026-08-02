@@ -1,5 +1,7 @@
 {
  "models": [
+  "b1_afi",
+  "b1_dam",
   "inversion_recovery",
   "mono_t2",
   "mt_ratio",

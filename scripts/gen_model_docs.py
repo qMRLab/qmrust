@@ -235,8 +235,9 @@ def render_outputs_table(model):
         body += [
             "",
             ":::{dropdown} Diagnostic outputs",
-            "Written alongside the quantitative maps, but not quantitative "
-            "measurements — they describe the fit, not the tissue.",
+            "Reported by the fit but not written as BIDS derivatives: they "
+            "describe the fit rather than the tissue, and have no BIDS suffix "
+            "to be written under.",
             "",
             "| Output |",
             "|---|",
@@ -283,10 +284,15 @@ def render_usage(model, repo_root):
         "Fitted maps are written as BIDS derivatives:",
         "",
         "```text",
-        "out/derivatives/qmrust/sub-01/anat/",
     ]
-    for o in model["outputs"]:
-        if not o["diagnostic"]:
+    # A map is written into the datatype directory its own BIDS suffix implies,
+    # so a field map lands in `fmap/` and a tissue parameter in `anat/`. The
+    # catalog carries that per output, from the same rule the writers use.
+    for datatype in _unique(o["datatype"] for o in model["outputs"] if not o["diagnostic"]):
+        tabs.append(f"out/derivatives/qmrust/sub-01/{datatype}/")
+        for o in model["outputs"]:
+            if o["diagnostic"] or o["datatype"] != datatype:
+                continue
             tabs.append(f"  sub-01_{o['bids_suffix']}.nii.gz")
             tabs.append(f"  sub-01_{o['bids_suffix']}.json")
     tabs += [
@@ -419,38 +425,69 @@ def render_page(model, figures, repo_root):
     return "\n\n".join(b for b in blocks if b) + "\n"
 
 
-def render_gallery(models, prefix, heading_level=3):
-    """Card grid, grouped by category. `prefix` prefixes each card's link.
+def _unique(values):
+    """Values in first-seen order, for grouping without sorting."""
+    out = []
+    for v in values:
+        if v not in out:
+            out.append(v)
+    return out
 
-    `heading_level` must match the heading depth of the section the gallery
-    is spliced into, one level below it, so MyST sees an unbroken hierarchy.
+
+def render_gallery(models, prefix, heading_level=3):
+    """Card grid over the two-level taxonomy. `prefix` prefixes each card's link.
+
+    Families take `heading_level`, and a family that is subdivided gives its
+    subgroups the level below. Both must sit one below the section the gallery
+    is spliced into, so MyST sees an unbroken hierarchy.
     """
     marker = "#" * heading_level
     out = []
-    seen = []
-    for m in models:
-        if m["category"] not in [c for c, _ in seen]:
-            seen.append((m["category"], m["category_title"]))
-    for slug, title in seen:
-        group = [m for m in models if m["category"] == slug]
-        out += [f"{marker} {title}", "", "::::{grid} 1 1 2 2"]
-        for m in group:
-            out += [
-                ":::{card}",
-                f":header: {m['title']}",
-                f":link: {prefix}{slug}/{m['name']}.md",
-                "",
-                m["summary"].split(". ")[0] + ".",
-                "",
-                f"`{m['bids_suffix']}` · "
-                + ", ".join(
-                    f"`{o['bids_suffix']}`" for o in m["outputs"]
-                    if not o["diagnostic"]
-                ),
-                ":::",
-            ]
-        out += ["::::", ""]
+    # The taxonomy is two levels and its order is the registry's
+    # `Category::order`, so sorting by that and grouping consecutive runs
+    # rebuilds the tree without this file restating either the order or the
+    # membership. A family with no subgroups has a single unnamed group, which
+    # renders as the family heading followed directly by its cards.
+    ordered = sorted(models, key=lambda m: (m["category_order"], m["title"]))
+    families = []
+    for m in ordered:
+        if m["family"] not in families:
+            families.append(m["family"])
+    for family in families:
+        members = [m for m in ordered if m["family"] == family]
+        out += [f"{marker} {family}", ""]
+        subgroups = []
+        for m in members:
+            if m["subgroup"] not in subgroups:
+                subgroups.append(m["subgroup"])
+        for subgroup in subgroups:
+            group = [m for m in members if m["subgroup"] == subgroup]
+            if subgroup:
+                out += [f"{'#' * (heading_level + 1)} {subgroup}", ""]
+            out += ["::::{grid} 1 1 2 2"]
+            out += _cards(group, prefix)
+            out += ["::::", ""]
     return "\n".join(out).rstrip()
+
+
+def _cards(group, prefix):
+    """The card for each model in one group, linked by its own category slug."""
+    out = []
+    for m in group:
+        out += [
+            ":::{card}",
+            f":header: {m['title']}",
+            f":link: {prefix}{m['category']}/{m['name']}.md",
+            "",
+            m["summary"].split(". ")[0] + ".",
+            "",
+            f"`{m['bids_suffix']}` · "
+            + ", ".join(
+                f"`{o['bids_suffix']}`" for o in m["outputs"] if not o["diagnostic"]
+            ),
+            ":::",
+        ]
+    return out
 
 
 def render_gallery_index(models):

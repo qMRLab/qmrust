@@ -1,0 +1,109 @@
+{
+ "model": "b1_afi",
+ "title": "Actual Flip Angle B1+",
+ "bids_suffix": "TB1AFI",
+ "family": "Field Mapping",
+ "family_icon": "circle-dot",
+ "subgroup": null,
+ "category_order": 2,
+ "dims": [
+  88,
+  128,
+  1,
+  2
+ ],
+ "factor": 1,
+ "volume_ids": [
+  {
+   "RepetitionTimeExcitation": 0.02
+  },
+  {
+   "RepetitionTimeExcitation": 0.1
+  }
+ ],
+ "labels": [
+  "RepetitionTimeExcitation=0.02",
+  "RepetitionTimeExcitation=0.1"
+ ],
+ "params": [
+  "B1",
+  "T1"
+ ],
+ "outputs": [
+  {
+   "name": "B1",
+   "unit": "",
+   "display_range": [
+    0.5,
+    1.5
+   ]
+  }
+ ],
+ "enums": [],
+ "config": "model: b1_afi\n\n# non-BIDS: protocol from this file; mask via --mask.\n# Times in seconds (BIDS/SI), flip angle in degrees (BIDS-MRI convention).\n# qMRLab's b1_afi default protocol is nomFA = 60 deg with TR1/TR2 of 20/100 ms;\n# its Sequence matrix records those two in milliseconds, so they are converted\n# once here at the shell boundary. Only their ratio enters the estimate.\nrepetition_times:\n- 0.02\n- 0.10\nflip_angle: 60\n\n# There are no fit options: the estimate is closed form.\n#\n# Two uses:\n#   - bidsify a qMRLab dataset (AFIData1.nii.gz / AFIData2.nii.gz) by naming\n#     one --nii-data per volume, in acquisition order:\n#\n#       qmrust bidsify --model b1_afi \\\n#         --nii-data AFIData1.nii.gz --nii-data AFIData2.nii.gz \\\n#         --config recipes/non-bids/b1_afi_config.yaml --subject 01 --out ds\n#\n#   - fit a stacked 4D NIfTI whose two volumes are [TR1, TR2]:\n#\n#       qmrust fit --data afi.nii.gz --mask Mask.nii.gz \\\n#         --config recipes/non-bids/b1_afi_config.yaml --output-dir out_b1\n",
+ "config_bids": "model: b1_afi\n\n# B1 = acos((r*n - 1) / (n - r)) / nomFA, with r the signal ratio of the two\n# interleaved repetition times, n = TR2/TR1, and the map dimensionless\n# (1.0 = the nominal flip angle was achieved). BIDS input:\n# RepetitionTimeExcitation and FlipAngle are read from the JSON sidecars via\n# the model's protocol_schema(), so neither is declared here. The TB1AFI\n# collection is assembled by the `acq` entity (acq-tr1 / acq-tr2). Example:\n#\n#   qmrust fit --bids-dir <dataset> \\\n#     --config recipes/bids/b1_afi_config.yaml --output-dir out\n\n# BIDS mask selection. Left blank: this example dataset ships no mask, and\n# naming one here would claim otherwise. Blank means \"whatever mask is\n# present\", so a dataset of your own that has one is masked by it.\nmask:\n  desc: \"\"\n",
+ "archive": "ds-tb1afi.zip",
+ "files": {
+  "data": "b1_afi.nii.gz",
+  "mask": null,
+  "aux": {}
+ },
+ "probes": [
+  {
+   "x": 44,
+   "y": 64,
+   "expected": {
+    "B1": 1.1303190829700478
+   }
+  },
+  {
+   "x": 41,
+   "y": 61,
+   "expected": {
+    "B1": 1.1335957094117102
+   }
+  },
+  {
+   "x": 41,
+   "y": 67,
+   "expected": {
+    "B1": 1.1318493144155053
+   }
+  },
+  {
+   "x": 47,
+   "y": 61,
+   "expected": {
+    "B1": 1.0979337368652193
+   }
+  },
+  {
+   "x": 47,
+   "y": 67,
+   "expected": {
+    "B1": 1.1429699650570844
+   }
+  },
+  {
+   "x": 44,
+   "y": 70,
+   "expected": {
+    "B1": 1.0617585161170247
+   }
+  },
+  {
+   "x": 50,
+   "y": 64,
+   "expected": {
+    "B1": 1.0750715539956834
+   }
+  },
+  {
+   "x": 38,
+   "y": 58,
+   "expected": {
+    "B1": 0.9942873505087643
+   }
+  }
+ ]
+}

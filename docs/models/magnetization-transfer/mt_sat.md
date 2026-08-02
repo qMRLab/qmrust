@@ -1,8 +1,8 @@
 ---
-title: MT saturation
-subtitle: Magnetization transfer · BIDS suffix MTS
+title: MT Saturation
+subtitle: Semi-quantitative MT · BIDS suffix MTS
 keywords:
-  - Magnetization transfer
+  - Semi-quantitative MT
   - MTS
 thumbnail: ../../figures/mt_sat/outputs.webp
 ---
@@ -16,7 +16,7 @@ Config name
 BIDS suffix
 : `MTS`
 Method family
-: Magnetization transfer
+: Semi-quantitative MT
 Acquired volumes
 : 3
 Fit granularity
@@ -102,10 +102,11 @@ model: mt_sat
 b1_correction_factor: 0.4
 export_mtr: true
 
-# BIDS mask selection — disambiguates which mask to apply. If the dataset has
-# no matching mask, no masking is applied (as in this example).
+# BIDS mask selection. Left blank: this example dataset ships no mask, and
+# naming one here would claim otherwise. Blank means "whatever mask is
+# present", so a dataset of your own that has one is masked by it.
 mask:
-  desc: brain
+  desc: ""
 ```
 
 ```bash

@@ -1,8 +1,8 @@
 ---
-title: Mono-exponential T2
-subtitle: Relaxometry · BIDS suffix MESE
+title: Monoexp T2
+subtitle: T2 Relaxometry · BIDS suffix MESE
 keywords:
-  - Relaxometry
+  - T2 Relaxometry
   - MESE
 thumbnail: ../../figures/mono_t2/outputs.webp
 ---
@@ -16,7 +16,7 @@ Config name
 BIDS suffix
 : `MESE`
 Method family
-: Relaxometry
+: T2 Relaxometry
 Acquired volumes
 : 30
 Fit granularity

@@ -24,7 +24,8 @@ pub struct BidsifyArgs {
     pub model: String,
     pub mat_data: Option<PathBuf>,
     pub mat_dir: Option<PathBuf>,
-    pub nii_data: Option<PathBuf>,
+    /// Either one 4D NIfTI, or one 3D NIfTI per volume in acquisition order.
+    pub nii_data: Vec<PathBuf>,
     pub nii_dir: Option<PathBuf>,
     pub nii_mask: Option<PathBuf>,
     pub mask: Option<PathBuf>,
@@ -54,7 +55,7 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
     // mask flag rather than silently ignoring it.
     let (data, mask, mut aux, source_header) = if let Some(dir) = args.nii_dir.as_ref() {
         anyhow::ensure!(
-            args.nii_data.is_none() && args.mat_data.is_none() && args.mat_dir.is_none(),
+            args.nii_data.is_empty() && args.mat_data.is_none() && args.mat_dir.is_none(),
             "--nii-dir is mutually exclusive with --nii-data/--mat-data/--mat-dir"
         );
         anyhow::ensure!(
@@ -62,7 +63,7 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
             "--mask is for a .mat source; pass --nii-mask with --nii-dir"
         );
         read_named_nifti_source(dir, args.nii_mask.as_deref(), model.as_ref())?
-    } else if let Some(nii) = args.nii_data.as_ref() {
+    } else if !args.nii_data.is_empty() {
         anyhow::ensure!(
             args.mat_data.is_none() && args.mat_dir.is_none(),
             "--nii-data is mutually exclusive with --mat-data/--mat-dir"
@@ -71,7 +72,7 @@ pub fn run_bidsify(args: BidsifyArgs) -> Result<()> {
             args.mask.is_none(),
             "--mask is for a .mat source; pass --nii-mask with --nii-data"
         );
-        read_nifti_source(nii, args.nii_mask.as_deref(), model.as_ref())?
+        read_nifti_source(&args.nii_data, args.nii_mask.as_deref(), model.as_ref())?
     } else {
         anyhow::ensure!(
             args.nii_mask.is_none(),
@@ -204,11 +205,34 @@ fn read_aux_args(specs: &[String], model: &dyn Model) -> Result<Vec<(String, Arr
         .collect()
 }
 
-/// Read a 4D NIfTI measurement (+ optional NIfTI mask), preserving its spatial
-/// header. Auxiliary maps come from `--aux` for a NIfTI source; there is no
-/// directory convention to discover them from.
-fn read_nifti_source(nii: &Path, nii_mask: Option<&Path>, model: &dyn Model) -> Result<Source> {
-    let (data, header) = io::nifti::read_4d_nifti(nii, model.n_volumes())?;
+/// Read a NIfTI measurement (+ optional NIfTI mask), preserving its spatial
+/// header. `paths` is either one 4D file whose 4th axis is the acquisition
+/// axis, or one 3D file per volume in acquisition order — the layouts qMRLab
+/// demo datasets ship in. Auxiliary maps come from `--aux` for a NIfTI source;
+/// there is no directory convention to discover them from.
+fn read_nifti_source(
+    paths: &[PathBuf],
+    nii_mask: Option<&Path>,
+    model: &dyn Model,
+) -> Result<Source> {
+    let (data, header) = match paths {
+        // One file: its own shape is ambiguous for a single-slice series, which
+        // is why the reader is told how many volumes the model expects.
+        [one] => io::nifti::read_4d_nifti(one, model.n_volumes())?,
+        many => {
+            // Per-volume files carry no acquisition axis of their own, so their
+            // order *is* the protocol order the recipe declares; a count
+            // mismatch means the two disagree and the sidecars would be
+            // misassigned.
+            anyhow::ensure!(
+                many.len() == model.n_volumes(),
+                "{} --nii-data volumes given, but the model's protocol has {}",
+                many.len(),
+                model.n_volumes()
+            );
+            io::nifti::stack_nii_volumes(many)?
+        }
+    };
     let mask = match nii_mask {
         Some(p) => Some(io::nifti::read_mask_nifti(p)?),
         None => None,
@@ -314,13 +338,18 @@ pub fn write_bids_tree(
     write_participants_row(out, subject)?;
     sync_bidsignore(out, spec.suffix)?;
 
-    let anat_dir = out.join(format!("sub-{subject}")).join("anat");
-    std::fs::create_dir_all(&anat_dir)?;
+    // The acquisition's datatype directory follows its BIDS suffix, so a
+    // transmit-field series (TB1*) lands in `fmap/` and a weighted series in
+    // `anat/` without either the model or this writer choosing.
+    let acq_dir = out
+        .join(format!("sub-{subject}"))
+        .join(rust_bids::datatype_for_suffix(spec.suffix));
+    std::fs::create_dir_all(&acq_dir)?;
     // A NIfTI source's spatial header is preserved; a `.mat` source carries
     // none, so emit qMRLab's make_nii-compatible minimal header (matches how
     // `qmrust fit --mat-data` treats .mat input). The volume writers force
     // datatype 64 regardless, so voxel data is always written as f64.
-    let header = match source_header {
+    let header = match source_header.filter(|h| has_spatial_transform(h)) {
         Some(h) => h.clone(),
         None => make_minimal_header(nx, ny, nz),
     };
@@ -329,9 +358,9 @@ pub fn write_bids_tree(
         let vol = data.index_axis(Axis(3), i).to_owned();
         let bv = model.bids_volume(i);
         let base = filename_stem(subject, &bv.entities, spec.suffix);
-        write_inv_volume(&vol, &header, &anat_dir.join(format!("{base}.nii.gz")))?;
+        write_inv_volume(&vol, &header, &acq_dir.join(format!("{base}.nii.gz")))?;
         std::fs::write(
-            anat_dir.join(format!("{base}.json")),
+            acq_dir.join(format!("{base}.json")),
             serde_json::to_string_pretty(&bv.sidecar)?,
         )?;
     }
@@ -364,16 +393,20 @@ fn filename_stem(subject: &str, entities: &[(&'static str, String)], suffix: &st
     stem
 }
 
-/// The datatype directory (`fmap` or `anat`) an auxiliary BIDS suffix belongs
-/// in, per BIDS field-map convention: `*B1map`/`*B0map` suffixes are
-/// estimated field maps (`fmap`); everything else (R1 maps, brain masks, …)
-/// is an anatomical derivative (`anat`).
-fn aux_datatype(suffix: &str) -> &'static str {
-    if suffix.ends_with("B1map") || suffix.ends_with("B0map") {
-        "fmap"
-    } else {
-        "anat"
-    }
+/// Whether a source header actually defines where its voxels sit in space.
+///
+/// NIfTI encodes the mapping twice, in the qform and the sform, each gated by
+/// its own code; `0` in both is the ANALYZE-compatible "unknown" case, which
+/// leaves `pixdim` as the only hint and the origin and orientation undefined.
+/// Such a header has nothing to preserve, and propagating it writes a BIDS
+/// dataset whose images cannot be placed — in practice a viewer falls back to
+/// `pixdim`, which in an unset header is as arbitrary as the transform it
+/// accompanies (qMRLab's own `b1_dam` example declares a 2 micrometre slice).
+/// A synthesized minimal header is the honest substitute: it says "voxel grid,
+/// unit spacing" rather than implying a geometry nobody recorded. Voxel data is
+/// untouched either way.
+fn has_spatial_transform(header: &NiftiHeader) -> bool {
+    header.qform_code > 0 || header.sform_code > 0
 }
 
 /// The physical unit a known field-map BIDS suffix is conventionally
@@ -392,7 +425,8 @@ fn aux_units(suffix: &str) -> Option<&'static str> {
 
 /// Write one auxiliary map into the `preprocessed` derivatives pipeline,
 /// under the datatype directory its BIDS suffix implies (see
-/// `aux_datatype`), with a `Units` sidecar for field-map-datatype suffixes.
+/// [`rust_bids::datatype_for_suffix`]), with a `Units` sidecar for
+/// field-map-datatype suffixes.
 fn write_aux_map(
     out: &Path,
     subject: &str,
@@ -400,7 +434,7 @@ fn write_aux_map(
     vol: &Array3<f64>,
     header: &NiftiHeader,
 ) -> Result<()> {
-    let datatype = aux_datatype(suffix);
+    let datatype = rust_bids::datatype_for_suffix(suffix);
     let dir = preprocessed_datatype_dir(out, subject, datatype)?;
     let base = format!("sub-{subject}_{suffix}");
     write_inv_volume(vol, header, &dir.join(format!("{base}.nii.gz")))?;
@@ -716,6 +750,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// One 3D file per volume: the count is the whole contract, because a
+    /// per-volume file carries no acquisition axis to check against. Given the
+    /// wrong number, every sidecar after the first mismatch would describe a
+    /// different volume than the one beside it.
+    #[test]
+    fn a_per_volume_source_must_supply_exactly_the_protocol_s_volumes() {
+        let dir = tmp_dir("nii-count");
+        let model = ir_model(&[0.350, 0.650, 0.950], None);
+        let paths: Vec<std::path::PathBuf> = (0..2)
+            .map(|i| {
+                let p = dir.join(format!("v{i}.nii"));
+                let data = ndarray::Array3::<f64>::zeros((2, 2, 1));
+                nifti::writer::WriterOptions::new(&p)
+                    .write_nifti(&data)
+                    .unwrap();
+                p
+            })
+            .collect();
+
+        // Two files, three inversion times.
+        let err = read_nifti_source(&paths, None, model.as_ref())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("2 --nii-data volumes given") && err.contains("has 3"),
+            "unhelpful count error: {err}"
+        );
+
+        // The matching count reads, and the volume axis is the file axis.
+        let three = ir_model(&[0.350, 0.650], None);
+        let (data, _, _, _) = read_nifti_source(&paths, None, three.as_ref()).unwrap();
+        assert_eq!(data.dim(), (2, 2, 1, 2));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A NIfTI source's spatial header must be carried into the written volumes
     /// (the orientation-preservation contract). With `Some(source_header)`, the
     /// distinctive affine survives to the output; the `None` path (a synthesized
@@ -749,6 +819,54 @@ mod tests {
         assert_eq!(out.pixdim[1], src.pixdim[1]);
         assert_eq!(out.pixdim[2], src.pixdim[2]);
         assert_eq!(out.sform_code, src.sform_code);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A source header with neither transform code set defines no geometry at
+    /// all, so there is nothing to preserve and its `pixdim` is as arbitrary as
+    /// the missing transform. Carrying it through writes images a viewer cannot
+    /// place: qMRLab's own `b1_dam` example declares a 2 micrometre slice, which
+    /// renders as an empty sliver. The synthesized minimal header replaces it,
+    /// while the voxel data stays byte-identical.
+    #[test]
+    fn bidsify_replaces_a_source_header_that_declares_no_transform() {
+        let dir = tmp_dir("no-transform");
+        let ir_data = Array4::from_shape_fn((2, 2, 1, 3), |(i, j, _k, t)| {
+            (i * 10 + j) as f64 + t as f64 * 0.5
+        });
+        let model = ir_model(&[0.350, 0.650, 0.950], None);
+
+        // Exactly the shape of the qMRLab b1_dam source: no qform, no sform,
+        // and a placeholder pixdim describing a degenerate slab.
+        let mut src = make_minimal_header(2, 2, 1);
+        src.qform_code = 0;
+        src.sform_code = 0;
+        src.srow_x = [0.0; 4];
+        src.srow_y = [0.0; 4];
+        src.srow_z = [0.0; 4];
+        src.pixdim = [0.0, 0.1406, 0.1406, 0.002, 0.0, 0.0, 0.0, 0.0];
+
+        write_bids_tree(model.as_ref(), &ir_data, None, &[], "01", &dir, Some(&src)).unwrap();
+
+        let nii = dir
+            .join("sub-01")
+            .join("anat")
+            .join("sub-01_inv-1_IRT1.nii.gz");
+        let (data, out) = io::nifti::read_map_nifti_with_header(&nii).unwrap();
+        assert!(
+            out.qform_code > 0 || out.sform_code > 0,
+            "written volume still declares no spatial transform"
+        );
+        assert_eq!(out.pixdim[1], 1.0, "degenerate pixdim was carried through");
+        assert_eq!(out.pixdim[2], 1.0);
+        assert_eq!(out.pixdim[3], 1.0);
+        // The geometry was substituted; the voxels were not.
+        for i in 0..2 {
+            for j in 0..2 {
+                assert_eq!(data[[i, j, 0]], (i * 10 + j) as f64);
+            }
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

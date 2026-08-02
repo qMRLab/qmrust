@@ -1,6 +1,11 @@
 {
  "model": "qmt_spgr",
  "title": "qMT-SPGR",
+ "bids_suffix": "QMTSPGR",
+ "family": "Magnetization Transfer",
+ "family_icon": "waves-arrow-up",
+ "subgroup": "Quantitative MT",
+ "category_order": 4,
  "dims": [
   88,
   128,

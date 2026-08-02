@@ -1,0 +1,386 @@
+//! b1_afi adapter onto the core `Model` trait.
+//!
+//! A `Series` of exactly two spoiled gradient-echo volumes acquired at
+//! interleaved excitation repetition times, combined by the closed-form AFI
+//! ratio — no iterative fit. BIDS indexes the pair by the `acq` entity, whose
+//! values name the shorter and longer repetition time (`tr1`/`tr2`).
+
+use crate::core::model::{
+    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
+    Model, ProtoParam, Protocol, Sample, Scope, Source,
+};
+use crate::models::b1_afi::config::B1AfiConfig;
+use crate::models::b1_afi::fit::{B1AfiFitter, B1_BOUNDS, T1_BOUNDS};
+use anyhow::Result;
+use serde_json::json;
+use std::collections::BTreeMap;
+
+pub struct B1AfiModel {
+    fitter: B1AfiFitter,
+}
+
+const B1AFI_ENTITIES: &[EntityRole] = &[EntityRole::Other("acq")];
+
+/// One `{"RepetitionTimeExcitation": s}` identity row per volume, in
+/// acquisition order.
+fn b1_afi_rows(fitter: &B1AfiFitter) -> Vec<BTreeMap<String, f64>> {
+    fitter
+        .repetition_times()
+        .iter()
+        .map(|&tr| BTreeMap::from([("RepetitionTimeExcitation".to_string(), tr)]))
+        .collect()
+}
+
+impl B1AfiModel {
+    pub fn new(cfg: B1AfiConfig) -> Self {
+        Self {
+            fitter: B1AfiFitter::new(&cfg),
+        }
+    }
+}
+
+impl Model for B1AfiModel {
+    fn param_names(&self) -> Vec<&'static str> {
+        B1AfiFitter::param_names().to_vec()
+    }
+    fn output_names(&self) -> Vec<String> {
+        B1AfiFitter::output_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+    fn param_bounds(&self) -> Vec<(f64, f64)> {
+        vec![B1_BOUNDS, T1_BOUNDS]
+    }
+    fn fixed_mask(&self) -> Vec<bool> {
+        // T1 is a ground-truth parameter of the forward signal that the closed
+        // form never recovers — it assumes TR << T1 and divides it out.
+        vec![false, true]
+    }
+    fn required_inputs(&self) -> Vec<InputSpec> {
+        // B1+ is what this model measures; it consumes no auxiliary map.
+        vec![]
+    }
+    fn measurement(&self) -> MeasurementKind {
+        MeasurementKind::Series {
+            rows: b1_afi_rows(&self.fitter),
+        }
+    }
+    fn strategy(&self) -> FitStrategy {
+        FitStrategy::Voxelwise
+    }
+    fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
+        let values = self.fitter.forward(params[0], params[1]);
+        let samples = self
+            .fitter
+            .repetition_times()
+            .iter()
+            .zip(values)
+            .map(|(&tr, value)| Sample {
+                params: BTreeMap::from([("RepetitionTimeExcitation".to_string(), tr)]),
+                value,
+            })
+            .collect();
+        Measurement::Series(samples)
+    }
+    fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
+        // Assemble in the fitter's own repetition-time order by matching each
+        // expected time to its sample by identity — never positionally.
+        // Swapping the two volumes would otherwise invert the ratio.
+        let samples = m.series();
+        let signal: Vec<f64> = self
+            .fitter
+            .repetition_times()
+            .iter()
+            .map(|&tr| {
+                samples
+                    .iter()
+                    .find(|s| s.params.get("RepetitionTimeExcitation") == Some(&tr))
+                    .map(|s| s.value)
+                    .unwrap_or_else(|| {
+                        panic!("measurement has no sample with RepetitionTimeExcitation={tr}")
+                    })
+            })
+            .collect();
+        self.fitter.fit_voxel(&signal)
+    }
+    fn n_volumes(&self) -> usize {
+        self.fitter.repetition_times().len()
+    }
+    fn bids_volume(&self, index: usize) -> BidsVolume {
+        // The BIDS spec names the shorter repetition time `tr1` and the longer
+        // `tr2`, so the label follows the value, not the acquisition order.
+        let tr = self.fitter.repetition_times()[index];
+        let label = if tr == self.fitter.tr1() {
+            "tr1"
+        } else {
+            "tr2"
+        };
+        BidsVolume {
+            entities: vec![("acq", label.to_string())],
+            sidecar: BTreeMap::from([
+                ("RepetitionTimeExcitation".to_string(), json!(tr)),
+                ("FlipAngle".to_string(), json!(self.fitter.flip_angle())),
+            ]),
+        }
+    }
+    fn bids(&self) -> Option<BidsSpec> {
+        Some(BidsSpec {
+            suffix: "TB1AFI",
+            entities: B1AFI_ENTITIES,
+        })
+    }
+    fn protocol_schema(&self) -> Vec<ProtoParam> {
+        // The repetition time is the acquisition axis, so it alone identifies a
+        // volume: a `Series`' per-volume protocol rows *are* its volume
+        // identities (`engine::build_volume_ids`), and `forward` tags its
+        // samples the same way. The nominal flip angle is one value for the
+        // pair, so it is `Global` — as a per-volume param it would join the
+        // identity and no forward sample would match its volume.
+        vec![
+            ProtoParam {
+                name: "RepetitionTimeExcitation",
+                source: Source::Field("RepetitionTimeExcitation"),
+                scope: Scope::PerVolume,
+                required: true,
+            },
+            ProtoParam {
+                name: "FlipAngle",
+                source: Source::Field("FlipAngle"),
+                scope: Scope::Global,
+                required: true,
+            },
+        ]
+    }
+    fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
+        // Dimensionless: the achieved flip angle as a fraction of the nominal
+        // one, which is the scaling every `B1map` aux consumer expects.
+        vec![("B1", "TB1map", "")]
+    }
+}
+
+impl crate::core::model::ModelConfig for B1AfiConfig {
+    const NAME: &'static str = "b1_afi";
+    const SUBKEY: Option<&'static str> = None;
+    const PROTOCOL_KEYS: &'static [&'static str] = &["repetition_times", "flip_angle"];
+
+    fn validate_options(&mut self) -> Result<()> {
+        B1AfiConfig::validate_options(self)
+    }
+
+    fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
+        let times: Vec<f64> = proto
+            .volumes
+            .iter()
+            .filter_map(|m| m.get("RepetitionTimeExcitation").copied())
+            .collect();
+        if !times.is_empty() {
+            self.repetition_times = times;
+        }
+        // Global scope, so this is resolved once for the collection rather than
+        // per volume — read it independently of the per-volume rows.
+        if let Some(&fa) = proto.global.get("FlipAngle") {
+            self.flip_angle = Some(fa);
+        }
+        Ok(())
+    }
+
+    fn validate_protocol(&mut self) -> Result<()> {
+        B1AfiConfig::validate_protocol(self)
+    }
+
+    fn into_model(self) -> Box<dyn Model> {
+        Box::new(B1AfiModel::new(self))
+    }
+}
+
+/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
+pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
+    crate::core::model::describe_model::<B1AfiConfig>(v)
+}
+
+/// Registry builder (see [`build_model`](crate::core::model::build_model)).
+pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
+    crate::core::model::build_model::<B1AfiConfig>(v, proto)
+}
+
+/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
+pub fn dump(v: &serde_yaml::Value) -> Result<String> {
+    crate::core::model::dump_model::<B1AfiConfig>(v)
+}
+
+/// Registry option-surface entry point (see
+/// [`effective_model`](crate::core::model::effective_model)): every option this
+/// model accepts, at its effective value, plus any validation complaint.
+pub fn effective(
+    v: &serde_yaml::Value,
+    proto: &Protocol,
+) -> Result<crate::core::model::EffectiveConfig> {
+    crate::core::model::effective_model::<B1AfiConfig>(v, proto)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn b1_afi_value() -> serde_yaml::Value {
+        serde_yaml::from_str("model: b1_afi\nrepetition_times: [0.02, 0.1]\nflip_angle: 60\n")
+            .unwrap()
+    }
+
+    /// A resolved protocol as the shell hands it over: one row per volume
+    /// carrying the identifying axis, plus the collection-wide flip angle.
+    fn resolved_proto(times: &[f64], flip_angle: f64) -> Protocol {
+        Protocol {
+            volumes: times
+                .iter()
+                .map(|&tr| BTreeMap::from([("RepetitionTimeExcitation".to_string(), tr)]))
+                .collect(),
+            global: BTreeMap::from([("FlipAngle".to_string(), flip_angle)]),
+        }
+    }
+
+    #[test]
+    fn build_and_roundtrip_via_trait() {
+        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
+        assert_eq!(m.param_names(), vec!["B1", "T1"]);
+        assert_eq!(m.output_names(), vec!["B1".to_string()]);
+        assert_eq!(m.n_volumes(), 2);
+        // The estimator assumes TR << T1, so recovery carries the method's own
+        // bias rather than being exact (see the fitter's own tests).
+        let sig = m.forward(&[0.85, 0.9], &Aux::new());
+        let fitted = m.fit(&sig, &Aux::new());
+        assert!((fitted[0] - 0.85).abs() / 0.85 < 0.01, "B1: {}", fitted[0]);
+    }
+
+    #[test]
+    fn t1_is_a_forward_parameter_the_fit_never_recovers() {
+        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
+        assert_eq!(m.fixed_mask(), vec![false, true]);
+        // It is real, not decorative: the forward signal moves with it.
+        let a = m.forward(&[1.0, 0.5], &Aux::new());
+        let b = m.forward(&[1.0, 2.0], &Aux::new());
+        assert!((a.series()[0].value - b.series()[0].value).abs() > 1e-6);
+        // ...and it is absent from the fitted outputs.
+        assert_eq!(m.fit(&a, &Aux::new()).len(), 1);
+    }
+
+    #[test]
+    fn fit_assembles_by_identity_not_position() {
+        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
+        let sig = m.forward(&[0.85, 0.9], &Aux::new());
+        let mut reversed: Vec<Sample> = sig
+            .series()
+            .iter()
+            .map(|s| Sample {
+                params: s.params.clone(),
+                value: s.value,
+            })
+            .collect();
+        reversed.reverse();
+        assert_eq!(
+            m.fit(&sig, &Aux::new()),
+            m.fit(&Measurement::Series(reversed), &Aux::new())
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "no sample with RepetitionTimeExcitation")]
+    fn fit_panics_on_unmatched_identity() {
+        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
+        let bogus = Measurement::Series(vec![Sample {
+            params: BTreeMap::from([("RepetitionTimeExcitation".to_string(), 7.0)]),
+            value: 1.0,
+        }]);
+        let _ = m.fit(&bogus, &Aux::new());
+    }
+
+    #[test]
+    fn bids_folds_the_acquisition_from_protocol_and_labels_by_repetition_time() {
+        let proto = resolved_proto(&[0.03, 0.15], 55.0);
+        // Config carries no acquisition; the sidecars supply it.
+        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_afi\n").unwrap();
+        let m = build(&v, &proto).unwrap();
+        assert_eq!(m.n_volumes(), 2);
+        let short = m.bids_volume(0);
+        assert_eq!(short.entities, vec![("acq", "tr1".to_string())]);
+        assert_eq!(short.sidecar["RepetitionTimeExcitation"], json!(0.03));
+        assert_eq!(short.sidecar["FlipAngle"], json!(55.0));
+        assert_eq!(m.bids_volume(1).entities, vec![("acq", "tr2".to_string())]);
+    }
+
+    #[test]
+    fn the_tr_labels_follow_the_value_not_the_acquisition_order() {
+        // A series listed longest-first must still label the shorter time
+        // `tr1`, as the BIDS spec defines it.
+        let proto = resolved_proto(&[0.15, 0.03], 55.0);
+        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_afi\n").unwrap();
+        let m = build(&v, &proto).unwrap();
+        assert_eq!(m.bids_volume(0).entities, vec![("acq", "tr2".to_string())]);
+        assert_eq!(m.bids_volume(1).entities, vec![("acq", "tr1".to_string())]);
+    }
+
+    #[test]
+    fn forward_samples_carry_the_volume_identities_the_bids_path_builds() {
+        // A `Series` model's volume identities come from the resolved
+        // per-volume protocol (`engine::build_volume_ids`), while `forward`
+        // tags its samples from the model's own rows. Any protocol param the
+        // model does not also emit joins the identity on one side only, and
+        // every predicted sample then fails to match its volume — the fit
+        // still works (it queries one key), so the only symptom is a silently
+        // missing forward curve. Both sides must agree exactly.
+        let proto = resolved_proto(&[0.02, 0.1], 60.0);
+        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_afi\n").unwrap();
+        let m = build(&v, &proto).unwrap();
+
+        let ids = crate::engine::build_volume_ids(m.measurement(), &proto, m.n_volumes()).unwrap();
+        let sig = m.forward(&[0.9, 0.9], &Aux::new());
+        let samples = sig.series();
+        assert_eq!(samples.len(), ids.len());
+        for (id, sample) in ids.iter().zip(samples) {
+            let crate::core::model::VolumeId::Params(row) = id else {
+                panic!("b1_afi is a Series model; expected param-row identities")
+            };
+            assert_eq!(
+                *row, sample.params,
+                "volume identity {row:?} has no matching forward sample identity {:?}",
+                sample.params
+            );
+        }
+    }
+
+    #[test]
+    fn declares_bids_tb1afi_and_no_aux() {
+        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
+        assert_eq!(m.bids().unwrap().suffix, "TB1AFI");
+        assert!(m.required_inputs().is_empty());
+    }
+
+    #[test]
+    fn bids_outputs_reference_real_output_names() {
+        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
+        let names = m.output_names();
+        for (out, _suffix, _unit) in m.bids_outputs() {
+            assert!(names.iter().any(|n| n == out), "{out} not in {names:?}");
+        }
+    }
+
+    #[test]
+    fn describe_succeeds_without_an_acquisition_and_exposes_schema() {
+        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_afi\n").unwrap();
+        let m = describe(&v).unwrap();
+        let schema = m.protocol_schema();
+        assert_eq!(schema[0].name, "RepetitionTimeExcitation");
+        assert_eq!(schema[1].name, "FlipAngle");
+        // The repetition time identifies a volume; the flip angle is one value
+        // for the collection.
+        assert!(matches!(schema[0].scope, Scope::PerVolume));
+        assert!(matches!(schema[1].scope, Scope::Global));
+    }
+
+    #[test]
+    fn build_still_requires_an_acquisition_when_protocol_empty() {
+        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_afi\n").unwrap();
+        assert!(build(&v, &Protocol::default()).is_err());
+    }
+}
