@@ -24,4 +24,4 @@ pub use resolve::{collections_for, resolve_set};
 pub use scan::scan_dataset;
 pub use sidecar::{sidecar_for, sidecar_sources_for, Sidecar};
 pub use table::{parse_to_table, row_column, table_filter, BidsRow};
-pub use vocab::Vocabulary;
+pub use vocab::{datatype_for_suffix, Vocabulary};

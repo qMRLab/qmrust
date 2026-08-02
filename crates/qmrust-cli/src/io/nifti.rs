@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use ndarray::{Array3, Array4};
 use nifti::writer::WriterOptions;
 use nifti::{IntoNdArray, NiftiHeader, NiftiObject, ReaderOptions};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Read a NIfTI file and return the raw dynamic-dimension array + header.
 fn read_nifti_raw(path: &Path) -> Result<(ndarray::ArrayD<f64>, NiftiHeader)> {
@@ -151,19 +151,32 @@ pub fn read_map_nifti_with_header(path: &Path) -> Result<(Array3<f64>, NiftiHead
 /// is preserved for the output geometry. Every role file must exist and share
 /// the same spatial dims.
 pub fn read_named_nii_volumes(dir: &Path, roles: &[&str]) -> Result<(Array4<f64>, NiftiHeader)> {
-    let mut vols: Vec<ndarray::Array3<f64>> = Vec::with_capacity(roles.len());
+    let paths: Vec<PathBuf> = roles
+        .iter()
+        .map(|r| dir.join(format!("{r}.nii.gz")))
+        .collect();
+    stack_nii_volumes(&paths)
+}
+
+/// Read one 3D scalar NIfTI per path and stack them into a 4D array in the
+/// given order — column `i` is `paths[i]`. Used wherever a measurement ships
+/// as one file per volume rather than one 4D file: a `Named` model's role
+/// files, or a `Series` model's per-volume files in acquisition order. The
+/// first file's spatial header is preserved for the output geometry. Every
+/// file must exist and share the same spatial dims.
+pub fn stack_nii_volumes(paths: &[PathBuf]) -> Result<(Array4<f64>, NiftiHeader)> {
+    let mut vols: Vec<ndarray::Array3<f64>> = Vec::with_capacity(paths.len());
     let mut header: Option<NiftiHeader> = None;
     let mut dims: Option<(usize, usize, usize)> = None;
-    for &role in roles {
-        let path = dir.join(format!("{role}.nii.gz"));
-        let (v, h) = read_map_nifti_with_header(&path)
-            .with_context(|| format!("reading named role '{role}' from {:?}", path))?;
+    for path in paths {
+        let (v, h) = read_map_nifti_with_header(path)
+            .with_context(|| format!("reading volume from {path:?}"))?;
         let d = v.dim();
         match dims {
             None => dims = Some(d),
             Some(expected) if expected != d => bail!(
-                "role '{}' has spatial dims {:?}, expected {:?} (from the first role)",
-                role,
+                "{:?} has spatial dims {:?}, expected {:?} (from the first volume)",
+                path,
                 d,
                 expected
             ),
@@ -174,8 +187,8 @@ pub fn read_named_nii_volumes(dir: &Path, roles: &[&str]) -> Result<(Array4<f64>
         }
         vols.push(v);
     }
-    let (nx, ny, nz) = dims.with_context(|| "a named model must declare at least one role")?;
-    let mut out = Array4::<f64>::zeros((nx, ny, nz, roles.len()));
+    let (nx, ny, nz) = dims.with_context(|| "at least one volume is required")?;
+    let mut out = Array4::<f64>::zeros((nx, ny, nz, paths.len()));
     for (t, v) in vols.iter().enumerate() {
         out.index_axis_mut(ndarray::Axis(3), t).assign(v);
     }

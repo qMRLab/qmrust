@@ -546,9 +546,6 @@ fn write_derivatives(
         Some(ses) => qmrust_root.join(subject).join(ses),
         None => qmrust_root.join(subject),
     };
-    let anat_dir = subject_dir.join("anat");
-    std::fs::create_dir_all(&anat_dir)?;
-
     let entity_stem = match session {
         Some(ses) => format!("{subject}_{ses}"),
         None => subject.to_string(),
@@ -558,10 +555,15 @@ fn write_derivatives(
         let Some(map) = results.get(output_name) else {
             continue;
         };
+        // Each output map lands in the datatype directory its own BIDS suffix
+        // implies, so a fitted transmit map (TB1map) is written where the next
+        // model's B1 input resolver already looks for one.
+        let dir = subject_dir.join(rust_bids::datatype_for_suffix(suffix));
+        std::fs::create_dir_all(&dir)?;
         let base = format!("{entity_stem}_{suffix}");
-        let nii_path = anat_dir.join(format!("{base}.nii.gz"));
+        let nii_path = dir.join(format!("{base}.nii.gz"));
         io::nifti::write_map_nifti(map, header, &nii_path)?;
-        let json_path = anat_dir.join(format!("{base}.json"));
+        let json_path = dir.join(format!("{base}.json"));
         std::fs::write(
             &json_path,
             serde_json::to_string_pretty(&prov.sidecar(units))?,
@@ -1493,7 +1495,7 @@ mod tests {
             model: "inversion_recovery".to_string(),
             mat_data: Some(ir_mat),
             mat_dir: None,
-            nii_data: None,
+            nii_data: Vec::new(),
             nii_dir: None,
             nii_mask: None,
             mask: Some(ir_mask),
@@ -1604,7 +1606,7 @@ mod tests {
             model: "qmt_spgr".to_string(),
             mat_data: Some(qmt_mat),
             mat_dir: None,
-            nii_data: None,
+            nii_data: Vec::new(),
             nii_dir: None,
             nii_mask: None,
             mask: None,

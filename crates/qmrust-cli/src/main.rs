@@ -126,11 +126,12 @@ enum Commands {
         #[arg(long)]
         mat_dir: Option<PathBuf>,
 
-        /// Path to a 4D NIfTI measurement (echoes/TIs in the 4th axis), for
-        /// datasets that ship as NIfTI rather than qMLab .mat. Mutually
-        /// exclusive with --mat-data/--mat-dir.
+        /// NIfTI measurement for a Series model, for datasets that ship as
+        /// NIfTI rather than qMRLab .mat: either one 4D file (echoes/TIs/flip
+        /// angles in the 4th axis) or, repeated, one 3D file per volume in
+        /// acquisition order. Mutually exclusive with --mat-data/--mat-dir.
         #[arg(long)]
-        nii_data: Option<PathBuf>,
+        nii_data: Vec<PathBuf>,
 
         /// Directory of per-role NIfTIs (`<role>.nii.gz`, e.g. MTS's
         /// MTw/PDw/T1w) for a Named model. Mutually exclusive with the other
