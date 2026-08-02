@@ -17,7 +17,7 @@ import { app, editor } from "./state.js";
 import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers, resolvedProtocolJson, clearProtocolOverrides } from "./surface.js";
 import { debounce } from "./debounce.js";
 import { inlineCodeHtml } from "./inline-code.js";
-import { fieldLabel, groupLabel } from "./labels.js";
+import { fieldLabel, fieldUnit, groupLabel } from "./labels.js";
 
 // Knob diameter in px, mirrored in `.override-knob`; the pointer guard and the
 // knob's travel both need it as a number.
@@ -143,10 +143,25 @@ function fieldRow(path, widget) {
   const row = document.createElement("div");
   row.className = "field-row";
   const labelWrap = document.createElement("div");
+  labelWrap.className = "field-labels";
   const labelSpan = document.createElement("span");
   labelSpan.className = "field-label";
   labelSpan.textContent = fieldLabel(path);
   labelWrap.append(labelSpan);
+  // The symbol and unit sit under the quantity rather than trailing it in
+  // parentheses: the name is what a reader scans for, and a row that also
+  // carries the BIDS mark was running to three pieces on one line. The second
+  // line is where anything *about* the value goes, the mark included.
+  const unit = fieldUnit(path);
+  if (unit) {
+    const meta = document.createElement("span");
+    meta.className = "field-meta";
+    const sym = document.createElement("span");
+    sym.className = "field-unit";
+    sym.textContent = unit;
+    meta.append(sym);
+    labelWrap.append(meta);
+  }
   row.append(labelWrap, widget);
   return row;
 }
@@ -165,6 +180,21 @@ function bidsBadge() {
   badge.setAttribute("aria-label", "BIDS");
   badge.title = "resolved from the dataset's BIDS sidecars";
   return badge;
+}
+
+// Put the BIDS mark on the label's second line, beside the symbol. A field
+// with no symbol has no second line yet, so one is made for it: the mark is a
+// statement about where the value came from, which belongs there either way.
+function attachBadge(row) {
+  const labels = row.querySelector(".field-labels");
+  if (!labels) return;
+  let meta = labels.querySelector(".field-meta");
+  if (!meta) {
+    meta = document.createElement("span");
+    meta.className = "field-meta";
+    labels.append(meta);
+  }
+  meta.prepend(bidsBadge());
 }
 
 function buildWidget(value, path) {
@@ -364,7 +394,7 @@ function buildRows(container, rows, parentLocked = false) {
     if (row.readOnly) {
       el.classList.add("locked");
       if (!parentLocked) {
-        el.querySelector(".field-label")?.after(bidsBadge());
+        attachBadge(el);
       }
     }
     container.append(el);

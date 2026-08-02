@@ -627,7 +627,17 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .field-row {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
 }
+/* Two lines: the quantity, then what qualifies it. The second line is set in
+   the mono face the values use and tinted with the protocol accent, so a
+   reader's eye pairs "TI [s]" with the numbers beside it rather than with the
+   name above it. */
+.field-labels { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .field-label { color: var(--ink-2); font: 12px var(--font-ui); }
+.field-meta { display: flex; align-items: center; gap: 5px; min-height: 14px; }
+.field-unit {
+  color: var(--muted); font: 10px var(--font-mono);
+  letter-spacing: .02em; white-space: nowrap;
+}
 .field-row input, .field-row textarea { width: 100%; }
 .field-row textarea { min-height: 44px; resize: vertical; }
 /* A number array is one compact line at rest and one value per line while
@@ -1212,6 +1222,9 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   background-image: url("./vendor/bids-logo-dark.png");
 }
 .group-title .bids-badge { vertical-align: -2px; }
+/* On the label's second line the mark leads rather than trails, and sits on
+   the text baseline of a 10px line rather than a 12px one. */
+.field-meta .bids-badge { margin-left: 0; width: 13px; height: 13px; vertical-align: 0; }
 
 /* Slide to override the sidecar-supplied protocol. An iOS slide-to-act pill:
    a recessed track, a raised knob carrying a direction chevron, and a prompt

@@ -13,33 +13,42 @@
 // A key with no entry falls back to title case, so an unlisted or newly added
 // option is still readable rather than blank.
 
+// Each entry is `[quantity, symbol]`: the name a reader looks for, and the
+// symbol-and-unit that names it in a methods section. They are held apart
+// rather than pre-joined into one string because the form shows them on
+// separate lines, and splitting a composed label back up with a regex would
+// make the display format the source of truth for the data.
+//
+// A `null` symbol means the option has no physical dimension (`Fit Type`);
+// nothing is shown beneath it.
+
 // Exact dotted paths win over leaf names, letting a nested field disambiguate
 // (`t1_range.start` is a time; a bare `start` elsewhere might not be).
 const BY_PATH = new Map([
-  ["t1_range.start", "T1 Range Start (s)"],
-  ["t1_range.stop", "T1 Range Stop (s)"],
-  ["t1_range.step", "T1 Range Step (s)"],
+  ["t1_range.start", ["T1 Range Start", "s"]],
+  ["t1_range.stop", ["T1 Range Stop", "s"]],
+  ["t1_range.step", ["T1 Range Step", "s"]],
 ]);
 
 const BY_KEY = new Map([
-  ["flip_angle", "Flip Angle (FA°)"],
-  ["flip_angles", "Flip Angles (FA°)"],
-  ["repetition_time", "Repetition Time (TR [s])"],
-  ["repetition_times", "Repetition Times (TR [s])"],
-  ["echo_time", "Echo Time (TE [s])"],
-  ["echo_times", "Echo Times (TE [s])"],
-  ["inversion_time", "Inversion Time (TI [s])"],
-  ["inversion_times", "Inversion Times (TI [s])"],
-  ["saturation_time", "Saturation Time (s)"],
-  ["offsets", "Offset Frequencies (Δ [Hz])"],
-  ["angles", "Saturation Flip Angles (°)"],
-  ["mtdata", "Saturation Angle / Offset (° , Hz)"],
-  ["b1_correction_factor", "B1 Correction Factor"],
-  ["b1_correction", "B1 Correction Surface"],
-  ["export_mtr", "Export MTR"],
-  ["fit_type", "Fit Type"],
-  ["drop_first_echo", "Drop First Echo"],
-  ["offset_term", "Offset Term"],
+  ["flip_angle", ["Flip Angle", "FA°"]],
+  ["flip_angles", ["Flip Angles", "FA°"]],
+  ["repetition_time", ["Repetition Time", "TR [s]"]],
+  ["repetition_times", ["Repetition Times", "TR [s]"]],
+  ["echo_time", ["Echo Time", "TE [s]"]],
+  ["echo_times", ["Echo Times", "TE [s]"]],
+  ["inversion_time", ["Inversion Time", "TI [s]"]],
+  ["inversion_times", ["Inversion Times", "TI [s]"]],
+  ["saturation_time", ["Saturation Time", "s"]],
+  ["offsets", ["Offset Frequencies", "Δ [Hz]"]],
+  ["angles", ["Saturation Flip Angles", "°"]],
+  ["mtdata", ["Saturation Angle / Offset", "° , Hz"]],
+  ["b1_correction_factor", ["B1 Correction Factor", null]],
+  ["b1_correction", ["B1 Correction Surface", null]],
+  ["export_mtr", ["Export MTR", null]],
+  ["fit_type", ["Fit Type", null]],
+  ["drop_first_echo", ["Drop First Echo", null]],
+  ["offset_term", ["Offset Term", null]],
 ]);
 
 function titleCase(key) {
@@ -50,14 +59,27 @@ function titleCase(key) {
     .join(" ");
 }
 
-/**
- * The label for a config field, given its dotted path segments.
- * `["mtw", "flip_angle"]` → `"Flip Angle (FA°)"`.
- */
-export function fieldLabel(path) {
+/** The `[quantity, symbol]` pair for a field, or a title-cased fallback. */
+function entry(path) {
   const dotted = path.join(".");
   const key = path.at(-1) ?? "";
-  return BY_PATH.get(dotted) ?? BY_KEY.get(key) ?? titleCase(key);
+  return BY_PATH.get(dotted) ?? BY_KEY.get(key) ?? [titleCase(key), null];
+}
+
+/**
+ * The quantity a config field names, given its dotted path segments.
+ * `["mtw", "flip_angle"]` → `"Flip Angle"`.
+ */
+export function fieldLabel(path) {
+  return entry(path)[0];
+}
+
+/**
+ * Its symbol and unit as a methods section would write them, or `null` for an
+ * option with no physical dimension. `["inversion_times"]` → `"TI [s]"`.
+ */
+export function fieldUnit(path) {
+  return entry(path)[1];
 }
 
 /**
