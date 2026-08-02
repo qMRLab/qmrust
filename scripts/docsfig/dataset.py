@@ -73,7 +73,9 @@ def find(parent, model):
     """
     suffix = model["bids_suffix"]
     bids_dir = root_for(parent, model)
-    hits = sorted(bids_dir.glob(f"sub-*/anat/*_{suffix}.nii*"))
+    # Any datatype directory: an acquisition is filed by its BIDS suffix, so a
+    # transmit-field series lands in `fmap/` and a weighted series in `anat/`.
+    hits = sorted(bids_dir.glob(f"sub-*/*/*_{suffix}.nii*"))
     if not hits:
         return None
     subject = hits[0].parts[-3]
@@ -157,7 +159,10 @@ def find(parent, model):
     for o in model["outputs"]:
         if o["diagnostic"]:
             continue
-        found = sorted(deriv.glob(f"qmrust/{subject}/anat/*_{o['bids_suffix']}.nii*"))
+        # Any datatype directory, for the same reason as the aux glob above:
+        # an output map is filed by its own BIDS suffix, so a fitted transmit
+        # map lands in `fmap/`.
+        found = sorted(deriv.glob(f"qmrust/{subject}/*/*_{o['bids_suffix']}.nii*"))
         if found:
             outputs[o["bids_suffix"]] = found[0]
 
