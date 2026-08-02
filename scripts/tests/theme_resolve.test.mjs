@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveTheme, THEMES } from "../../docs/playground/themes.js";
+import { nextMode, resolveTheme, THEMES } from "../../docs/playground/themes.js";
 
 test("THEMES lists the three shipped families in picker order", () => {
   assert.deepEqual(THEMES.map((t) => t.id), ["patina", "oxide", "clinical"]);
@@ -48,4 +48,16 @@ test("an unknown stored family falls back to the default", () => {
     resolveTheme({ stored: { family: "bogus" }, parentDark: false }),
     { family: "patina", mode: "light" },
   );
+});
+
+test("the mode switch flips from either side", () => {
+  // The half you click is not a choice of destination, it is the switch.
+  // Clicking the lit half used to do nothing, which reads as a dead control.
+  assert.equal(nextMode("dark"), "light");
+  assert.equal(nextMode("light"), "dark");
+  // Never a no-op, whatever it is handed.
+  for (const from of ["dark", "light", undefined, "", "sepia"]) {
+    assert.notEqual(nextMode(from), from);
+    assert.ok(["dark", "light"].includes(nextMode(from)), `${from} -> off the two modes`);
+  }
 });
