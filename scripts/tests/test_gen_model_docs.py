@@ -22,7 +22,9 @@ NON_BIDS_RECIPE = "recipes/non-bids/irt1_config.yaml"
 def minimal_model(**over):
     m = {
         "name": "demo", "bids_suffix": "DEMO", "title": "Demo model",
-        "category": "relaxometry", "category_title": "Relaxometry",
+        "category": "t1-relaxometry", "category_title": "T1 Relaxometry",
+        "family": "T1 Relaxometry", "family_icon": "spline-pointer",
+        "subgroup": None, "category_order": 0,
         "summary": "A summary.", "equation": r"S = M_0",
         "symbols": [{"name": "T1", "meaning": "Relaxation time", "unit": "s"}],
         "citations": ["barral2010"],
@@ -125,7 +127,7 @@ class TestCheckMode(unittest.TestCase):
             models = [minimal_model()]
             g.write_all(models, root, check=False)
             g.write_all(models, root, check=True)          # in sync: no raise
-            page = root / "docs" / "models" / "relaxometry" / "demo.md"
+            page = root / "docs" / "models" / "t1-relaxometry" / "demo.md"
             page.write_text(page.read_text() + "\nhand edit\n")
             with self.assertRaises(g.GenError):
                 g.write_all(models, root, check=True)

@@ -1,8 +1,8 @@
 ---
-title: Inversion recovery T1
-subtitle: Relaxometry · BIDS suffix IRT1
+title: Inversion Recovery
+subtitle: T1 Relaxometry · BIDS suffix IRT1
 keywords:
-  - Relaxometry
+  - T1 Relaxometry
   - IRT1
 thumbnail: ../../figures/inversion_recovery/outputs.webp
 ---
@@ -16,7 +16,7 @@ Config name
 BIDS suffix
 : `IRT1`
 Method family
-: Relaxometry
+: T1 Relaxometry
 Acquired volumes
 : 9
 Fit granularity

@@ -1,8 +1,8 @@
 ---
-title: Magnetization transfer ratio
-subtitle: Magnetization transfer · BIDS suffix MTR
+title: MT Ratio
+subtitle: Semi-quantitative MT · BIDS suffix MTR
 keywords:
-  - Magnetization transfer
+  - Semi-quantitative MT
   - MTR
 thumbnail: ../../figures/mt_ratio/outputs.webp
 ---
@@ -16,7 +16,7 @@ Config name
 BIDS suffix
 : `MTR`
 Method family
-: Magnetization transfer
+: Semi-quantitative MT
 Acquired volumes
 : 2
 Fit granularity

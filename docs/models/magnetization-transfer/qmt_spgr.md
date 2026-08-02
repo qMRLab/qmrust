@@ -1,8 +1,8 @@
 ---
 title: qMT-SPGR
-subtitle: Magnetization transfer · BIDS suffix QMTSPGR
+subtitle: Quantitative MT · BIDS suffix QMTSPGR
 keywords:
-  - Magnetization transfer
+  - Quantitative MT
   - QMTSPGR
 thumbnail: ../../figures/qmt_spgr/outputs.webp
 ---
@@ -16,7 +16,7 @@ Config name
 BIDS suffix
 : `QMTSPGR`
 Method family
-: Magnetization transfer
+: Quantitative MT
 Acquired volumes
 : 10
 Fit granularity

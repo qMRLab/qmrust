@@ -6,11 +6,68 @@
 
 Every model qmrust fits, grouped by method family. Each page documents what the model reads, what it produces, and how to run it with and without BIDS.
 
-## Magnetization transfer
+## T1 Relaxometry
 
 ::::{grid} 1 1 2 2
 :::{card}
-:header: Magnetization transfer ratio
+:header: Inversion Recovery
+:link: t1-relaxometry/inversion_recovery.md
+
+Fits the longitudinal relaxation time T1 from a series of inversion-recovery images acquired at different inversion times.
+
+`IRT1` · `T1map`
+:::
+:::{card}
+:header: Variable Flip Angle
+:link: t1-relaxometry/vfa_t1.md
+
+Fits the longitudinal relaxation time T1 from spoiled gradient-echo images acquired at two or more excitation flip angles and a single repetition time.
+
+`VFA` · `T1map`, `M0map`
+:::
+::::
+
+## T2 Relaxometry
+
+::::{grid} 1 1 2 2
+:::{card}
+:header: Monoexp T2
+:link: t2-relaxometry/mono_t2.md
+
+Fits the transverse relaxation time T2 from a multi-echo spin-echo series as a mono-exponential decay with a free amplitude.
+
+`MESE` · `T2map`, `M0map`
+:::
+::::
+
+## Field Mapping
+
+::::{grid} 1 1 2 2
+:::{card}
+:header: Actual Flip Angle B1+
+:link: field-mapping/b1_afi.md
+
+Maps the transmit (B1+) field from a single spoiled gradient-echo sequence that interleaves two excitation repetition times at one nominal flip angle.
+
+`TB1AFI` · `TB1map`
+:::
+:::{card}
+:header: Double Angle B1+
+:link: field-mapping/b1_dam.md
+
+Maps the transmit (B1+) field from two spoiled gradient-echo volumes acquired at flip angles alpha and twice alpha.
+
+`TB1DAM` · `TB1map`
+:::
+::::
+
+## Magnetization Transfer
+
+### Semi-quantitative MT
+
+::::{grid} 1 1 2 2
+:::{card}
+:header: MT Ratio
 :link: magnetization-transfer/mt_ratio.md
 
 Computes the magnetization transfer ratio from two images: one acquired with an off-resonance saturation pulse and one without.
@@ -18,13 +75,18 @@ Computes the magnetization transfer ratio from two images: one acquired with an 
 `MTR` · `MTRmap`
 :::
 :::{card}
-:header: MT saturation
+:header: MT Saturation
 :link: magnetization-transfer/mt_sat.md
 
 Derives the MT saturation parameter from three spoiled gradient-echo volumes — MT-weighted, PD-weighted and T1-weighted.
 
 `MTS` · `MTsat`, `T1map`, `MTRmap`
 :::
+::::
+
+### Quantitative MT
+
+::::{grid} 1 1 2 2
 :::{card}
 :header: qMT-SPGR
 :link: magnetization-transfer/qmt_spgr.md
@@ -32,34 +94,5 @@ Derives the MT saturation parameter from three spoiled gradient-echo volumes —
 Two-pool quantitative magnetization transfer from a spoiled gradient-echo sequence with off-resonance saturation sampled across a grid of saturation flip angles and frequency offsets.
 
 `QMTSPGR` · `Fmap`, `kRmap`, `R1Fmap`, `R1Rmap`, `T2Fmap`, `T2Rmap`
-:::
-::::
-
-## Relaxometry
-
-::::{grid} 1 1 2 2
-:::{card}
-:header: Mono-exponential T2
-:link: relaxometry/mono_t2.md
-
-Fits the transverse relaxation time T2 from a multi-echo spin-echo series as a mono-exponential decay with a free amplitude.
-
-`MESE` · `T2map`, `M0map`
-:::
-:::{card}
-:header: Inversion recovery T1
-:link: relaxometry/inversion_recovery.md
-
-Fits the longitudinal relaxation time T1 from a series of inversion-recovery images acquired at different inversion times.
-
-`IRT1` · `T1map`
-:::
-:::{card}
-:header: Variable flip angle T1
-:link: relaxometry/vfa_t1.md
-
-Fits the longitudinal relaxation time T1 from spoiled gradient-echo images acquired at two or more excitation flip angles and a single repetition time.
-
-`VFA` · `T1map`, `M0map`
 :::
 ::::

@@ -427,30 +427,50 @@ def render_gallery(models, prefix, heading_level=3):
     """
     marker = "#" * heading_level
     out = []
-    seen = []
-    for m in models:
-        if m["category"] not in [c for c, _ in seen]:
-            seen.append((m["category"], m["category_title"]))
-    for slug, title in seen:
-        group = [m for m in models if m["category"] == slug]
-        out += [f"{marker} {title}", "", "::::{grid} 1 1 2 2"]
-        for m in group:
-            out += [
-                ":::{card}",
-                f":header: {m['title']}",
-                f":link: {prefix}{slug}/{m['name']}.md",
-                "",
-                m["summary"].split(". ")[0] + ".",
-                "",
-                f"`{m['bids_suffix']}` · "
-                + ", ".join(
-                    f"`{o['bids_suffix']}`" for o in m["outputs"]
-                    if not o["diagnostic"]
-                ),
-                ":::",
-            ]
-        out += ["::::", ""]
+    # The taxonomy is two levels and its order is the registry's
+    # `Category::order`, so sorting by that and grouping consecutive runs
+    # rebuilds the tree without this file restating either the order or the
+    # membership. A family with no subgroups renders exactly as before.
+    ordered = sorted(models, key=lambda m: (m["category_order"], m["title"]))
+    families = []
+    for m in ordered:
+        if m["family"] not in families:
+            families.append(m["family"])
+    for family in families:
+        members = [m for m in ordered if m["family"] == family]
+        out += [f"{marker} {family}", ""]
+        subgroups = []
+        for m in members:
+            if m["subgroup"] not in subgroups:
+                subgroups.append(m["subgroup"])
+        for subgroup in subgroups:
+            group = [m for m in members if m["subgroup"] == subgroup]
+            if subgroup:
+                out += [f"{'#' * (heading_level + 1)} {subgroup}", ""]
+            out += ["::::{grid} 1 1 2 2"]
+            out += _cards(group, prefix)
+            out += ["::::", ""]
     return "\n".join(out).rstrip()
+
+
+def _cards(group, prefix):
+    """The card for each model in one group, linked by its own category slug."""
+    out = []
+    for m in group:
+        out += [
+            ":::{card}",
+            f":header: {m['title']}",
+            f":link: {prefix}{m['category']}/{m['name']}.md",
+            "",
+            m["summary"].split(". ")[0] + ".",
+            "",
+            f"`{m['bids_suffix']}` · "
+            + ", ".join(
+                f"`{o['bids_suffix']}`" for o in m["outputs"] if not o["diagnostic"]
+            ),
+            ":::",
+        ]
+    return out
 
 
 def render_gallery_index(models):
