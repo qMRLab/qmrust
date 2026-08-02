@@ -153,6 +153,11 @@ function fieldRow(path, widget) {
   // does not, because its name already is the quantity. Built as the same
   // `.info` button the panel headings use, which `wireTips` picks up by
   // delegation, so a row created after startup is covered without wiring.
+  //
+  // Ahead of the name rather than after it: a column of options then has its
+  // marks aligned down one edge, which reads as "these are the explainable
+  // ones" at a glance, and the label text is not pushed around by whether a
+  // mark follows it.
   const help = fieldHelp(path);
   if (help) {
     const info = document.createElement("button");
@@ -161,8 +166,7 @@ function fieldRow(path, widget) {
     info.setAttribute("aria-label", help);
     info.dataset.tip = help;
     info.innerHTML = icon("info", 12);
-    labelSpan.append(" ");
-    labelSpan.append(info);
+    labelSpan.prepend(info);
   }
   // The symbol and unit sit under the quantity rather than trailing it in
   // parentheses: the name is what a reader scans for, and a row that also

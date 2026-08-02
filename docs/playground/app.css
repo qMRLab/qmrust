@@ -148,18 +148,52 @@ code, pre, textarea, input, select { font-family: var(--font-mono); }
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; margin-left: 6px; padding: 0; flex: 0 0 auto;
   border: 0; border-radius: 50%; background: none;
-  color: var(--muted); line-height: 1; cursor: help;
+  color: var(--muted); line-height: 1; cursor: pointer;
   vertical-align: middle;
+  transition: color .15s ease, transform .15s ease, filter .15s ease;
 }
-.info:hover, .info:focus-visible { color: var(--accent); }
+/* The glyph is not a hit target of its own. Without this, moving from the icon
+   onto the button's own padding fires `pointerleave` *on the glyph*, which the
+   delegated handler reads as leaving the control: the tooltip flickers away
+   while the pointer is still on it. */
+.info > * { pointer-events: none; }
+/* Hover lights the mark up and grows it slightly, instead of swapping the
+   cursor to a help arrow. A cursor change says "something is here" only once
+   the pointer has already arrived, and says nothing about whether it worked. */
+.info:hover, .info:focus-visible {
+  color: var(--accent);
+  transform: scale(1.18);
+  /* Derived from the accent rather than `--glow`, which several themes set to
+     `transparent` as a deliberate "this theme does not bloom" — the mark still
+     has to light up in those. */
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 55%, transparent));
+}
 /* Our own tooltip, so it appears immediately — a native `title` cannot be
    shown without the browser's delay. Fixed-position and appended to the body,
    so no ancestor's overflow can clip it. */
 .tip {
   position: fixed; z-index: 100; max-width: 34ch; pointer-events: none;
-  background: color-mix(in srgb, var(--accent) 90%, transparent);
-  color: var(--on-accent); border-radius: 8px; padding: 7px 10px;
-  font: 500 11.5px/1.45 var(--font-ui); box-shadow: var(--shadow);
+  /* Frosted rather than opaque: the panel behind stays faintly readable, so
+     the tip reads as hovering over the form rather than punched into it. The
+     accent tint is kept dominant so `--on-accent` is still the text colour it
+     was measured against, whatever happens to be underneath. */
+  background: color-mix(in srgb, var(--accent) 88%, transparent);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  backdrop-filter: blur(10px) saturate(1.4);
+  border: 1px solid color-mix(in srgb, var(--on-accent) 22%, transparent);
+  color: var(--on-accent); border-radius: 9px; padding: 7px 10px;
+  font: 500 11.5px/1.45 var(--font-ui);
+  box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  animation: tip-in .13s ease-out;
+}
+@keyframes tip-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tip { animation: none; }
+  .info { transition: none; }
+  .info:hover, .info:focus-visible { transform: none; }
 }
 .tip[hidden] { display: none; }
 .section-h {
@@ -632,11 +666,14 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    reader's eye pairs "TI [s]" with the numbers beside it rather than with the
    name above it. */
 .field-labels { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.field-label { color: var(--ink-2); font: 12px var(--font-ui); }
+.field-label {
+  display: flex; align-items: center; gap: 5px;
+  color: var(--ink-2); font: 12px var(--font-ui);
+}
 /* The option hover sits with the name, not the value: it explains the choice,
    and a reader looking for one is reading labels. Dimmer than the panel
    headings' mark so a column of them does not read as a column of warnings. */
-.field-label .info { vertical-align: 0; opacity: 0.55; }
+.field-label .info { vertical-align: 0; opacity: 0.55; margin-left: 0; width: 14px; height: 14px; }
 .field-label .info:hover, .field-label .info:focus-visible { opacity: 1; }
 .field-meta { display: flex; align-items: center; gap: 5px; min-height: 14px; }
 .field-unit {
