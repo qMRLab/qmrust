@@ -483,7 +483,7 @@ function overrideControl() {
   slider.value = unlocked ? "100" : "0";
   slider.setAttribute(
     "aria-label",
-    unlocked ? "Slide to default back to the BIDS protocol" : "Slide to override the BIDS protocol",
+    unlocked ? "Slide to lock the protocol" : "Slide to edit the protocol",
   );
 
   const knob = document.createElement("span");
@@ -492,9 +492,7 @@ function overrideControl() {
 
   const label = document.createElement("span");
   label.className = "override-label";
-  label.textContent = unlocked
-    ? "Default back to BIDS Protocol"
-    : "Slide to Override BIDS Protocol";
+  label.textContent = unlocked ? "Slide to Lock Protocol" : "Slide to Edit Protocol";
 
   const setProgress = (v) => {
     // Travel drives the knob's position and fades the prompt, so a partial

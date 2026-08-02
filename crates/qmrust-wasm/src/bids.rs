@@ -183,7 +183,15 @@ pub fn resolve_bids(
                 .collect(),
             volume_ids_json: emit_volume_ids(&volume_ids)?,
             protocol_json: emit_protocol(&proto)?,
-            warnings: c.warnings.iter().map(|w| w.message.clone()).collect(),
+            // Grouping warnings and input-resolution warnings reach the reader
+            // through the same channel: both say the dataset did not hold
+            // something the recipe asked for.
+            warnings: c
+                .warnings
+                .iter()
+                .map(|w| w.message.clone())
+                .chain(paths.warnings.iter().cloned())
+                .collect(),
             files,
         });
     }

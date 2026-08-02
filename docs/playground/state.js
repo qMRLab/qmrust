@@ -83,6 +83,15 @@ export const app = {
   // Belongs to one grid, so a model load drops it.
   computedMask: null,
 
+  // The segmentation exactly as its method produced it, before any shrink or
+  // grow. The stepper always re-applies its net offset to this rather than to
+  // the last result: morphology does not undo itself (a shrink followed by a
+  // grow does not restore a lost thin structure), so compounding the passes
+  // would make the control's own history part of the answer.
+  segmentBase: null,
+  // Net voxels the stepper has grown (positive) or shrunk (negative) the mask by.
+  maskSteps: 0,
+
   // The selected model's full option surface from `effective_config`, or null
   // when wasm is unavailable or the recipe fails to deserialize — in which
   // case the form falls back to mirroring the recipe.

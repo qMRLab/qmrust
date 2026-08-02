@@ -13,6 +13,7 @@ import {
   dropSmallRegions,
   fillHoles,
   foregroundMask,
+  growMask,
   normalizeToWhiteMatter,
   placeReversed,
 } from "../../docs/playground/volume.js";
@@ -310,4 +311,83 @@ test("foregroundMask works on a single slice with nothing changed", () => {
   }
   assert.ok(mask.reduce((n, b) => n + b, 0) < 256 * 0.75);
   assert.equal(mask[0], 0);
+});
+
+// Shrink/grow on a segmented mask. The single-slice cases are the ones that
+// decide the implementation: four of the five example datasets are one slice
+// thick, and a 6-neighbour pass that counts the absent z direction would find
+// every voxel short of a neighbour and erase the mask on the first shrink.
+const at3 = ([nx, ny], x, y, z) => x + y * nx + z * nx * ny;
+
+test("growing a single voxel reaches its faces, not its corners", () => {
+  const d = [5, 5, 5];
+  const seed = new Uint8Array(125);
+  seed[at3(d, 2, 2, 2)] = 1;
+  const grown = growMask(seed, d, 1);
+  // Itself plus one neighbour across each of six faces.
+  assert.equal([...grown].reduce((a, b) => a + b, 0), 7);
+  assert.equal(grown[at3(d, 3, 2, 2)], 1);
+  // A diagonal is further than a voxel away, so it must stay out.
+  assert.equal(grown[at3(d, 3, 3, 2)], 0);
+});
+
+test("a single-slice mask grows in plane and not through the depth it lacks", () => {
+  const d = [5, 5, 1];
+  const seed = new Uint8Array(25);
+  seed[at3(d, 2, 2, 0)] = 1;
+  const grown = growMask(seed, d, 1);
+  // Four in-plane neighbours plus itself — never the six of a 3D pass.
+  assert.equal([...grown].reduce((a, b) => a + b, 0), 5);
+});
+
+test("shrinking a single-slice mask erodes its rim rather than erasing it", () => {
+  // The regression this guards: counting the absent z axis makes every voxel
+  // look like it is missing a neighbour, and one shrink empties the mask.
+  const d = [6, 6, 1];
+  const solid = new Uint8Array(36).fill(1);
+  const shrunk = growMask(solid, d, -1);
+  // Outside the volume counts as inside, so a mask running to the edge keeps
+  // its border: a full slice survives untouched.
+  assert.equal([...shrunk].reduce((a, b) => a + b, 0), 36);
+
+  // An interior blob does lose its rim: a 4x4 square becomes 2x2.
+  const blob = new Uint8Array(36);
+  for (let x = 1; x <= 4; x++) for (let y = 1; y <= 4; y++) blob[at3(d, x, y, 0)] = 1;
+  assert.equal([...growMask(blob, d, -1)].reduce((a, b) => a + b, 0), 4);
+});
+
+test("zero steps is a copy, and the caller's buffer is never mutated", () => {
+  const d = [4, 4, 1];
+  const seed = new Uint8Array(16);
+  seed[at3(d, 1, 1, 0)] = 1;
+  const same = growMask(seed, d, 0);
+  assert.deepEqual([...same], [...seed]);
+  growMask(seed, d, 2);
+  assert.equal([...seed].reduce((a, b) => a + b, 0), 1, "input was mutated");
+});
+
+test("the fit's own layout grows the same mask as storage order", () => {
+  // The stepper applies this to `app.computedMask`, which is indexed
+  // (x*ny + y)*nz + z rather than this module's x + y*nx + z*nx*ny. Same
+  // geometry, different arithmetic: the two must agree voxel for voxel.
+  const d = [4, 3, 2];
+  const [nx, ny, nz] = d;
+  const storage = new Uint8Array(nx * ny * nz);
+  const fit = new Uint8Array(nx * ny * nz);
+  storage[at3(d, 1, 1, 0)] = 1;
+  fit[(1 * ny + 1) * nz + 0] = 1;
+
+  const grownStorage = growMask(storage, d, 1);
+  const grownFit = growMask(fit, d, 1, [ny * nz, nz, 1]);
+  for (let x = 0; x < nx; x++) {
+    for (let y = 0; y < ny; y++) {
+      for (let z = 0; z < nz; z++) {
+        assert.equal(
+          grownFit[(x * ny + y) * nz + z],
+          grownStorage[at3(d, x, y, z)],
+          `disagreement at ${x},${y},${z}`,
+        );
+      }
+    }
+  }
 });

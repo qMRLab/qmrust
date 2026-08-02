@@ -257,6 +257,69 @@ export function blurBox(values, dims, radius = 1) {
   return current;
 }
 
+/**
+ * Grow or shrink a binary mask by `steps` voxels — positive dilates, negative
+ * erodes, zero returns a copy.
+ *
+ * One iteration is a 6-neighbour pass: dilation adds any background voxel
+ * touching the mask across a face, erosion drops any mask voxel that does not
+ * have all its neighbours inside. Faces rather than corners, because a
+ * diagonal step is longer than a voxel and would grow the mask faster along
+ * the diagonals than across them.
+ *
+ * An axis of extent 1 is skipped, so a single-slice mask is grown in-plane and
+ * not through a depth it does not have. Eroding a 2D mask through a nonexistent
+ * z would find every voxel missing a neighbour and erase the whole thing —
+ * which is most of the example datasets.
+ *
+ * Erosion treats outside the volume as inside, so a mask running to the edge of
+ * the field of view is not eaten away from the border it never really had.
+ *
+ * `strides` says how the caller indexes its own buffer; the default is this
+ * module's storage order (`x + y*nx + z*nx*ny`), and the fit's own layout
+ * (`(x*ny + y)*nz + z`) passes `[ny*nz, nz, 1]`.
+ */
+export function growMask(mask, dims, steps, strides = [1, dims[0], dims[0] * dims[1]]) {
+  let current = Uint8Array.from(mask, (v) => (v ? 1 : 0));
+  const grow = steps > 0;
+  for (let pass = 0; pass < Math.abs(steps); pass++) {
+    const out = new Uint8Array(current.length);
+    for (let z = 0; z < dims[2]; z++) {
+      for (let y = 0; y < dims[1]; y++) {
+        for (let x = 0; x < dims[0]; x++) {
+          const at = x * strides[0] + y * strides[1] + z * strides[2];
+          const here = current[at] === 1;
+          // Dilation only ever changes background voxels, erosion only mask
+          // voxels; everything else keeps the value it already has.
+          if (here === grow) {
+            out[at] = here ? 1 : 0;
+            continue;
+          }
+          // A candidate flips when it touches a voxel of the value we are
+          // spreading: for dilation a neighbour inside the mask, for erosion a
+          // neighbour outside it.
+          let flips = false;
+          const index = [x, y, z];
+          for (let axis = 0; axis < 3 && !flips; axis++) {
+            if (dims[axis] < 2) continue;
+            for (const d of [-1, 1]) {
+              const j = index[axis] + d;
+              // Off the edge: nothing to grow in from, and nothing missing.
+              if (j < 0 || j >= dims[axis]) continue;
+              if ((current[at + d * strides[axis]] === 1) !== grow) continue;
+              flips = true;
+              break;
+            }
+          }
+          out[at] = flips === grow ? 1 : 0;
+        }
+      }
+    }
+    current = out;
+  }
+  return current;
+}
+
 // Whether a voxel is on a face of the volume. An axis of extent 1 has no faces to
 // be on: a single slice is not "surrounded by" the outside, or every voxel in it
 // would be, and nothing could ever be enclosed.
