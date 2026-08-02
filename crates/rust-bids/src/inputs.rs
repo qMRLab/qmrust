@@ -31,6 +31,14 @@ impl MaskSpec {
     /// Parse a recipe's `mask:` value, normalizing its entity keys (e.g. `desc`
     /// → `description`) to the form the file table stores them in. `None` when
     /// the recipe declares no `mask:` — no masking is then applied.
+    ///
+    /// An entity left blank is dropped rather than matched. A recipe is also a
+    /// template, and a blank field is the honest way to offer a knob for a
+    /// dataset whose mask nobody has named yet: writing a value there that the
+    /// example data does not have would state a fact about the dataset that is
+    /// not true. Blank therefore means "unconstrained" — with every entity
+    /// blank, `mask:` selects whatever single mask the dataset holds, and
+    /// nothing when it holds none.
     pub fn from_recipe(raw: &serde_yaml::Value, vocab: &Vocabulary) -> Result<Option<Self>> {
         let Some(v) = raw.get("mask") else {
             return Ok(None);
@@ -42,6 +50,7 @@ impl MaskSpec {
             entities: spec
                 .entities
                 .into_iter()
+                .filter(|(_, v)| !v.trim().is_empty())
                 .map(|(k, v)| (vocab.normalize_entity_key(&k), v))
                 .collect(),
         }))
@@ -56,6 +65,10 @@ pub struct InputPaths {
     /// on its own default.
     pub aux: Vec<(String, Option<String>)>,
     pub mask: Option<String>,
+    /// What the caller should be told about inputs it asked for and did not
+    /// get. Absence is legitimate here — an optional aux and an unmatched mask
+    /// both leave the fit runnable — so these are reported, never fatal.
+    pub warnings: Vec<String>,
 }
 
 impl InputPaths {
@@ -143,16 +156,56 @@ pub fn resolve_input_paths(
         }
     }
 
+    let mut warnings = Vec::new();
     let mask = match mask_spec {
         Some(spec) => {
             let mut extra: Vec<(&str, &str)> = vec![("suffix", spec.suffix.as_str())];
             extra.extend(spec.entities.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-            find_row(table, identity, &extra)?.map(|row| row.path.clone())
+            let found = find_row(table, identity, &extra)?.map(|row| row.path.clone());
+            if found.is_none() {
+                // Declaring a mask and getting none is not an error — the fit
+                // runs over the whole image — but it must not pass in silence.
+                // The recipe is echoed verbatim into the provenance
+                // `Parameters`, so an unmatched `mask:` block reads there
+                // exactly like one that resolved, and only the `Sources` list
+                // (which omits it) reveals that nothing was applied.
+                warnings.push(match describe_mask(spec) {
+                    Some(what) => format!(
+                        "the recipe selects a mask ({what}) that this dataset has no match \
+                         for; fitting the whole image unmasked"
+                    ),
+                    None => "the recipe asks for a mask, but this dataset holds none; \
+                             fitting the whole image unmasked"
+                        .to_string(),
+                });
+            }
+            found
         }
         None => None,
     };
 
-    Ok(InputPaths { aux, mask })
+    Ok(InputPaths {
+        aux,
+        mask,
+        warnings,
+    })
+}
+
+/// A `mask:` block as a reader wrote it — `desc-brain mask` — for naming the
+/// thing that was asked for in a message about not finding it. `None` when the
+/// block names nothing in particular, which has no useful description and reads
+/// as an empty parenthesis if forced into one.
+fn describe_mask(spec: &MaskSpec) -> Option<String> {
+    if spec.entities.is_empty() {
+        return None;
+    }
+    let mut parts: Vec<String> = spec
+        .entities
+        .iter()
+        .map(|(k, v)| format!("{}-{}", crate::entities::short_key(k), v))
+        .collect();
+    parts.push(spec.suffix.clone());
+    Some(parts.join(" "))
 }
 
 #[cfg(test)]
@@ -251,5 +304,120 @@ mod tests {
 
         // Suffix alone is too loose — both masks match, so it errors.
         assert!(find_row(&rows, &identity, &[("suffix", "mask")]).is_err());
+    }
+
+    /// A recipe that selects a mask the dataset does not hold must say so. The
+    /// fit is still valid — it simply covers the whole image — but the recipe
+    /// is echoed verbatim into the provenance `Parameters`, where an unmatched
+    /// `mask:` block is indistinguishable from one that resolved. Only the
+    /// `Sources` list, by omission, records that nothing was applied, so
+    /// silence here reads as a masked fit to anyone who does not cross-check.
+    #[test]
+    fn a_mask_the_dataset_does_not_hold_is_reported_not_silently_skipped() {
+        use crate::vocab::Vocabulary;
+        use std::collections::BTreeMap;
+
+        struct NoAuxModel;
+        impl Model for NoAuxModel {
+            fn param_names(&self) -> Vec<&'static str> {
+                vec!["x"]
+            }
+            fn output_names(&self) -> Vec<String> {
+                vec!["x".into()]
+            }
+            fn param_bounds(&self) -> Vec<(f64, f64)> {
+                vec![(0.0, 1.0)]
+            }
+            fn fixed_mask(&self) -> Vec<bool> {
+                vec![false]
+            }
+            fn required_inputs(&self) -> Vec<qmrust_core::core::model::InputSpec> {
+                vec![]
+            }
+            fn measurement(&self) -> qmrust_core::core::model::MeasurementKind {
+                qmrust_core::core::model::MeasurementKind::Series { rows: vec![] }
+            }
+            fn forward(
+                &self,
+                _p: &[f64],
+                _a: &qmrust_core::core::model::Aux,
+            ) -> qmrust_core::core::model::Measurement {
+                qmrust_core::core::model::Measurement::Series(vec![])
+            }
+            fn fit(
+                &self,
+                _m: &qmrust_core::core::model::Measurement,
+                _a: &qmrust_core::core::model::Aux,
+            ) -> Vec<f64> {
+                vec![0.0]
+            }
+            fn n_volumes(&self) -> usize {
+                0
+            }
+            fn bids_volume(&self, _i: usize) -> qmrust_core::core::model::BidsVolume {
+                unreachable!()
+            }
+        }
+
+        let vocab = Vocabulary::bids();
+        let raw: serde_yaml::Value = serde_yaml::from_str("mask:\n  desc: brain\n").unwrap();
+        let spec = MaskSpec::from_recipe(&raw, &vocab).unwrap().unwrap();
+        let identity = BTreeMap::from([("subject".to_string(), "01".to_string())]);
+
+        // A dataset with no mask at all — the b1_dam/b1_afi example case.
+        let paths = resolve_input_paths(&[], &NoAuxModel, &identity, Some(&spec)).unwrap();
+        assert!(paths.mask.is_none());
+        assert_eq!(paths.warnings.len(), 1, "{:?}", paths.warnings);
+        let msg = &paths.warnings[0];
+        assert!(
+            msg.contains("desc-brain mask"),
+            "warning should name what was asked for: {msg}"
+        );
+
+        // Declaring no mask is not a warning: nothing was asked for.
+        let quiet = resolve_input_paths(&[], &NoAuxModel, &identity, None).unwrap();
+        assert!(quiet.warnings.is_empty());
+    }
+
+    /// A blank entity is a knob nobody has set, not a demand for the empty
+    /// string. Recipes for datasets that ship no mask leave `desc` empty rather
+    /// than naming one the data does not have, so blank has to mean
+    /// "unconstrained" — otherwise those recipes would match nothing even on a
+    /// dataset that does have a mask.
+    #[test]
+    fn a_blank_mask_entity_is_unconstrained_not_a_match_on_the_empty_string() {
+        use crate::vocab::Vocabulary;
+        use std::collections::BTreeMap;
+
+        let vocab = Vocabulary::bids();
+        let raw: serde_yaml::Value = serde_yaml::from_str("mask:\n  desc: \"\"\n").unwrap();
+        let spec = MaskSpec::from_recipe(&raw, &vocab).unwrap().unwrap();
+        assert_eq!(spec.suffix, "mask");
+        assert!(
+            spec.entities.is_empty(),
+            "blank entity was kept: {:?}",
+            spec.entities
+        );
+
+        // With nothing constrained, the dataset's one mask is the one selected.
+        let row = BidsRow {
+            path: "derivatives/preprocessed/sub-01/anat/sub-01_desc-brain_mask.nii.gz".into(),
+            derivatives: Some("preprocessed".into()),
+            datatype: Some("anat".into()),
+            suffix: "mask".into(),
+            extension: ".nii.gz".into(),
+            entities: BTreeMap::from([
+                ("subject".to_string(), "01".to_string()),
+                ("description".to_string(), "brain".to_string()),
+            ]),
+            sidecar_path: None,
+        };
+        let identity = BTreeMap::from([("subject".to_string(), "01".to_string())]);
+        let rows = [row];
+        let hit = find_row(&rows, &identity, &[("suffix", "mask")]).unwrap();
+        assert!(
+            hit.is_some(),
+            "a blank spec should accept the only mask present"
+        );
     }
 }

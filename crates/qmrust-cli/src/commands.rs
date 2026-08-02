@@ -850,6 +850,11 @@ fn load_aux_and_mask(
     bids_dir: &Path,
 ) -> Result<(AuxMaps, Option<Array3<bool>>, Vec<String>)> {
     let paths = rust_bids::resolve_input_paths(table, model, identity, mask_spec)?;
+    // An input the recipe asked for and the dataset does not hold: the fit
+    // still runs, so this is said out loud rather than raised.
+    for w in &paths.warnings {
+        eprintln!("warning: {w}");
+    }
     let mut maps: Vec<(String, Option<Array3<f64>>)> = Vec::new();
     for (name, path) in &paths.aux {
         let map = match path {
