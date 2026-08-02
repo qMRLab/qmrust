@@ -22,7 +22,7 @@ import {
   showInputsTab,
   showLoading,
 } from "./inputs.js";
-import { clearVolumes, sizeViewers, syncMapViewControls } from "./viewers.js";
+import { clearVolumes, linkViewers, sizeViewers, syncMapViewControls } from "./viewers.js";
 import { resetDrawing } from "./draw.js";
 import { clearComputedMask, syncSegmentButton } from "./segment.js";
 import { clearLabelNames } from "./measure.js";
@@ -211,6 +211,7 @@ export async function loadModel(name) {
   clearLabelNames();
   clearVolumes(nvIn);
   clearVolumes(nvOut);
+  linkViewers();
   app.outputVolumes = [];
   app.shownOutput = null;
   app.lastMaps = null;
