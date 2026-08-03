@@ -10,13 +10,13 @@ b1_correction_factor: 0.4
 export_mtr: true
 
 # Ground truth: white matter at 3 T. A is the apparent signal amplitude; MTSAT
-# is a saturation fraction, so it is dimensionless and a few percent.
+# is in percent, near 5% in white matter and 2% in grey.
 sim:
-  params: { A: 1000.0, T1: 1.0, MTSAT: 0.03 }
+  params: { A: 1000.0, T1: 1.0, MTSAT: 3.0 }
   noise: { type: rician, snr: 100.0 }
   seed: 0
   trials: 100
-  sweep: { param: MTSAT, start: 0.01, stop: 0.08, steps: 10 }
+  sweep: { param: MTSAT, start: 1.0, stop: 8.0, steps: 10 }
   distributions:
     T1: { mean: 1.0, std: 0.15 }
-    MTSAT: { mean: 0.03, std: 0.005 }
+    MTSAT: { mean: 3.0, std: 0.5 }
