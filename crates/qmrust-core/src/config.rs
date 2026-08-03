@@ -78,14 +78,14 @@ pub use crate::models::qmt_spgr::config::QmtSpgrConfig;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NoiseConfig {
-    /// gaussian | rician | none
+    /// One of the names `sim::noise::NoiseKind` accepts.
     #[serde(rename = "type", default = "def_noise_kind")]
     pub kind: String,
     #[serde(default = "def_snr")]
     pub snr: f64,
 }
 fn def_noise_kind() -> String {
-    "none".to_string()
+    crate::sim::noise::NoiseKind::None.name().to_string()
 }
 fn def_snr() -> f64 {
     100.0
@@ -148,14 +148,14 @@ impl SimConfig {
     pub fn validate(&self) -> Result<()> {
         // NoiseKind is the one home for these names; restating them here is how
         // the two lists would drift.
-        if crate::sim::noise::NoiseKind::from_str(&self.noise.kind).is_err() {
-            bail!(
+        let kind = crate::sim::noise::NoiseKind::from_str(&self.noise.kind).map_err(|_| {
+            anyhow::anyhow!(
                 "sim.noise.type must be one of {}, got '{}'",
                 crate::sim::noise::noise_kind_names().join("|"),
                 self.noise.kind
-            );
-        }
-        if self.noise.kind != "none" && self.noise.snr <= 0.0 {
+            )
+        })?;
+        if kind != crate::sim::noise::NoiseKind::None && self.noise.snr <= 0.0 {
             bail!("sim.noise.snr must be > 0 when noise is enabled");
         }
         if self.trials == 0 {
