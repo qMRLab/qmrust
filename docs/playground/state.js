@@ -114,15 +114,15 @@ export const app = {
   // `editor.text`; these are the two parked copies.
   dataEditorText: "",
   simEditorText: "",
-  // Which simulation a Simulate run performs: one of the four modes the core
-  // implements.
-  simMode: "single-voxel",
-  // The last sim report, as the core's own JSON. Null before the first run and
-  // whenever the model changes.
-  simReport: null,
   // The noise kinds the payload index declares (e.g. none/gaussian/rician),
   // for the `sim.noise.type` dropdown. One list, read from the index alone.
   noiseKinds: [],
+
+  // The loaded model's own parameter names (its `param_names()`, from the
+  // bundle payload). A recipe key that matches one of these verbatim is a
+  // symbol the model itself defines, not an ordinary word, so the form must
+  // print it exactly rather than title-casing it into a different symbol.
+  modelParams: [],
 };
 
 // A misspelled field must not silently become a new one, leaving the real field

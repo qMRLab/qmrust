@@ -131,12 +131,27 @@ fn clamp_to_bounds(val: f64, bound: (f64, f64)) -> f64 {
     val.max(lo).min(hi)
 }
 
-pub fn run_signal(cfg: &Config, raw: &serde_yaml::Value) -> Result<SignalReport> {
+/// Resolve the sim block and the model it configures, enforcing every
+/// precondition a simulation depends on: `SimConfig::validate` (noise, trial
+/// count) and the model's own sim-input requirements
+/// (`model::validate_sim_inputs`). Every `run_*` entry point calls this, so no
+/// caller — CLI, wasm, or test — can reach a simulation with an invalid config.
+fn resolve_sim<'a>(
+    cfg: &'a Config,
+    raw: &serde_yaml::Value,
+) -> Result<(&'a crate::config::SimConfig, Box<dyn Model>)> {
     let sim = cfg
         .sim
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no sim block"))?;
+    sim.validate()?;
     let model = build_model(cfg, raw)?;
+    validate_sim_inputs(model.as_ref(), sim)?;
+    Ok((sim, model))
+}
+
+pub fn run_signal(cfg: &Config, raw: &serde_yaml::Value) -> Result<SignalReport> {
+    let (sim, model) = resolve_sim(cfg, raw)?;
     let aux = sim_aux(sim);
     let truth = param_vector(model.as_ref(), sim)?;
     let meas = model.forward(&truth, &aux);
@@ -157,11 +172,7 @@ pub fn run_signal(cfg: &Config, raw: &serde_yaml::Value) -> Result<SignalReport>
 }
 
 pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleVoxelReport> {
-    let sim = cfg
-        .sim
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no sim block"))?;
-    let model = build_model(cfg, raw)?;
+    let (sim, model) = resolve_sim(cfg, raw)?;
     let aux = sim_aux(sim);
     let truth = param_vector(model.as_ref(), sim)?;
     let clean_meas = model.forward(&truth, &aux);
@@ -204,15 +215,11 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
 }
 
 pub fn run_sensitivity(cfg: &Config, raw: &serde_yaml::Value) -> Result<SensitivityReport> {
-    let sim = cfg
-        .sim
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no sim block"))?;
+    let (sim, model) = resolve_sim(cfg, raw)?;
     let sweep = sim
         .sweep
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("sensitivity requires sim.sweep"))?;
-    let model = build_model(cfg, raw)?;
     let aux = sim_aux(sim);
     let base = param_vector(model.as_ref(), sim)?;
     let names = model.param_names();
@@ -268,15 +275,11 @@ pub fn run_sensitivity(cfg: &Config, raw: &serde_yaml::Value) -> Result<Sensitiv
 }
 
 pub fn run_montecarlo(cfg: &Config, raw: &serde_yaml::Value) -> Result<MonteCarloReport> {
-    let sim = cfg
-        .sim
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no sim block"))?;
+    let (sim, model) = resolve_sim(cfg, raw)?;
     let dists = sim
         .distributions
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("montecarlo requires sim.distributions"))?;
-    let model = build_model(cfg, raw)?;
     let aux = sim_aux(sim);
     let base = param_vector(model.as_ref(), sim)?;
     let names = model.param_names();
@@ -368,12 +371,9 @@ pub fn run_sim(mode: &str, config: PathBuf, output: PathBuf, plot: Option<PathBu
     let contents = std::fs::read_to_string(&config)
         .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", config, e))?;
     let (cfg, raw) = crate::config::parse_config(&contents)?;
-    let sim = cfg
-        .sim
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("config has no 'sim:' block (required for sim)"))?;
-    sim.validate()?;
-    validate_sim_inputs(build_model(&cfg, &raw)?.as_ref(), sim)?;
+    if cfg.sim.is_none() {
+        bail!("config has no 'sim:' block (required for sim)");
+    }
 
     match mode {
         "signal" => {
@@ -498,6 +498,24 @@ sim:
         let r = run_single_voxel(&cfg, &raw).unwrap();
         let f = r.stats.iter().find(|s| s.name == "F").unwrap();
         assert!((f.mean - 0.15).abs() < 0.03, "F mean: {}", f.mean);
+    }
+
+    #[test]
+    fn single_voxel_rejects_zero_trials() {
+        let (cfg, raw) = qmt_cfg("  noise: { type: none }\n  trials: 0\n");
+        assert!(
+            run_single_voxel(&cfg, &raw).is_err(),
+            "zero trials must be rejected before the trial loop, not panic on an empty result",
+        );
+    }
+
+    #[test]
+    fn single_voxel_rejects_zero_snr() {
+        let (cfg, raw) = qmt_cfg("  noise: { type: gaussian, snr: 0.0 }\n  trials: 1\n");
+        assert!(
+            run_single_voxel(&cfg, &raw).is_err(),
+            "an SNR of zero drives sigma to infinity, which must be rejected rather than panic",
+        );
     }
 
     #[test]

@@ -224,6 +224,7 @@ export async function loadModel(name) {
   $("curve-note").textContent = "";
   clearCurve();
   app.enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
+  app.modelParams = meta.params ?? [];
   seedSimRecipe(meta);
   app.wheelAccum = 0;
   app.dataset = null;

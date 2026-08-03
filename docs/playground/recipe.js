@@ -147,7 +147,7 @@ function fieldRow(path, widget) {
   labelWrap.className = "field-labels";
   const labelSpan = document.createElement("span");
   labelSpan.className = "field-label";
-  labelSpan.textContent = fieldLabel(path);
+  labelSpan.textContent = fieldLabel(path, app.modelParams);
   labelWrap.append(labelSpan);
   // An option gets a hover saying what choosing it costs; an acquisition field
   // does not, because its name already is the quantity. Built as the same
@@ -172,7 +172,7 @@ function fieldRow(path, widget) {
   // parentheses: the name is what a reader scans for, and a row that also
   // carries the BIDS mark was running to three pieces on one line. The second
   // line is where anything *about* the value goes, the mark included.
-  const unit = fieldUnit(path);
+  const unit = fieldUnit(path, app.modelParams);
   if (unit) {
     const meta = document.createElement("span");
     meta.className = "field-meta";
@@ -456,6 +456,16 @@ function restoreFocus(container, snapshot) {
   }
 }
 
+// A resolved BIDS protocol locks the acquisition fields it supplies, so a
+// fit cannot state a value the sidecars already state. Simulate mode has no
+// dataset to contradict — the sim recipe's protocol fields are the ground
+// truth being simulated, not a claim about acquired volumes — so the lock
+// never applies there. The single test both the read-only form fields and
+// the fit-arming guard must share, so they cannot drift apart.
+function protocolLockApplies() {
+  return app.pageMode !== "sim";
+}
+
 function renderForm() {
   showConfigError(app.surface?.error ?? surfaceThrow);
   const container = $("form-fields");
@@ -469,7 +479,7 @@ function renderForm() {
   const surface = app.surface ? yamlLoad(app.surface.yaml) : editor.obj;
   const rows = mergeSurface(surface, editor.obj, {
     protocolKeys: app.surface?.protocol_keys ?? [],
-    readOnly: app.protocolResolved && !app.overrideProtocol,
+    readOnly: protocolLockApplies() && app.protocolResolved && !app.overrideProtocol,
   });
 
   // Every render rebuilds the whole subtree from the merged rows — the only
@@ -486,7 +496,7 @@ function renderForm() {
   buildRows(container, rows);
   // Only offered when there is something to unlock: a resolved protocol, and
   // at least one field it supplies.
-  if (app.protocolResolved && rows.some((r) => r.isProtocol)) {
+  if (protocolLockApplies() && app.protocolResolved && rows.some((r) => r.isProtocol)) {
     container.append(overrideControl());
   }
   restoreFocus(container, focus);
@@ -517,9 +527,7 @@ function arrowIcon(pointsLeft) {
 export function syncFitArmed() {
   const fit = $("fit");
   if (!fit) return;
-  // A simulation reads no dataset, so a disarmed protocol cannot contradict
-  // one: the rule below is about fitting acquired volumes only.
-  const blocked = app.pageMode !== "sim" && Boolean(app.overrideProtocol);
+  const blocked = protocolLockApplies() && Boolean(app.overrideProtocol);
   fit.disabled = blocked;
   fit.title = blocked
     ? "Arm the protocol inputs to fit: edited values cannot be fitted against a BIDS dataset"

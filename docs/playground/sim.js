@@ -4,7 +4,7 @@
 // own, and it works even when a dataset failed to load.
 import { $, hideProgress, setProgress, showProgress, status } from "./dom.js";
 import { app, editor } from "./state.js";
-import { setEditorText } from "./recipe.js";
+import { setEditorText, syncFitArmed } from "./recipe.js";
 import {
   SIM_MODES,
   recipeForMode,
@@ -36,7 +36,6 @@ export function seedSimRecipe(meta) {
   // mode's park from writing the previous model's text over the seed below.
   if (!canSim && isSimMode()) setPageMode("data");
   app.simEditorText = meta.config_sim ?? "";
-  app.simReport = null;
   renderSimReport(null);
   if (canSim) {
     app.enumFields.set("sim.sweep.param", meta.params);
@@ -75,6 +74,7 @@ function setPageMode(mode) {
     recipeForMode(next, { dataText: app.dataEditorText, simText: app.simEditorText }),
   );
   if (next !== "sim") renderSimReport(null);
+  syncFitArmed();
   status(next === "sim" ? "Ready to simulate" : "Ready", "ok");
 }
 
@@ -83,7 +83,7 @@ export function wireSimControls() {
   $("page-data").onclick = flip;
   $("page-sim").onclick = flip;
   buildModeTabs();
-  setSimMode(app.simMode);
+  setSimMode(simMode);
 }
 
 // One worker, created on first use. A cancel terminates it, since a wasm call
@@ -135,7 +135,7 @@ export async function runSim() {
   }
   const id = ++pending;
   const yaml = editor.text;
-  const mode = app.simMode;
+  const mode = simMode;
   status(`Simulating ${mode}…`, "busy");
   // No progress is available inside one wasm call, so the bar runs full with
   // its stripes moving: a busy indicator rather than a false measurement.
@@ -164,20 +164,22 @@ export async function runSim() {
     showNotice("triangle-alert", "Simulation failed", report.error);
     return;
   }
-  app.simReport = report.report;
   renderSimReport(report.report);
   status(`Simulated in ${((performance.now() - t0) / 1000).toFixed(1)} s`, "ok");
 }
 
+// Which simulation a run performs: one of the four modes the core implements.
+// Touched only by this module, so it stays a local rather than shared state.
+let simMode = "single-voxel";
+
 function setSimMode(id) {
-  app.simMode = id;
+  simMode = id;
   for (const b of $("sim-modes").querySelectorAll("button")) {
     const on = b.dataset.mode === id;
     b.classList.toggle("active", on);
     b.setAttribute("aria-selected", String(on));
   }
   // A report answers one mode's question; it must not be read as another's.
-  app.simReport = null;
   renderSimReport(null);
 }
 
@@ -321,7 +323,7 @@ function montecarloOption(p, boxes) {
       gridIndex: i,
       type: "value",
       scale: true,
-      name: b.name,
+      name: `${b.name} error`,
       nameTextStyle: { ...axisText, align: "left" },
       axisLine: { lineStyle: { color: p.line } },
       axisLabel: axisText,
@@ -414,7 +416,7 @@ function drawSim(report) {
     );
     $("sim-note").textContent =
       `The first of ${report.trials} noisy trials, against the truth it was `
-      + "generated from and the curve fitted back from it. The table reports every trial.";
+      + `generated from and the curve fitted back from it. The table summarises all ${report.trials} trials.`;
     return;
   }
   if (report.mode === "sensitivity") {

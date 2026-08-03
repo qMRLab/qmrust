@@ -439,12 +439,9 @@ fn every_model_simulates_from_its_declared_sim_recipe() {
             .sim
             .as_ref()
             .unwrap_or_else(|| panic!("{name}: {path} has no sim block"));
-        sim.validate()
-            .unwrap_or_else(|e| panic!("{name}: {path} sim block is invalid: {e:#}"));
+
         let model = (entry.build)(&raw, &Protocol::default())
             .unwrap_or_else(|e| panic!("{name}: {path} does not build: {e:#}"));
-        qmrust_core::sim::model::validate_sim_inputs(model.as_ref(), sim)
-            .unwrap_or_else(|e| panic!("{name}: {path} is missing a sim input: {e:#}"));
 
         // signal: one value per volume the model consumes.
         let signal = qmrust_core::sim::run_signal(&cfg, &raw)

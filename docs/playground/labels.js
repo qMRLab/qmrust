@@ -136,27 +136,39 @@ function titleCase(key) {
     .join(" ");
 }
 
-/** The `[quantity, symbol]` pair for a field, or a title-cased fallback. */
-function entry(path) {
+/**
+ * The `[quantity, symbol]` pair for a field, or a title-cased fallback.
+ *
+ * `paramNames` is the loaded model's own parameter list (`param_names()`): a
+ * key that matches one of them verbatim is a symbol, not a word, so it must
+ * print exactly as the model spells it. `a` and `A`, or `kr`, are meaningless
+ * once title-cased, and two models can give the same-looking key different
+ * casing for different quantities (`mt_sat`'s `A` is not `inversion_recovery`'s
+ * `a`).
+ */
+function entry(path, paramNames = []) {
   const dotted = path.join(".");
   const key = path.at(-1) ?? "";
+  if (paramNames.includes(key)) return [key, BY_PATH.get(dotted)?.[1] ?? BY_KEY.get(key)?.[1] ?? null];
   return BY_PATH.get(dotted) ?? BY_KEY.get(key) ?? [titleCase(key), null];
 }
 
 /**
  * The quantity a config field names, given its dotted path segments.
- * `["mtw", "flip_angle"]` → `"Flip Angle"`.
+ * `["mtw", "flip_angle"]` → `"Flip Angle"`. `paramNames` is the loaded model's
+ * own parameter list, so a leaf that names one of them prints as that exact
+ * symbol.
  */
-export function fieldLabel(path) {
-  return entry(path)[0];
+export function fieldLabel(path, paramNames) {
+  return entry(path, paramNames)[0];
 }
 
 /**
  * Its symbol and unit as a methods section would write them, or `null` for an
  * option with no physical dimension. `["inversion_times"]` → `"TI (s)"`.
  */
-export function fieldUnit(path) {
-  return entry(path)[1];
+export function fieldUnit(path, paramNames) {
+  return entry(path, paramNames)[1];
 }
 
 /**
