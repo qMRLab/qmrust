@@ -70,7 +70,7 @@ pub struct Symbol {
 pub struct RecipePaths {
     pub bids: String,
     pub non_bids: String,
-    pub sim: Option<String>,
+    pub sim: String,
 }
 
 /// A fit parameter. Bounds are `None` when the model reports a non-finite
@@ -287,7 +287,7 @@ fn card(entry: &ModelEntry, repo_root: &Path) -> Result<ModelCard> {
         recipes: RecipePaths {
             bids: doc.recipes.bids.to_string(),
             non_bids: doc.recipes.non_bids.to_string(),
-            sim: doc.recipes.sim.map(|s| s.to_string()),
+            sim: doc.recipes.sim.to_string(),
         },
         params,
         outputs,
@@ -354,10 +354,11 @@ mod tests {
         // silent empty page.
         let root = repo_root();
         for e in qmrust_core::registry::all() {
-            for path in [e.doc.recipes.bids, e.doc.recipes.non_bids]
-                .into_iter()
-                .chain(e.doc.recipes.sim)
-            {
+            for path in [
+                e.doc.recipes.bids,
+                e.doc.recipes.non_bids,
+                e.doc.recipes.sim,
+            ] {
                 assert!(
                     root.join(path).exists(),
                     "{}: declared recipe '{}' does not exist",

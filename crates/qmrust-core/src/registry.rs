@@ -110,8 +110,10 @@ pub struct Recipes {
     /// acquisition, so it is also what a model is *described* from when
     /// interrogating its measurement axis.
     pub non_bids: &'static str,
-    /// Config for `qmrust sim`, when the model ships one.
-    pub sim: Option<&'static str>,
+    /// Simulation recipe: the non-BIDS acquisition plus a `sim:` block naming
+    /// ground-truth parameters. Every model implements a forward signal, so
+    /// every model has one.
+    pub sim: &'static str,
 }
 
 /// Documentation metadata: the facts about a model that code cannot introspect.
@@ -196,7 +198,7 @@ pub fn all() -> &'static [ModelEntry] {
                 recipes: Recipes {
                     bids: "recipes/bids/b1_afi_config.yaml",
                     non_bids: "recipes/non-bids/b1_afi_config.yaml",
-                    sim: None,
+                    sim: "recipes/sim/b1_afi_sim.yaml",
                 },
                 enums: &[],
                 display_ranges: &[
@@ -231,7 +233,7 @@ pub fn all() -> &'static [ModelEntry] {
                 recipes: Recipes {
                     bids: "recipes/bids/b1_dam_config.yaml",
                     non_bids: "recipes/non-bids/b1_dam_config.yaml",
-                    sim: None,
+                    sim: "recipes/sim/b1_dam_sim.yaml",
                 },
                 enums: &[],
                 display_ranges: &[
@@ -264,7 +266,7 @@ pub fn all() -> &'static [ModelEntry] {
                 recipes: Recipes {
                     bids: "recipes/bids/mt_ratio_config.yaml",
                     non_bids: "recipes/non-bids/mt_ratio_config.yaml",
-                    sim: None,
+                    sim: "recipes/sim/mt_ratio_sim.yaml",
                 },
                 enums: &[],
                 display_ranges: &[
@@ -302,7 +304,7 @@ pub fn all() -> &'static [ModelEntry] {
                 recipes: Recipes {
                     bids: "recipes/bids/mt_sat_config.yaml",
                     non_bids: "recipes/non-bids/mt_sat_config.yaml",
-                    sim: None,
+                    sim: "recipes/sim/mt_sat_sim.yaml",
                 },
                 enums: &[],
                 display_ranges: &[
@@ -341,7 +343,7 @@ pub fn all() -> &'static [ModelEntry] {
                 recipes: Recipes {
                     bids: "recipes/bids/mono_t2_config.yaml",
                     non_bids: "recipes/non-bids/mono_t2_config.yaml",
-                    sim: None,
+                    sim: "recipes/sim/mono_t2_sim.yaml",
                 },
                 enums: &[("fit_type", &["exponential", "linear"])],
                 display_ranges: &[
@@ -382,7 +384,7 @@ pub fn all() -> &'static [ModelEntry] {
                 recipes: Recipes {
                     bids: "recipes/bids/irt1_config.yaml",
                     non_bids: "recipes/non-bids/irt1_config.yaml",
-                    sim: None,
+                    sim: "recipes/sim/irt1_sim.yaml",
                 },
                 enums: &[("method", &["magnitude", "complex"])],
                 display_ranges: &[("T1", 0.0, 3.0)],
@@ -420,7 +422,7 @@ pub fn all() -> &'static [ModelEntry] {
                 recipes: Recipes {
                     bids: "recipes/bids/vfa_t1_config.yaml",
                     non_bids: "recipes/non-bids/vfa_t1_config.yaml",
-                    sim: None,
+                    sim: "recipes/sim/vfa_t1_sim.yaml",
                 },
                 enums: &[("fit_type", &["linear", "nonlinear"])],
                 display_ranges: &[("T1", 0.0, 3.0)],
@@ -464,7 +466,7 @@ F &= M_{0r}/M_{0f}, \qquad k_f F = k_r
                 recipes: Recipes {
                     bids: "recipes/bids/qmt_config_ramani.yaml",
                     non_bids: "recipes/non-bids/qmt_config_ramani.yaml",
-                    sim: Some("recipes/sim/qmt_sim_ramani.yaml"),
+                    sim: "recipes/sim/qmt_sim_ramani.yaml",
                 },
                 enums: &[
                     ("qmt_spgr.model", &["Ramani", "SledPikeRP"]),

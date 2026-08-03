@@ -1,0 +1,35 @@
+model: inversion_recovery
+
+# Simulation: the acquisition comes from this file, as for every non-BIDS
+# recipe. All times are in seconds (BIDS/SI).
+inversion_times:
+- 0.350
+- 0.500
+- 0.650
+- 0.800
+- 0.950
+- 1.100
+- 1.250
+- 1.400
+- 1.700
+repetition_time: 2.5
+
+method: magnitude
+t1_range:
+  start: 0.001
+  stop: 5.0
+  step: 0.001
+zoom:
+  iterations: 2
+  points: 21
+
+# Ground truth: white matter at 3 T. The IR signal is a + b*exp(-TI/T1), so a
+# is the recovered magnetization and b is close to -2a for a full inversion.
+sim:
+  params: { T1: 0.9, a: 500.0, b: -1000.0 }
+  noise: { type: rician, snr: 100.0 }
+  seed: 0
+  trials: 100
+  sweep: { param: T1, start: 0.3, stop: 2.5, steps: 10 }
+  distributions:
+    T1: { mean: 0.9, std: 0.15 }
