@@ -1,8 +1,8 @@
 //! qMT-SPGR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement,
-    MeasurementKind, Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsMap, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind,
+    Model, ProtoParam, Protocol, Sample, Scope, Source,
 };
 use crate::models::qmt_spgr::config::QmtSpgrConfig;
 use crate::models::qmt_spgr::QmtSpgrFitter;
@@ -65,8 +65,6 @@ fn qmt_rows(protocol: &[[f64; 2]]) -> Vec<BTreeMap<String, f64>> {
 }
 
 // Order matches the qMRLab QMTSPGR filename convention: flip-<i>_mt-<i>.
-const QMT_ENTITIES: &[EntityRole] = &[EntityRole::Flip, EntityRole::Mt];
-
 impl Model for QmtModel {
     fn param_names(&self) -> Vec<&'static str> {
         vec!["F", "kr", "R1f", "R1r", "T2f", "T2r"]
@@ -218,10 +216,7 @@ impl Model for QmtModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "QMTSPGR",
-            entities: QMT_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "QMTSPGR" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         // Matches the "Angle"/"Offset" keys `qmt_rows`/`forward`/`fit` use, so
@@ -287,35 +282,7 @@ impl crate::core::model::ModelConfig for QmtSpgrConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`]).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<QmtSpgrConfig>(v)
-}
-
-/// Registry builder (see [`build_model`]): the shared parse → ingest protocol →
-/// validate → construct pipeline. On the BIDS path `proto` carries the
-/// sidecar-resolved `Angle`/`Offset` per volume, which `ingest_protocol` folds
-/// into `mtdata`; on the non-BIDS path `proto` is empty and `mtdata` comes from
-/// `--config`.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<QmtSpgrConfig>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
-/// the fully-resolved effective config as YAML.
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<QmtSpgrConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<QmtSpgrConfig>(v, proto)
-}
+crate::model_entry_points!(QmtSpgrConfig);
 
 #[cfg(test)]
 mod tests {
@@ -394,56 +361,6 @@ mod tests {
         aux.set("R1map", 1.0);
         let out = m.fit(&qmt_series(0.5), &aux);
         assert_eq!(out.len(), 8);
-    }
-
-    #[test]
-    fn fit_assembles_by_identity_not_position() {
-        // Reversing the (distinct) protocol samples must not change the fit:
-        // matching is by (Angle, Offset), never by array position.
-        let m = build(&qmt_value(), &Protocol::default()).unwrap();
-        let mut aux = Aux::new();
-        aux.set("R1map", 1.0);
-        // Distinct per-volume values via a clean forward, then reverse them.
-        let forward = m.forward(&[0.15, 25.0, 1.0, 1.0, 0.028, 1.1e-5], &aux);
-        let mut reversed: Vec<Sample> = match forward {
-            Measurement::Series(ref s) => s
-                .iter()
-                .map(|s| Sample {
-                    params: s.params.clone(),
-                    value: s.value,
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
-        reversed.reverse();
-        let a = m.fit(&forward, &aux);
-        let b = m.fit(&Measurement::Series(reversed), &aux);
-        assert_eq!(a, b, "qMT fit must be identical under sample reordering");
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with Angle")]
-    fn fit_panics_on_unmatched_identity() {
-        // Sample identities that match no protocol row must fail loudly, never
-        // fall back to positional assembly.
-        let m = build(&qmt_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("Angle".to_string(), 999.0), ("Offset".to_string(), 999.0)]),
-            value: 0.5,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&qmt_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _units) in m.bids_outputs() {
-            assert!(
-                names.iter().any(|n| n == out),
-                "bids_outputs references '{out}', not in output_names {names:?}"
-            );
-        }
     }
 
     #[test]

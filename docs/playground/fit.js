@@ -1,6 +1,7 @@
 // Fitting the loaded slice, in row-blocks so progress is real and the page stays
 // responsive, then turning the returned maps into viewable volumes.
 import { $, hideProgress, nextFrame, setProgress, showProgress, status } from "./dom.js";
+import { syncFitArmed } from "./recipe.js";
 import { app, editor, nvOut } from "./state.js";
 import { buildMapVolume, readVolumeSeries } from "./nifti.js";
 import { clearVolumes, linkViewers, showOutput, syncMapViewControls } from "./viewers.js";
@@ -89,7 +90,7 @@ export async function fitSlice() {
     status("Fit failed", "error");
     showNotice("triangle-alert", "Fit failed", String(e?.message ?? e));
     hideProgress();
-    $("fit").disabled = false;
+    syncFitArmed();
     return;
   }
   app.lastMaps = maps;
@@ -134,7 +135,7 @@ export async function fitSlice() {
     status(`Fitted, but could not display it: ${e?.message ?? e}`, "error");
   } finally {
     hideProgress();
-    $("fit").disabled = false;
+    syncFitArmed();
     syncMapViewControls();
   }
 }

@@ -148,18 +148,62 @@ code, pre, textarea, input, select { font-family: var(--font-mono); }
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; margin-left: 6px; padding: 0; flex: 0 0 auto;
   border: 0; border-radius: 50%; background: none;
-  color: var(--muted); line-height: 1; cursor: help;
+  color: var(--muted); line-height: 1; cursor: pointer;
   vertical-align: middle;
+  transition: color .15s ease, transform .15s ease, filter .15s ease;
 }
-.info:hover, .info:focus-visible { color: var(--accent); }
+/* The glyph is not a hit target of its own. Without this, moving from the icon
+   onto the button's own padding fires `pointerleave` *on the glyph*, which the
+   delegated handler reads as leaving the control: the tooltip flickers away
+   while the pointer is still on it. */
+.info > * { pointer-events: none; }
+/* Hover lights the mark up and grows it slightly, instead of swapping the
+   cursor to a help arrow. A cursor change says "something is here" only once
+   the pointer has already arrived, and says nothing about whether it worked. */
+.info:hover, .info:focus-visible {
+  color: var(--accent);
+  transform: scale(1.18);
+  /* Derived from the accent rather than `--glow`, which several themes set to
+     `transparent` as a deliberate "this theme does not bloom" — the mark still
+     has to light up in those. */
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 55%, transparent));
+}
 /* Our own tooltip, so it appears immediately — a native `title` cannot be
    shown without the browser's delay. Fixed-position and appended to the body,
    so no ancestor's overflow can clip it. */
 .tip {
   position: fixed; z-index: 100; max-width: 34ch; pointer-events: none;
-  background: color-mix(in srgb, var(--accent) 90%, transparent);
-  color: var(--on-accent); border-radius: 8px; padding: 7px 10px;
-  font: 500 11.5px/1.45 var(--font-ui); box-shadow: var(--shadow);
+  /* Glass: the panel surface at well under half opacity, over a heavy blur, so
+     what is behind stays visible as shape and colour without being readable.
+     A tinted *fill* cannot do this. The accent at any usable alpha lightens
+     over a pale panel until white copy on it drops to 3.7:1 in the light
+     themes, so the accent survives here only as the edge and the glow, and the
+     surface is the neutral one whose contrast with `--ink` the theme already
+     guarantees (measured worst case 10.9:1 at this alpha, over any backdrop). */
+  background: color-mix(in srgb, var(--panel-2) 62%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  backdrop-filter: blur(16px) saturate(1.8);
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 10px; padding: 8px 11px;
+  font: 500 11.5px/1.45 var(--font-ui);
+  /* Outer depth, an accent halo to tie it to the mark that opened it, and an
+     inset top highlight, which is what makes a translucent panel read as a lit
+     edge rather than a washed-out box. */
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, .28),
+    0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 14%, transparent);
+  animation: tip-in .13s ease-out;
+}
+@keyframes tip-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tip { animation: none; }
+  .info { transition: none; }
+  .info:hover, .info:focus-visible { transform: none; }
 }
 .tip[hidden] { display: none; }
 .section-h {
@@ -627,7 +671,25 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .field-row {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
 }
-.field-label { color: var(--ink-2); font: 12px var(--font-ui); }
+/* Two lines: the quantity, then what qualifies it. The second line is set in
+   the mono face the values use and tinted with the protocol accent, so a
+   reader's eye pairs "TI [s]" with the numbers beside it rather than with the
+   name above it. */
+.field-labels { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.field-label {
+  display: flex; align-items: center; gap: 5px;
+  color: var(--ink-2); font: 12px var(--font-ui);
+}
+/* The option hover sits with the name, not the value: it explains the choice,
+   and a reader looking for one is reading labels. Dimmer than the panel
+   headings' mark so a column of them does not read as a column of warnings. */
+.field-label .info { vertical-align: 0; opacity: 0.55; margin-left: 0; width: 14px; height: 14px; }
+.field-label .info:hover, .field-label .info:focus-visible { opacity: 1; }
+.field-meta { display: flex; align-items: center; gap: 5px; min-height: 14px; }
+.field-unit {
+  color: var(--muted); font: 10px var(--font-mono);
+  letter-spacing: .02em; white-space: nowrap;
+}
 .field-row input, .field-row textarea { width: 100%; }
 .field-row textarea { min-height: 44px; resize: vertical; }
 /* A number array is one compact line at rest and one value per line while
@@ -1212,6 +1274,9 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   background-image: url("./vendor/bids-logo-dark.png");
 }
 .group-title .bids-badge { vertical-align: -2px; }
+/* On the label's second line the mark leads rather than trails, and sits on
+   the text baseline of a 10px line rather than a 12px one. */
+.field-meta .bids-badge { margin-left: 0; width: 13px; height: 13px; vertical-align: 0; }
 
 /* Slide to override the sidecar-supplied protocol. An iOS slide-to-act pill:
    a recessed track, a raised knob carrying a direction chevron, and a prompt

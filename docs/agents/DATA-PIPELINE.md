@@ -313,7 +313,9 @@ becomes a dataset again, in BIDS-derivatives form.
 - **`write_derivatives`** (`qmrust-cli/src/commands.rs`), used by
   `run_fit_bids`, writes each declared `(output, suffix, units)` triple
   present in a fit's `FitResults` to
-  `deriv_root/qmrust/<subject>[/<session>]/anat/<subject>[_<session>]_<suffix>.nii.gz`,
+  `deriv_root/qmrust/<subject>[/<session>]/<datatype>/<subject>[_<session>]_<suffix>.nii.gz`
+  (the datatype from `rust_bids::datatype_for_suffix`, so a fitted `TB1map`
+  lands in `fmap/` beside the field maps a later fit reads it as),
   plus a full provenance JSON sidecar (`crate::provenance::FitProvenance`,
   `qmrust-cli/src/provenance.rs`) carrying: software + build environment
   (version, commit, rustc, target, build profile, OS/arch), the exact input
@@ -372,7 +374,10 @@ source gets a minimal one.
   the source (not approximate) — this is what proves no rescale/precision
   loss; a separate structure test pins qmt_spgr's flip/mt filename derivation
   and sidecar fields. End to end, `scripts/make_bids_examples.sh` fetches
-  qMRLab's OSF datasets and runs `bidsify` for each model into its *own*
+  qMRLab's OSF datasets (via `ci/datasets.sh`, which owns the pinned archive
+  versions and each model's `bidsify` invocation, shared with
+  `ci/integration_osf.sh` so both build from the same bytes) and runs `bidsify`
+  for each model into its *own*
   self-contained single-subject dataset root (`ds-<lowercased BIDS suffix>`,
   each carrying its raw acquisitions plus its own `derivatives/preprocessed`
   inputs, so any one root is a complete fetch unit), then fits each via

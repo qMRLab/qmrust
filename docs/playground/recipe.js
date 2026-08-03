@@ -12,12 +12,13 @@ import { load as yamlLoad, dump as yamlDump } from "./vendor/js-yaml.js";
 import hljs from "./vendor/highlight-core.js";
 import hljsYaml from "./vendor/highlight-yaml.js";
 import hljsJson from "./vendor/highlight-json.js";
+import { icon } from "./vendor/icons.js";
 import { $ } from "./dom.js";
 import { app, editor } from "./state.js";
 import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers, resolvedProtocolJson, clearProtocolOverrides } from "./surface.js";
 import { debounce } from "./debounce.js";
 import { inlineCodeHtml } from "./inline-code.js";
-import { fieldLabel, groupLabel } from "./labels.js";
+import { fieldHelp, fieldLabel, fieldUnit, groupLabel } from "./labels.js";
 
 // Knob diameter in px, mirrored in `.override-knob`; the pointer guard and the
 // knob's travel both need it as a number.
@@ -143,10 +144,44 @@ function fieldRow(path, widget) {
   const row = document.createElement("div");
   row.className = "field-row";
   const labelWrap = document.createElement("div");
+  labelWrap.className = "field-labels";
   const labelSpan = document.createElement("span");
   labelSpan.className = "field-label";
   labelSpan.textContent = fieldLabel(path);
   labelWrap.append(labelSpan);
+  // An option gets a hover saying what choosing it costs; an acquisition field
+  // does not, because its name already is the quantity. Built as the same
+  // `.info` button the panel headings use, which `wireTips` picks up by
+  // delegation, so a row created after startup is covered without wiring.
+  //
+  // Ahead of the name rather than after it: a column of options then has its
+  // marks aligned down one edge, which reads as "these are the explainable
+  // ones" at a glance, and the label text is not pushed around by whether a
+  // mark follows it.
+  const help = fieldHelp(path);
+  if (help) {
+    const info = document.createElement("button");
+    info.type = "button";
+    info.className = "info";
+    info.setAttribute("aria-label", help);
+    info.dataset.tip = help;
+    info.innerHTML = icon("info", 12);
+    labelSpan.prepend(info);
+  }
+  // The symbol and unit sit under the quantity rather than trailing it in
+  // parentheses: the name is what a reader scans for, and a row that also
+  // carries the BIDS mark was running to three pieces on one line. The second
+  // line is where anything *about* the value goes, the mark included.
+  const unit = fieldUnit(path);
+  if (unit) {
+    const meta = document.createElement("span");
+    meta.className = "field-meta";
+    const sym = document.createElement("span");
+    sym.className = "field-unit";
+    sym.textContent = unit;
+    meta.append(sym);
+    labelWrap.append(meta);
+  }
   row.append(labelWrap, widget);
   return row;
 }
@@ -165,6 +200,21 @@ function bidsBadge() {
   badge.setAttribute("aria-label", "BIDS");
   badge.title = "resolved from the dataset's BIDS sidecars";
   return badge;
+}
+
+// Put the BIDS mark on the label's second line, beside the symbol. A field
+// with no symbol has no second line yet, so one is made for it: the mark is a
+// statement about where the value came from, which belongs there either way.
+function attachBadge(row) {
+  const labels = row.querySelector(".field-labels");
+  if (!labels) return;
+  let meta = labels.querySelector(".field-meta");
+  if (!meta) {
+    meta = document.createElement("span");
+    meta.className = "field-meta";
+    labels.append(meta);
+  }
+  meta.prepend(bidsBadge());
 }
 
 function buildWidget(value, path) {
@@ -364,7 +414,7 @@ function buildRows(container, rows, parentLocked = false) {
     if (row.readOnly) {
       el.classList.add("locked");
       if (!parentLocked) {
-        el.querySelector(".field-label")?.after(bidsBadge());
+        attachBadge(el);
       }
     }
     container.append(el);
@@ -461,6 +511,18 @@ function arrowIcon(pointsLeft) {
   return svg;
 }
 
+// Disarmed protocol inputs cannot be fitted: the recipe would then state an
+// acquisition the sidecars also supply, which the core refuses. The button is
+// disabled rather than left to fail, so the state is visible before the click.
+export function syncFitArmed() {
+  const fit = $("fit");
+  if (!fit) return;
+  fit.disabled = Boolean(app.overrideProtocol);
+  fit.title = app.overrideProtocol
+    ? "Arm the protocol inputs to fit: edited values cannot be fitted against a BIDS dataset"
+    : "";
+}
+
 // Slide to override: a deliberate sweep rather than a click, because unlocking
 // these fields lets the recipe contradict the dataset it is fitted against —
 // and a value typed here is recorded in the output provenance as if the
@@ -483,7 +545,7 @@ function overrideControl() {
   slider.value = unlocked ? "100" : "0";
   slider.setAttribute(
     "aria-label",
-    unlocked ? "Slide to lock the protocol" : "Slide to edit the protocol",
+    unlocked ? "Slide to arm the protocol inputs" : "Slide to disarm the protocol inputs",
   );
 
   const knob = document.createElement("span");
@@ -492,7 +554,9 @@ function overrideControl() {
 
   const label = document.createElement("span");
   label.className = "override-label";
-  label.textContent = unlocked ? "Slide to Lock Protocol" : "Slide to Edit Protocol";
+  label.textContent = unlocked
+    ? "Slide to Arm Protocol Inputs"
+    : "Slide to Disarm Protocol Inputs";
 
   const setProgress = (v) => {
     // Travel drives the knob's position and fades the prompt, so a partial
@@ -508,6 +572,7 @@ function overrideControl() {
     const done = unlocked ? v <= 0 : v >= 100;
     if (done) {
       app.overrideProtocol = !unlocked;
+      syncFitArmed();
       if (unlocked) {
         // Coming back to the dataset: drop whatever the recipe overrode, so
         // the sidecar values are the only source again and the provenance

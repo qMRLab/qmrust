@@ -1,8 +1,8 @@
 //! IR adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
+    ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::inversion_recovery::config::IrConfig;
 use crate::models::inversion_recovery::fit::IrFitter;
@@ -16,14 +16,8 @@ pub struct IrModel {
     repetition_time: Option<f64>,
 }
 
-/// One `{"InversionTime": ti}` identity row per fitter TI, in canonical order.
-fn ir_rows(fitter: &IrFitter) -> Vec<BTreeMap<String, f64>> {
-    fitter
-        .ti()
-        .iter()
-        .map(|&ti| BTreeMap::from([("InversionTime".to_string(), ti)]))
-        .collect()
-}
+/// The acquisition axis: one volume per inversion time.
+const AXIS: SeriesAxis = SeriesAxis::new("InversionTime");
 
 impl IrModel {
     pub fn new(cfg: IrConfig) -> Self {
@@ -41,29 +35,12 @@ impl IrModel {
         }
     }
 
-    /// Assemble a measurement's signal in the fitter's own TI order by matching
-    /// each expected TI to its sample by value. Identities must match: assembly
-    /// is never positional. A TI with no matching sample is a mislabeled
-    /// measurement → panic (the engine records the voxel as a failed fit).
-    /// TIs are assumed unique; first match wins (values pass through
-    /// unmodified, so a duplicate TI is a misconfiguration, not a hazard).
+    /// The measurement's signal in the fitter's own TI order, as the array the
+    /// RD-NLS solver takes.
     fn assemble(&self, m: &Measurement) -> ndarray::Array1<f64> {
-        let samples = m.series();
-        self.fitter
-            .ti()
-            .iter()
-            .map(|&ti| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("InversionTime") == Some(&ti))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| panic!("measurement has no sample with InversionTime={ti}"))
-            })
-            .collect()
+        AXIS.assemble(m, self.fitter.ti()).into()
     }
 }
-
-const IR_ENTITIES: &[EntityRole] = &[EntityRole::Inv];
 
 impl Model for IrModel {
     fn param_names(&self) -> Vec<&'static str> {
@@ -84,7 +61,7 @@ impl Model for IrModel {
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {
-            rows: ir_rows(&self.fitter),
+            rows: AXIS.rows(self.fitter.ti()),
         }
     }
     fn strategy(&self) -> FitStrategy {
@@ -92,17 +69,7 @@ impl Model for IrModel {
     }
     fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
         let values = self.fitter.forward(params[0], params[1], params[2]);
-        let samples = self
-            .fitter
-            .ti()
-            .iter()
-            .zip(values)
-            .map(|(&ti, value)| Sample {
-                params: BTreeMap::from([("InversionTime".to_string(), ti)]),
-                value,
-            })
-            .collect();
-        Measurement::Series(samples)
+        AXIS.samples(self.fitter.ti(), values)
     }
     fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
         self.fitter.fit_voxel(&self.assemble(m))
@@ -126,10 +93,7 @@ impl Model for IrModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "IRT1",
-            entities: IR_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "IRT1" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         vec![
@@ -171,15 +135,9 @@ impl crate::core::model::ModelConfig for IrConfig {
     }
 
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        if !proto.volumes.is_empty() {
-            let tis: Vec<f64> = proto
-                .volumes
-                .iter()
-                .filter_map(|m| m.get("InversionTime").copied())
-                .collect();
-            if !tis.is_empty() {
-                self.inversion_times = tis;
-            }
+        let tis = AXIS.ingest(proto);
+        if !tis.is_empty() {
+            self.inversion_times = tis;
         }
         if let Some(&tr) = proto.global.get("RepetitionTime") {
             self.repetition_time = Some(tr);
@@ -196,32 +154,7 @@ impl crate::core::model::ModelConfig for IrConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`]).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<IrConfig>(v)
-}
-
-/// Registry builder (see [`build_model`]): the shared parse → ingest protocol →
-/// validate → construct pipeline.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<IrConfig>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
-/// the fully-resolved effective config as YAML.
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<IrConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<IrConfig>(v, proto)
-}
+crate::model_entry_points!(IrConfig);
 
 #[cfg(test)]
 mod tests {
@@ -281,45 +214,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_assembles_by_identity_not_position() {
-        // The samples are supplied in REVERSED order with distinct TIs, so a
-        // positional assembly would feed the fitter a mirrored (wrong) signal
-        // and miss T1; only value-matching recovers 0.9. This test fails if
-        // `fit` ever assembles by position.
-        let m = build(&ir_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[0.9, 500.0, -1000.0], &Aux::new());
-        let mut reversed: Vec<Sample> = match sig {
-            Measurement::Series(ref s) => s
-                .iter()
-                .map(|s| Sample {
-                    params: s.params.clone(),
-                    value: s.value,
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
-        reversed.reverse();
-        let a = m.fit(&sig, &Aux::new());
-        let b = m.fit(&Measurement::Series(reversed), &Aux::new());
-        assert!((a[0] - 0.9).abs() < 1e-3, "in-order T1: {}", a[0]);
-        assert!((b[0] - 0.9).abs() < 1e-3, "reordered T1: {}", b[0]);
-        assert_eq!(a[0], b[0], "T1 must be identical under reordering");
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with InversionTime")]
-    fn fit_panics_on_unmatched_identity() {
-        // A measurement whose sample identities match no expected TI must fail
-        // loudly — never fall back to positional assembly.
-        let m = build(&ir_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("InversionTime".to_string(), 99999.0)]),
-            value: 1.0,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
     fn a_resolved_protocol_supplies_the_inversion_times() {
         let mut proto = Protocol::default();
         for ti in [0.350, 0.500, 0.650] {
@@ -336,18 +230,6 @@ mod tests {
     fn declares_bids_irt1() {
         let m = build(&ir_value(), &Protocol::default()).unwrap();
         assert_eq!(m.bids().unwrap().suffix, "IRT1");
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&ir_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _units) in m.bids_outputs() {
-            assert!(
-                names.iter().any(|n| n == out),
-                "bids_outputs references '{out}', not in output_names {names:?}"
-            );
-        }
     }
 
     #[test]

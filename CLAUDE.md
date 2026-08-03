@@ -51,9 +51,46 @@ Part of the architecture. Do not violate.
 
 # Working principles
 
+**One authoritative representation.** Every piece of knowledge — a rule, a constant, a
+taxonomy, a contract — has a single, unambiguous, authoritative home, and everything else
+derives from it. A fact stated twice is a fact that will disagree with itself. The two
+copies do not fail loudly when they drift; the stale one just keeps being read.
+
+Worked examples in this repo, each the single home of one fact:
+
+- `registry::Category` — a model's family, subgroup, reading order, icon and docs
+  directory. The gallery and the playground picker both derive the whole tree from it;
+  neither restates a model's membership or the order families appear in.
+- `rust_bids::datatype_for_suffix` — whether a BIDS suffix lives in `anat/` or `fmap/`.
+  One rule, three writers (raw acquisitions, preprocessed aux, derivative outputs).
+- `core::model::SeriesAxis` — how a single-axis series is identified: its rows, its
+  tagged samples, the signal `fit` assembles back, the axis `ingest_protocol` reads.
+- `tests/properties.rs` — the contract every model owes. A shared property covers models
+  that do not exist yet; a per-model copy covers only the models someone remembered.
+
+**But duplication is cheaper than the wrong abstraction.** A premature abstraction has to
+be *un*-abstracted before the real shape can be seen, and that is more expensive than the
+duplication it replaced. Prefer waiting.
+
+**Rule of Three** is the heuristic: generalize on the third occurrence, when the shape has
+had two chances to disagree with itself. It is a heuristic, not a law:
+
+- Abstract immediately when the duplication is trivially obvious and cannot be wrong — a
+  constant, a well-understood formula, a spec fact.
+- Wait longer than three when the logic is complex or the domain is still uncertain. Two
+  models sharing an equation may be one insight away from needing different ones.
+
+The test is whether the candidates are the *same knowledge*, not whether they are the same
+characters. Code that looks alike for unrelated reasons is coincidence, and merging it
+couples things that should move independently.
+
 **Extend, don't special-case.** Use existing abstractions and extension points (see
 ARCHITECTURE.md) rather than model-specific branches, ad hoc dispatch, or duplicated logic. If
 an abstraction can't support a feature, improve the abstraction.
+
+A guard that cannot apply to every case is a signal: derive it from what the subject
+*declares*, never from its name. `qmt_spgr` is excluded from the single-axis properties
+because its `measurement()` has two axes, not because a test names it.
 
 **Delete, don't accumulate.** Never leave dead code, commented-out code, speculative
 scaffolding, obsolete compat layers, duplicated sources of truth, or stale terminology. When a

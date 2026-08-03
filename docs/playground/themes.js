@@ -88,6 +88,17 @@ export function setFamily(id) {
   applyTheme({ ...current(), family: id });
 }
 
+/**
+ * The mode a toggle lands on from `current`.
+ *
+ * A switch flips from either side: the half you click is not a choice of
+ * destination, it is the switch. Anything other than `"dark"` counts as light,
+ * so an unset attribute lands somewhere defined rather than nowhere.
+ */
+export function nextMode(current) {
+  return current === "dark" ? "light" : "dark";
+}
+
 export function setMode(mode) {
   try {
     if (mode === "auto") localStorage.removeItem(KEY_MODE);

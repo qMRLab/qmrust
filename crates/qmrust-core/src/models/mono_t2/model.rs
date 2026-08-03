@@ -1,8 +1,8 @@
 //! mono_t2 adapter onto the core `Model` trait.
 
 use crate::core::model::{
-    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
+    ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::mono_t2::config::MonoT2Config;
 use crate::models::mono_t2::fit::{MonoT2Fitter, M0_BOUNDS, T2_BOUNDS};
@@ -15,14 +15,8 @@ pub struct MonoT2Model {
     output_names: Vec<String>,
 }
 
-/// One `{"EchoTime": te}` identity row per fitter echo, in canonical order.
-fn mono_t2_rows(fitter: &MonoT2Fitter) -> Vec<BTreeMap<String, f64>> {
-    fitter
-        .te()
-        .iter()
-        .map(|&te| BTreeMap::from([("EchoTime".to_string(), te)]))
-        .collect()
-}
+/// The acquisition axis: one volume per EchoTime.
+const AXIS: SeriesAxis = SeriesAxis::new("EchoTime");
 
 impl MonoT2Model {
     pub fn new(cfg: MonoT2Config) -> Self {
@@ -38,8 +32,6 @@ impl MonoT2Model {
         }
     }
 }
-
-const MONO_T2_ENTITIES: &[EntityRole] = &[EntityRole::Echo];
 
 impl Model for MonoT2Model {
     fn param_names(&self) -> Vec<&'static str> {
@@ -62,7 +54,7 @@ impl Model for MonoT2Model {
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {
-            rows: mono_t2_rows(&self.fitter),
+            rows: AXIS.rows(self.fitter.te()),
         }
     }
     fn strategy(&self) -> FitStrategy {
@@ -70,38 +62,10 @@ impl Model for MonoT2Model {
     }
     fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
         let values = self.fitter.forward(params[0], params[1]);
-        let samples = self
-            .fitter
-            .te()
-            .iter()
-            .zip(values)
-            .map(|(&te, value)| Sample {
-                params: BTreeMap::from([("EchoTime".to_string(), te)]),
-                value,
-            })
-            .collect();
-        Measurement::Series(samples)
+        AXIS.samples(self.fitter.te(), values)
     }
     fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
-        // Assemble the signal in the fitter's own echo order by matching each
-        // expected TE to its sample by identity — never positionally. A TE with
-        // no matching sample is a mislabeled measurement → panic (the engine
-        // records the voxel as a failed fit). TEs are assumed unique; first
-        // match wins.
-        let samples = m.series();
-        let signal: Vec<f64> = self
-            .fitter
-            .te()
-            .iter()
-            .map(|&te| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("EchoTime") == Some(&te))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| panic!("measurement has no sample with EchoTime={te}"))
-            })
-            .collect();
-        self.fitter.fit_voxel(&signal)
+        self.fitter.fit_voxel(&AXIS.assemble(m, self.fitter.te()))
     }
     fn n_volumes(&self) -> usize {
         self.fitter.te().len()
@@ -115,10 +79,7 @@ impl Model for MonoT2Model {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "MESE",
-            entities: MONO_T2_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "MESE" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         vec![ProtoParam {
@@ -146,15 +107,9 @@ impl crate::core::model::ModelConfig for MonoT2Config {
     }
 
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        if !proto.volumes.is_empty() {
-            let tes: Vec<f64> = proto
-                .volumes
-                .iter()
-                .filter_map(|m| m.get("EchoTime").copied())
-                .collect();
-            if !tes.is_empty() {
-                self.echo_times = tes;
-            }
+        let tes = AXIS.ingest(proto);
+        if !tes.is_empty() {
+            self.echo_times = tes;
         }
         Ok(())
     }
@@ -168,32 +123,7 @@ impl crate::core::model::ModelConfig for MonoT2Config {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`]).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<MonoT2Config>(v)
-}
-
-/// Registry builder (see [`build_model`]): the shared parse → ingest protocol →
-/// validate → construct pipeline.
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<MonoT2Config>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)): prints
-/// the fully-resolved effective config as YAML.
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<MonoT2Config>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<MonoT2Config>(v, proto)
-}
+crate::model_entry_points!(MonoT2Config);
 
 #[cfg(test)]
 mod tests {
@@ -224,39 +154,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_assembles_by_identity_not_position() {
-        // Reversed samples with distinct TEs: positional assembly would feed a
-        // mirrored signal and miss T2; only value-matching recovers 0.08.
-        let m = build(&mono_t2_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[0.08, 1000.0], &Aux::new());
-        let mut reversed: Vec<Sample> = match sig {
-            Measurement::Series(ref s) => s
-                .iter()
-                .map(|s| Sample {
-                    params: s.params.clone(),
-                    value: s.value,
-                })
-                .collect(),
-            _ => unreachable!(),
-        };
-        reversed.reverse();
-        let a = m.fit(&sig, &Aux::new());
-        let b = m.fit(&Measurement::Series(reversed), &Aux::new());
-        assert_eq!(a[0], b[0], "T2 must be identical under reordering");
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with EchoTime")]
-    fn fit_panics_on_unmatched_identity() {
-        let m = build(&mono_t2_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("EchoTime".to_string(), 99999.0)]),
-            value: 1.0,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
     fn a_resolved_protocol_supplies_the_echo_times() {
         let mut proto = Protocol::default();
         for te in [0.0128, 0.0256, 0.0384] {
@@ -273,18 +170,6 @@ mod tests {
     fn declares_bids_mese() {
         let m = build(&mono_t2_value(), &Protocol::default()).unwrap();
         assert_eq!(m.bids().unwrap().suffix, "MESE");
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&mono_t2_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _units) in m.bids_outputs() {
-            assert!(
-                names.iter().any(|n| n == out),
-                "bids_outputs references '{out}', not in output_names {names:?}"
-            );
-        }
     }
 
     #[test]

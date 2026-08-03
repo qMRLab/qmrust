@@ -7,7 +7,7 @@
 //! BIDS path folds them from each role's sidecar in `ingest_protocol`.
 
 use crate::core::model::{
-    Aux, BidsMap, BidsSpec, BidsVolume, EntityRole, InputSpec, Measurement, MeasurementKind, Model,
+    Aux, BidsMap, BidsSpec, BidsVolume, InputSpec, Measurement, MeasurementKind, Model,
     ModelConfig, ProtoParam, Protocol, Scope, Source,
 };
 use crate::models::mt_sat::config::MtSatConfig;
@@ -41,8 +41,6 @@ pub struct MtSatModel {
 /// the `MTS` grouping's `named_set` role of the same name, and (BIDS path) to
 /// the reordered per-role protocol row `i`.
 const ROLES: &[&str] = &["MTw", "PDw", "T1w"];
-const MTS_ENTITIES: &[EntityRole] = &[EntityRole::Flip, EntityRole::Mt];
-
 fn deg2rad(d: f64) -> f64 {
     d * std::f64::consts::PI / 180.0
 }
@@ -208,10 +206,7 @@ impl Model for MtSatModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "MTS",
-            entities: MTS_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "MTS" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         vec![
@@ -274,16 +269,6 @@ impl crate::core::model::ModelConfig for MtSatConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<MtSatConfig>(v)
-}
-
-/// Registry builder (see [`build_model`](crate::core::model::build_model)).
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<MtSatConfig>(v, proto)
-}
-
 /// Build `mt_sat` in calibration mode: `fit` emits raw (pre-empirical-factor,
 /// pre-CF) MTsat + B1-corrected R1, applying neither the empirical Helms
 /// factor nor the Tardif CF — the coordinates the correction surface is
@@ -304,20 +289,7 @@ pub fn build_calibration(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<
     Ok(model)
 }
 
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<MtSatConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<MtSatConfig>(v, proto)
-}
+crate::model_entry_points!(MtSatConfig);
 
 #[cfg(test)]
 mod tests {
@@ -428,15 +400,6 @@ mod tests {
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].name, "B1map");
         assert!(!inputs[0].required);
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&mtsat_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _s, _u) in m.bids_outputs() {
-            assert!(names.iter().any(|n| n == out), "{out} not in {names:?}");
-        }
     }
 
     #[test]

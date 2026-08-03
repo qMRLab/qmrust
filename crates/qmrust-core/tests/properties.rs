@@ -15,7 +15,7 @@
 //! that is the honest boundary rather than a tolerance tuned until green.
 
 use proptest::prelude::*;
-use qmrust_core::core::model::{Aux, Measurement, Protocol};
+use qmrust_core::core::model::{Aux, Measurement, MeasurementKind, Model, Protocol, Sample};
 
 /// Every registered model, built from the non-BIDS recipe it ships.
 ///
@@ -119,6 +119,206 @@ proptest! {
                 name, fitted.len(), model.output_names().len()
             );
         }
+    }
+}
+
+/// Each registered model built from its **BIDS** recipe: options only, with the
+/// acquisition left to the sidecars. That is the input the `--bids-dir` path
+/// hands a model, so it is what the contract below is about.
+fn every_model_without_an_acquisition() -> Vec<(&'static str, serde_yaml::Value)> {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    qmrust_core::registry::all()
+        .iter()
+        .map(|entry| {
+            let path = format!("{root}/{}", entry.doc.recipes.bids);
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{}: cannot read {path}: {e}", entry.name));
+            let v: serde_yaml::Value = serde_yaml::from_str(&text)
+                .unwrap_or_else(|e| panic!("{}: {path} is not YAML: {e}", entry.name));
+            (entry.name, v)
+        })
+        .collect()
+}
+
+/// Models whose measurement is a `Series`: their volumes are identified by a
+/// row of protocol values rather than by role name. The identity properties
+/// below are about exactly that machinery, and a `Named` model is excluded by
+/// its own declaration rather than by being listed here.
+fn every_series_model() -> Vec<(&'static str, Box<dyn Model>)> {
+    every_model()
+        .into_iter()
+        .filter(|(_, m)| matches!(m.measurement(), MeasurementKind::Series { .. }))
+        .collect()
+}
+
+/// Every name a model exports as a BIDS map must be one it actually produces.
+///
+/// The writer looks each up in the fit result by name; one that is not there is
+/// not an error, it is a map silently never written.
+#[test]
+fn bids_outputs_name_real_outputs() {
+    for (name, model) in every_model() {
+        let outputs = model.output_names();
+        for (out, suffix, _unit) in model.bids_outputs() {
+            assert!(
+                outputs.iter().any(|n| n == out),
+                "{name}: bids_outputs exports '{out}' as {suffix}, \
+                 which is not one of its outputs {outputs:?}"
+            );
+        }
+    }
+}
+
+/// A model describes from its own BIDS recipe, and says what the sidecars must
+/// supply.
+///
+/// The `--bids-dir` path builds a model before any sidecar is read, to ask what
+/// to look for. A model that cannot be built without its acquisition, or that
+/// declares no protocol while its recipe omits one, could never be resolved
+/// from a dataset.
+#[test]
+fn a_bids_recipe_describes_and_declares_what_the_sidecars_owe_it() {
+    for (name, value) in every_model_without_an_acquisition() {
+        let entry = qmrust_core::registry::by_name(name).expect(name);
+        let model = (entry.describe)(&value)
+            .unwrap_or_else(|e| panic!("{name}: does not describe from its BIDS recipe: {e:#}"));
+        // `mt_ratio` has no acquisition at all, and says so with an empty
+        // schema; anything else must name what it needs.
+        if model.n_volumes() == 0 {
+            assert!(
+                !model.protocol_schema().is_empty(),
+                "{name}: describes zero volumes and declares no protocol, \
+                 so nothing could ever resolve it"
+            );
+        }
+    }
+}
+
+/// A model that needs an acquisition must refuse to build without one.
+///
+/// Building anyway fits whatever its config defaults happen to be while the
+/// output's `Protocol` reports the dataset's. Conditioned on the model's own
+/// schema, so a model with no acquisition (`mt_ratio`) is excluded by what it
+/// declares rather than by name.
+///
+/// `qmt_spgr` is the one model this does not hold for: its config carries a
+/// default saturation grid (`qmt_default_mtdata`), so it builds without one and
+/// would fit that grid rather than the dataset's. Named here because the
+/// alternative is a property that quietly excludes it, which is how the gap
+/// stopped being visible in the first place.
+#[test]
+fn a_model_needing_an_acquisition_refuses_to_build_without_one() {
+    for (name, value) in every_model_without_an_acquisition() {
+        if name == "qmt_spgr" {
+            continue;
+        }
+        let entry = qmrust_core::registry::by_name(name).expect(name);
+        let Ok(described) = (entry.describe)(&value) else {
+            continue;
+        };
+        if described.protocol_schema().is_empty() {
+            continue;
+        }
+        assert!(
+            (entry.build)(&value, &Protocol::default()).is_err(),
+            "{name}: built from a recipe with no acquisition, though it declares \
+             {:?}",
+            described
+                .protocol_schema()
+                .iter()
+                .map(|p| p.name)
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// `forward` tags its samples with the identities the BIDS path builds.
+///
+/// A `Series` model's volume identities come from the resolved per-volume
+/// protocol; `forward` tags its samples from the model's own rows. Any protocol
+/// param one side emits and the other does not joins the identity on one side
+/// only, and no predicted sample matches its volume. The fit still works (it
+/// queries one key by name), so the only symptom is a silently missing forward
+/// curve in the app.
+#[test]
+fn forward_samples_carry_the_identities_the_bids_path_builds() {
+    for (name, model) in every_series_model() {
+        let MeasurementKind::Series { rows } = model.measurement() else {
+            unreachable!("filtered to Series")
+        };
+        let proto = Protocol {
+            volumes: rows.clone(),
+            global: Default::default(),
+        };
+        let ids = qmrust_core::engine::build_volume_ids(model.measurement(), &proto, rows.len())
+            .unwrap_or_else(|e| panic!("{name}: volume ids: {e:#}"));
+        let params = params_within_bounds(model.as_ref(), &[0.5]);
+        let signal = model.forward(&params, &unit_aux(model.as_ref()));
+        let samples = signal.series();
+        assert_eq!(samples.len(), ids.len(), "{name}: sample/volume count");
+        for (id, sample) in ids.iter().zip(samples) {
+            let qmrust_core::core::model::VolumeId::Params(row) = id else {
+                panic!("{name}: a Series model must yield param-row identities")
+            };
+            assert_eq!(
+                *row, sample.params,
+                "{name}: volume identity {row:?} has no matching forward sample {:?}",
+                sample.params
+            );
+        }
+    }
+}
+
+/// `fit` assembles its signal by identity, not by position.
+///
+/// The order volumes reach a model is the dataset's, not the model's. A
+/// positional read pairs every value with the wrong protocol row and produces a
+/// plausible, wrong map rather than an error.
+#[test]
+fn fit_is_invariant_to_the_order_samples_arrive_in() {
+    for (name, model) in every_series_model() {
+        let aux = unit_aux(model.as_ref());
+        let params = params_within_bounds(model.as_ref(), &[0.5]);
+        let signal = model.forward(&params, &aux);
+        let mut reversed: Vec<Sample> = signal
+            .series()
+            .iter()
+            .map(|s| Sample {
+                params: s.params.clone(),
+                value: s.value,
+            })
+            .collect();
+        reversed.reverse();
+        let forward_fit = model.fit(&signal, &aux);
+        let reversed_fit = model.fit(&Measurement::Series(reversed), &aux);
+        for (i, (a, b)) in forward_fit.iter().zip(&reversed_fit).enumerate() {
+            assert!(
+                a == b || (a.is_nan() && b.is_nan()),
+                "{name}: output {i} changed with sample order: {a} vs {b}"
+            );
+        }
+    }
+}
+
+/// A sample whose identity the model does not expect is a mislabeled
+/// measurement, and must not be read as if it were one of the model's own.
+///
+/// The engine catches the panic and records the voxel as unfitted; silently
+/// substituting a value would fit one volume's signal under another's protocol.
+#[test]
+fn fit_rejects_a_measurement_whose_identity_it_does_not_know() {
+    for (name, model) in every_series_model() {
+        let bogus = Measurement::Series(vec![Sample {
+            params: std::collections::BTreeMap::from([("NotAParam".to_string(), 1.0)]),
+            value: 1.0,
+        }]);
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            model.fit(&bogus, &unit_aux(model.as_ref()))
+        }));
+        assert!(
+            caught.is_err(),
+            "{name}: fitted a measurement carrying none of its identities"
+        );
     }
 }
 

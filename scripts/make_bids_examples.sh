@@ -49,27 +49,16 @@ PHANTOM_SUBJECT="${QMRUST_MTS_B1_SUBJECT:-sub-06}"
 
 mkdir -p "$DATA" "$OUT"
 
-# Download and unpack one OSF archive, unless it's already unpacked.
-fetch() {
-  local name="$1" url="$2"
-  if [ ! -d "$DATA/$name" ]; then
-    echo "Downloading qMRLab OSF $name dataset..."
-    curl -L --fail -o "$DATA/$name.zip" "$url"
-    unzip -o -q "$DATA/$name.zip" -d "$DATA/$name"
-  fi
-}
+# Where the data comes from and how each archive is bidsified: ci/datasets.sh,
+# shared with ci/integration_osf.sh so the datasets a reader fits in the browser
+# are byte-for-byte the ones CI validated against qMRLab.
+# shellcheck source=ci/datasets.sh
+. "$(dirname "$0")/../ci/datasets.sh"
+fetch_all
 
-# Locate a file by name within an unpacked archive (robust to folder layout).
-locate() {
-  local name="$1" pattern="$2" found
-  found="$(find "$DATA/$name" -name "$pattern" | head -1)"
-  [ -n "$found" ] || { echo "$pattern not found in $name archive" >&2; exit 1; }
-  echo "$found"
-}
-
-# Assert every named file exists and is non-empty under a dataset's qmrust
-# derivatives, i.e. that the BIDS-path fit actually produced its maps. Each map
-# lands in the datatype directory its BIDS suffix implies (anat for tissue
+# Assert every named map exists and is non-empty under a dataset's qmrust
+# derivatives, i.e. that the BIDS-path fit actually produced it. Each map lands
+# in the datatype directory its BIDS suffix implies (anat for tissue
 # parameters, fmap for field maps), so search across them rather than assuming.
 assert_maps() {
   local root="$1"; shift
@@ -81,26 +70,13 @@ assert_maps() {
   done
 }
 
-fetch ir       "https://osf.io/cmg9z/download?version=3"
-fetch qmt      "https://osf.io/pzqyn/download?version=2"
-fetch mono_t2  "https://osf.io/kujp3/download?version=3"
-fetch mtr      "https://osf.io/erm2s/download?version=2"
-fetch mtsat    "https://osf.io/c5wdb/download?version=4"
-fetch vfa_t1   "https://osf.io/7wcvh/download?version=3"
-fetch b1_dam   "https://osf.io/mw3sq/download?version=3"
-fetch b1_afi   "https://osf.io/csjgx/download?version=9"
-
 # ─── ds-irt1 — inversion_recovery (IRT1) ───────────────────────────────────
 # Stacked .mat measurement (9 inversion times) + a separate Mask.mat.
 
-IR_MAT="$(locate ir 'IRData.mat')"
-IR_MASK="$(locate ir 'Mask.mat')"
 IR_REF="$(find "$DATA/ir" -path '*FitResults/T1.nii.gz' | head -1)"
 
 echo "Building $OUT/ds-irt1 ..."
-"$BIN" bidsify --model inversion_recovery \
-  --mat-data "$IR_MAT" --mask "$IR_MASK" \
-  --config recipes/non-bids/irt1_config.yaml --subject 01 --out "$OUT/ds-irt1"
+bidsify_inversion_recovery "$OUT/ds-irt1"
 # output-dir is the derivatives *root*: run_fit_bids appends qmrust/<subject>/anat/.
 "$BIN" fit --bids-dir "$OUT/ds-irt1" \
   --config recipes/bids/irt1_config.yaml --output-dir "$OUT/ds-irt1/derivatives"
@@ -111,12 +87,9 @@ assert_maps "$OUT/ds-irt1" T1map
 # the non-BIDS recipe (its echo_times become the sidecars); the BIDS-path fit
 # then reads those sidecars, so the BIDS recipe carries no acquisition axis.
 
-MONO_SE="$(locate mono_t2 'SEdata.nii.gz')"
-MONO_MASK="$(locate mono_t2 'Mask.nii.gz')"
 
 echo "Building $OUT/ds-mese ..."
-"$BIN" bidsify --model mono_t2 --nii-data "$MONO_SE" --nii-mask "$MONO_MASK" \
-  --config recipes/non-bids/mono_t2_config.yaml --subject 01 --out "$OUT/ds-mese"
+bidsify_mono_t2 "$OUT/ds-mese"
 "$BIN" fit --bids-dir "$OUT/ds-mese" \
   --config recipes/bids/mono_t2_config.yaml --output-dir "$OUT/ds-mese/derivatives"
 assert_maps "$OUT/ds-mese" T2map
@@ -129,8 +102,7 @@ assert_maps "$OUT/ds-mese" T2map
 MTR_DIR="$(dirname "$(locate mtr 'MTon.mat')")"
 
 echo "Building $OUT/ds-mtr ..."
-"$BIN" bidsify --model mt_ratio --mat-dir "$MTR_DIR" \
-  --config recipes/non-bids/mt_ratio_config.yaml --subject 01 --out "$OUT/ds-mtr"
+bidsify_mt_ratio "$OUT/ds-mtr"
 "$BIN" fit --bids-dir "$OUT/ds-mtr" \
   --config recipes/bids/mt_ratio_config.yaml --output-dir "$OUT/ds-mtr/derivatives"
 assert_maps "$OUT/ds-mtr" MTRmap
@@ -144,8 +116,7 @@ assert_maps "$OUT/ds-mtr" MTRmap
 MTSAT_DIR="$(dirname "$(locate mtsat 'MTw.nii.gz')")"
 
 echo "Building $OUT/ds-mts ..."
-"$BIN" bidsify --model mt_sat --nii-dir "$MTSAT_DIR" \
-  --config recipes/non-bids/mt_sat_config.yaml --subject 01 --out "$OUT/ds-mts"
+bidsify_mt_sat "$OUT/ds-mts"
 "$BIN" fit --bids-dir "$OUT/ds-mts" \
   --config recipes/bids/mt_sat_config.yaml --output-dir "$OUT/ds-mts/derivatives"
 assert_maps "$OUT/ds-mts" MTsat T1map MTRmap
@@ -158,8 +129,7 @@ assert_maps "$OUT/ds-mts" MTsat T1map MTRmap
 QMT_DIR="$(dirname "$(locate qmt 'MTdata.mat')")"
 
 echo "Building $OUT/ds-qmtspgr ..."
-"$BIN" bidsify --model qmt_spgr --mat-dir "$QMT_DIR" \
-  --config recipes/non-bids/qmt_config_ramani.yaml --subject 01 --out "$OUT/ds-qmtspgr"
+bidsify_qmt_spgr "$OUT/ds-qmtspgr"
 "$BIN" fit --bids-dir "$OUT/ds-qmtspgr" \
   --config recipes/bids/qmt_config_ramani.yaml --output-dir "$OUT/ds-qmtspgr/derivatives"
 assert_maps "$OUT/ds-qmtspgr" Fmap kRmap R1Fmap R1Rmap T2Fmap T2Rmap
@@ -170,14 +140,9 @@ assert_maps "$OUT/ds-qmtspgr" Fmap kRmap R1Fmap R1Rmap T2Fmap T2Rmap
 # is named explicitly with --aux; it lands in `derivatives/preprocessed` as the
 # TB1map the model's optional B1map input resolves to.
 
-VFA_DATA="$(locate vfa_t1 'VFAData.nii.gz')"
-VFA_MASK="$(locate vfa_t1 'Mask.nii.gz')"
-VFA_B1="$(locate vfa_t1 'B1map.nii.gz')"
 
 echo "Building $OUT/ds-vfa ..."
-"$BIN" bidsify --model vfa_t1 --nii-data "$VFA_DATA" --nii-mask "$VFA_MASK" \
-  --aux "B1map=$VFA_B1" \
-  --config recipes/non-bids/vfa_t1_config.yaml --subject 01 --out "$OUT/ds-vfa"
+bidsify_vfa_t1 "$OUT/ds-vfa"
 "$BIN" fit --bids-dir "$OUT/ds-vfa" \
   --config recipes/bids/vfa_t1_config.yaml --output-dir "$OUT/ds-vfa/derivatives"
 assert_maps "$OUT/ds-vfa" T1map M0map
@@ -187,13 +152,9 @@ assert_maps "$OUT/ds-vfa" T1map M0map
 # is repeated once per volume in acquisition order. The archive ships no mask,
 # so the dataset has no `derivatives/preprocessed` and the whole image is fit.
 
-B1DAM_A="$(locate b1_dam 'SFalpha.nii.gz')"
-B1DAM_2A="$(locate b1_dam 'SF2alpha.nii.gz')"
 
 echo "Building $OUT/ds-tb1dam ..."
-"$BIN" bidsify --model b1_dam \
-  --nii-data "$B1DAM_A" --nii-data "$B1DAM_2A" \
-  --config recipes/non-bids/b1_dam_config.yaml --subject 01 --out "$OUT/ds-tb1dam"
+bidsify_b1_dam "$OUT/ds-tb1dam"
 "$BIN" fit --bids-dir "$OUT/ds-tb1dam" \
   --config recipes/bids/b1_dam_config.yaml --output-dir "$OUT/ds-tb1dam/derivatives"
 assert_maps "$OUT/ds-tb1dam" TB1map
@@ -203,13 +164,9 @@ assert_maps "$OUT/ds-tb1dam" TB1map
 # repeated once per volume in acquisition order. The archive ships no mask, so
 # the dataset has no `derivatives/preprocessed` and the whole image is fit.
 
-B1AFI_TR1="$(locate b1_afi 'AFIData1.nii.gz')"
-B1AFI_TR2="$(locate b1_afi 'AFIData2.nii.gz')"
 
 echo "Building $OUT/ds-tb1afi ..."
-"$BIN" bidsify --model b1_afi \
-  --nii-data "$B1AFI_TR1" --nii-data "$B1AFI_TR2" \
-  --config recipes/non-bids/b1_afi_config.yaml --subject 01 --out "$OUT/ds-tb1afi"
+bidsify_b1_afi "$OUT/ds-tb1afi"
 "$BIN" fit --bids-dir "$OUT/ds-tb1afi" \
   --config recipes/bids/b1_afi_config.yaml --output-dir "$OUT/ds-tb1afi/derivatives"
 assert_maps "$OUT/ds-tb1afi" TB1map

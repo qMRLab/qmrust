@@ -110,14 +110,13 @@ enum Commands {
         mode: SimMode,
     },
 
-    /// Convert a qMRLab .mat dataset into a byte-identical BIDS layout
-    /// ("inversion_recovery" or "qmt_spgr").
+    /// Convert a qMRLab .mat or NIfTI dataset into a byte-identical BIDS layout.
     Bidsify {
-        /// Model name ("inversion_recovery" or "qmt_spgr")
+        /// Model name, as `model:` in a recipe (see `qmrust catalog`)
         #[arg(long)]
         model: String,
 
-        /// Path to the .mat file containing the IR/MT data (+ optional Mask/TI)
+        /// Path to the .mat file holding the measurement (+ optional Mask/protocol)
         #[arg(long)]
         mat_data: Option<PathBuf>,
 

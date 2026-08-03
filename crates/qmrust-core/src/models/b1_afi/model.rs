@@ -6,8 +6,8 @@
 //! values name the shorter and longer repetition time (`tr1`/`tr2`).
 
 use crate::core::model::{
-    Aux, BidsSpec, BidsVolume, EntityRole, FitStrategy, InputSpec, Measurement, MeasurementKind,
-    Model, ProtoParam, Protocol, Sample, Scope, Source,
+    Aux, BidsSpec, BidsVolume, FitStrategy, InputSpec, Measurement, MeasurementKind, Model,
+    ProtoParam, Protocol, Scope, SeriesAxis, Source,
 };
 use crate::models::b1_afi::config::B1AfiConfig;
 use crate::models::b1_afi::fit::{B1AfiFitter, B1_BOUNDS, T1_BOUNDS};
@@ -19,17 +19,8 @@ pub struct B1AfiModel {
     fitter: B1AfiFitter,
 }
 
-const B1AFI_ENTITIES: &[EntityRole] = &[EntityRole::Other("acq")];
-
-/// One `{"RepetitionTimeExcitation": s}` identity row per volume, in
-/// acquisition order.
-fn b1_afi_rows(fitter: &B1AfiFitter) -> Vec<BTreeMap<String, f64>> {
-    fitter
-        .repetition_times()
-        .iter()
-        .map(|&tr| BTreeMap::from([("RepetitionTimeExcitation".to_string(), tr)]))
-        .collect()
-}
+/// The acquisition axis: one volume per RepetitionTimeExcitation.
+const AXIS: SeriesAxis = SeriesAxis::new("RepetitionTimeExcitation");
 
 impl B1AfiModel {
     pub fn new(cfg: B1AfiConfig) -> Self {
@@ -63,7 +54,7 @@ impl Model for B1AfiModel {
     }
     fn measurement(&self) -> MeasurementKind {
         MeasurementKind::Series {
-            rows: b1_afi_rows(&self.fitter),
+            rows: AXIS.rows(self.fitter.repetition_times()),
         }
     }
     fn strategy(&self) -> FitStrategy {
@@ -71,38 +62,13 @@ impl Model for B1AfiModel {
     }
     fn forward(&self, params: &[f64], _aux: &Aux) -> Measurement {
         let values = self.fitter.forward(params[0], params[1]);
-        let samples = self
-            .fitter
-            .repetition_times()
-            .iter()
-            .zip(values)
-            .map(|(&tr, value)| Sample {
-                params: BTreeMap::from([("RepetitionTimeExcitation".to_string(), tr)]),
-                value,
-            })
-            .collect();
-        Measurement::Series(samples)
+        AXIS.samples(self.fitter.repetition_times(), values)
     }
     fn fit(&self, m: &Measurement, _aux: &Aux) -> Vec<f64> {
-        // Assemble in the fitter's own repetition-time order by matching each
-        // expected time to its sample by identity — never positionally.
-        // Swapping the two volumes would otherwise invert the ratio.
-        let samples = m.series();
-        let signal: Vec<f64> = self
-            .fitter
-            .repetition_times()
-            .iter()
-            .map(|&tr| {
-                samples
-                    .iter()
-                    .find(|s| s.params.get("RepetitionTimeExcitation") == Some(&tr))
-                    .map(|s| s.value)
-                    .unwrap_or_else(|| {
-                        panic!("measurement has no sample with RepetitionTimeExcitation={tr}")
-                    })
-            })
-            .collect();
-        self.fitter.fit_voxel(&signal)
+        // By identity, never by position: swapping the two volumes would
+        // otherwise invert the ratio.
+        self.fitter
+            .fit_voxel(&AXIS.assemble(m, self.fitter.repetition_times()))
     }
     fn n_volumes(&self) -> usize {
         self.fitter.repetition_times().len()
@@ -125,10 +91,7 @@ impl Model for B1AfiModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "TB1AFI",
-            entities: B1AFI_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "TB1AFI" })
     }
     fn protocol_schema(&self) -> Vec<ProtoParam> {
         // The repetition time is the acquisition axis, so it alone identifies a
@@ -169,11 +132,7 @@ impl crate::core::model::ModelConfig for B1AfiConfig {
     }
 
     fn ingest_protocol(&mut self, proto: &Protocol) -> Result<()> {
-        let times: Vec<f64> = proto
-            .volumes
-            .iter()
-            .filter_map(|m| m.get("RepetitionTimeExcitation").copied())
-            .collect();
+        let times = AXIS.ingest(proto);
         if !times.is_empty() {
             self.repetition_times = times;
         }
@@ -194,30 +153,7 @@ impl crate::core::model::ModelConfig for B1AfiConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<B1AfiConfig>(v)
-}
-
-/// Registry builder (see [`build_model`](crate::core::model::build_model)).
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<B1AfiConfig>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<B1AfiConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<B1AfiConfig>(v, proto)
-}
+crate::model_entry_points!(B1AfiConfig);
 
 #[cfg(test)]
 mod tests {
@@ -266,36 +202,6 @@ mod tests {
     }
 
     #[test]
-    fn fit_assembles_by_identity_not_position() {
-        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
-        let sig = m.forward(&[0.85, 0.9], &Aux::new());
-        let mut reversed: Vec<Sample> = sig
-            .series()
-            .iter()
-            .map(|s| Sample {
-                params: s.params.clone(),
-                value: s.value,
-            })
-            .collect();
-        reversed.reverse();
-        assert_eq!(
-            m.fit(&sig, &Aux::new()),
-            m.fit(&Measurement::Series(reversed), &Aux::new())
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "no sample with RepetitionTimeExcitation")]
-    fn fit_panics_on_unmatched_identity() {
-        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
-        let bogus = Measurement::Series(vec![Sample {
-            params: BTreeMap::from([("RepetitionTimeExcitation".to_string(), 7.0)]),
-            value: 1.0,
-        }]);
-        let _ = m.fit(&bogus, &Aux::new());
-    }
-
-    #[test]
     fn bids_folds_the_acquisition_from_protocol_and_labels_by_repetition_time() {
         let proto = resolved_proto(&[0.03, 0.15], 55.0);
         // Config carries no acquisition; the sidecars supply it.
@@ -318,69 +224,5 @@ mod tests {
         let m = build(&v, &proto).unwrap();
         assert_eq!(m.bids_volume(0).entities, vec![("acq", "tr2".to_string())]);
         assert_eq!(m.bids_volume(1).entities, vec![("acq", "tr1".to_string())]);
-    }
-
-    #[test]
-    fn forward_samples_carry_the_volume_identities_the_bids_path_builds() {
-        // A `Series` model's volume identities come from the resolved
-        // per-volume protocol (`engine::build_volume_ids`), while `forward`
-        // tags its samples from the model's own rows. Any protocol param the
-        // model does not also emit joins the identity on one side only, and
-        // every predicted sample then fails to match its volume — the fit
-        // still works (it queries one key), so the only symptom is a silently
-        // missing forward curve. Both sides must agree exactly.
-        let proto = resolved_proto(&[0.02, 0.1], 60.0);
-        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_afi\n").unwrap();
-        let m = build(&v, &proto).unwrap();
-
-        let ids = crate::engine::build_volume_ids(m.measurement(), &proto, m.n_volumes()).unwrap();
-        let sig = m.forward(&[0.9, 0.9], &Aux::new());
-        let samples = sig.series();
-        assert_eq!(samples.len(), ids.len());
-        for (id, sample) in ids.iter().zip(samples) {
-            let crate::core::model::VolumeId::Params(row) = id else {
-                panic!("b1_afi is a Series model; expected param-row identities")
-            };
-            assert_eq!(
-                *row, sample.params,
-                "volume identity {row:?} has no matching forward sample identity {:?}",
-                sample.params
-            );
-        }
-    }
-
-    #[test]
-    fn declares_bids_tb1afi_and_no_aux() {
-        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
-        assert_eq!(m.bids().unwrap().suffix, "TB1AFI");
-        assert!(m.required_inputs().is_empty());
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&b1_afi_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _unit) in m.bids_outputs() {
-            assert!(names.iter().any(|n| n == out), "{out} not in {names:?}");
-        }
-    }
-
-    #[test]
-    fn describe_succeeds_without_an_acquisition_and_exposes_schema() {
-        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_afi\n").unwrap();
-        let m = describe(&v).unwrap();
-        let schema = m.protocol_schema();
-        assert_eq!(schema[0].name, "RepetitionTimeExcitation");
-        assert_eq!(schema[1].name, "FlipAngle");
-        // The repetition time identifies a volume; the flip angle is one value
-        // for the collection.
-        assert!(matches!(schema[0].scope, Scope::PerVolume));
-        assert!(matches!(schema[1].scope, Scope::Global));
-    }
-
-    #[test]
-    fn build_still_requires_an_acquisition_when_protocol_empty() {
-        let v: serde_yaml::Value = serde_yaml::from_str("model: b1_afi\n").unwrap();
-        assert!(build(&v, &Protocol::default()).is_err());
     }
 }

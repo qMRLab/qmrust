@@ -32,21 +32,15 @@ pub struct InputSpec {
     pub bids: Option<BidsMap>,
 }
 
-/// Role an entity plays in indexing a model's acquisition axis. Seam for the
-/// BIDS protocol mapping that the shell / `rust-bids` crate fills in.
-pub enum EntityRole {
-    Inv,
-    Flip,
-    Mt,
-    Echo,
-    Other(&'static str),
-}
-
-/// A model's BIDS identity: its grouping suffix and the entities that index
-/// its protocol axis.
+/// A model's BIDS identity: the grouping suffix its acquisitions are written
+/// and resolved under.
+///
+/// Which entities index that suffix's volumes lives in the grouping grammar
+/// (`rust-bids/src/default_grouping.yaml`), which is what actually assembles a
+/// collection. Stating it here as well gave the same fact two homes, and the
+/// copy here was never read, so the two could disagree in silence.
 pub struct BidsSpec {
     pub suffix: &'static str,
-    pub entities: &'static [EntityRole],
 }
 
 /// Resolved acquisition protocol, in BIDS-sidecar shape: one metadata map per
@@ -160,6 +154,49 @@ fn parse_model_config<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<C> {
 /// config-intrinsic validation — no protocol, no completeness check. Not
 /// fit-ready. The BIDS shell uses this to read a model's contract before it has
 /// resolved any protocol.
+/// A model module's four registry entry points, for the config type it owns.
+///
+/// The registry stores these as plain function pointers, so each model needs
+/// them as free functions in its own module; each is the same one-line
+/// delegation to the shared pipeline, differing only in the config type. Eight
+/// models times four functions was the same body and doc comment written
+/// thirty-two times, with nothing model-specific to get right or wrong.
+#[macro_export]
+macro_rules! model_entry_points {
+    ($config:ty) => {
+        /// Structural interrogation entry point: the model's shape without a
+        /// resolved protocol.
+        pub fn describe(
+            v: &serde_yaml::Value,
+        ) -> ::anyhow::Result<Box<dyn $crate::core::model::Model>> {
+            $crate::core::model::describe_model::<$config>(v)
+        }
+
+        /// Registry builder: the shared parse → ingest protocol → validate →
+        /// construct pipeline.
+        pub fn build(
+            v: &serde_yaml::Value,
+            proto: &$crate::core::model::Protocol,
+        ) -> ::anyhow::Result<Box<dyn $crate::core::model::Model>> {
+            $crate::core::model::build_model::<$config>(v, proto)
+        }
+
+        /// Registry dumper: the fully-resolved effective config as YAML.
+        pub fn dump(v: &serde_yaml::Value) -> ::anyhow::Result<String> {
+            $crate::core::model::dump_model::<$config>(v)
+        }
+
+        /// Registry option-surface entry point: every option this model
+        /// accepts, at its effective value, plus any validation complaint.
+        pub fn effective(
+            v: &serde_yaml::Value,
+            proto: &$crate::core::model::Protocol,
+        ) -> ::anyhow::Result<$crate::core::model::EffectiveConfig> {
+            $crate::core::model::effective_model::<$config>(v, proto)
+        }
+    };
+}
+
 pub fn describe_model<C: ModelConfig>(v: &serde_yaml::Value) -> AnyResult<Box<dyn Model>> {
     let mut cfg = parse_model_config::<C>(v)?;
     cfg.validate_options()
@@ -484,6 +521,92 @@ pub struct BidsVolume {
 pub struct Sample {
     pub params: BTreeMap<String, f64>,
     pub value: f64,
+}
+
+/// A `Series` whose volumes are told apart by one per-volume protocol key.
+///
+/// Most series models have a single acquisition axis: inversion time, echo
+/// time, flip angle, excitation repetition time. Each then needs the same four
+/// things, differing only in the key's name — the identity rows their
+/// `measurement()` declares, the tagged samples their `forward` emits, the
+/// signal their `fit` assembles back out, and the axis their `ingest_protocol`
+/// reads from resolved sidecars.
+///
+/// Written per model, the third of those is where a fit quietly goes wrong: an
+/// assembly that reads by position instead of by identity pairs every value
+/// with the wrong protocol row and produces a plausible, wrong map rather than
+/// an error. Stating the axis once means every model matching by value is the
+/// same code, not the same code retyped.
+///
+/// A model with more than one axis (qMT-SPGR, indexed by saturation angle *and*
+/// offset) owns its own rows; this is for the single-axis case only.
+#[derive(Debug, Clone, Copy)]
+pub struct SeriesAxis {
+    key: &'static str,
+}
+
+impl SeriesAxis {
+    pub const fn new(key: &'static str) -> Self {
+        Self { key }
+    }
+
+    /// The protocol key this axis is indexed by.
+    pub const fn key(&self) -> &'static str {
+        self.key
+    }
+
+    /// One identity row per acquired volume, in the model's canonical order.
+    /// These *are* the volume identities the shell builds (`build_volume_ids`).
+    pub fn rows(&self, values: &[f64]) -> Vec<BTreeMap<String, f64>> {
+        values
+            .iter()
+            .map(|&v| BTreeMap::from([(self.key.to_string(), v)]))
+            .collect()
+    }
+
+    /// A predicted signal tagged with those same identities, so each sample
+    /// matches the volume it belongs to.
+    pub fn samples(&self, values: &[f64], signal: impl IntoIterator<Item = f64>) -> Measurement {
+        Measurement::Series(
+            values
+                .iter()
+                .zip(signal)
+                .map(|(&v, value)| Sample {
+                    params: BTreeMap::from([(self.key.to_string(), v)]),
+                    value,
+                })
+                .collect(),
+        )
+    }
+
+    /// The measured signal in `values` order, matched by identity.
+    ///
+    /// A value with no matching sample is a mislabeled measurement, not a gap
+    /// to interpolate: the engine catches the panic and records the voxel as
+    /// unfitted. Values are assumed unique along the axis; first match wins.
+    pub fn assemble(&self, m: &Measurement, values: &[f64]) -> Vec<f64> {
+        let samples = m.series();
+        values
+            .iter()
+            .map(|&v| {
+                samples
+                    .iter()
+                    .find(|s| s.params.get(self.key) == Some(&v))
+                    .map(|s| s.value)
+                    .unwrap_or_else(|| panic!("measurement has no sample with {}={v}", self.key))
+            })
+            .collect()
+    }
+
+    /// This axis as the resolved protocol states it, empty when the sidecars
+    /// supplied nothing for it (the model then keeps its config's own).
+    pub fn ingest(&self, proto: &Protocol) -> Vec<f64> {
+        proto
+            .volumes
+            .iter()
+            .filter_map(|row| row.get(self.key).copied())
+            .collect()
+    }
 }
 
 /// Per-voxel measurement handed to a model. Read by identity, never by index.

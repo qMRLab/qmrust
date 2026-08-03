@@ -40,12 +40,14 @@ pub trait Model: Send + Sync {
     fn param_bounds(&self) -> Vec<(f64, f64)>;
     fn fixed_mask(&self) -> Vec<bool>;
     fn required_inputs(&self) -> Vec<InputSpec>;
+    fn sim_required_aux(&self) -> Vec<&'static str> { vec![] }
     fn measurement(&self) -> MeasurementKind;
 
     fn strategy(&self) -> FitStrategy { FitStrategy::Voxelwise }
 
     fn forward(&self, params: &[f64], aux: &Aux) -> Measurement;
     fn fit(&self, m: &Measurement, aux: &Aux) -> Vec<f64>;
+    fn fit_block(&self, ms: &[Measurement], aux: &[Aux]) -> Vec<Vec<f64>> { .. }
 
     fn n_volumes(&self) -> usize;
     fn bids_volume(&self, index: usize) -> BidsVolume;
@@ -179,11 +181,18 @@ before any data is resolved; `build` is the fit-ready path.
      own YAML sub-tree, with `validate_options()`/`validate_protocol()` methods.
    - pure math (signal equation + fitter).
    - `model.rs` — `impl Model for <Name>Model`, `impl ModelConfig for <Name>Config`
-     (the hooks above), and four one-line entry points:
-     `pub fn build(v, proto) { core::model::build_model::<C>(v, proto) }`,
-     `pub fn describe(v) { core::model::describe_model::<C>(v) }`,
-     `pub fn dump(v) { core::model::dump_model::<C>(v) }`, and
-     `pub fn effective(v, proto) { core::model::effective_model::<C>(v, proto) }`.
+     (the hooks above), and `crate::model_entry_points!(<Name>Config);`, which
+     expands to the four functions the registry stores as fn pointers
+     (`build`/`describe`/`dump`/`effective`). Each is a one-line delegation to
+     the shared pipeline, so there is nothing model-specific to write.
+   - If the measurement is a `Series` identified by **one** per-volume protocol
+     key (inversion time, echo time, flip angle, excitation TR), declare it as
+     `const AXIS: SeriesAxis = SeriesAxis::new("<Key>");` and use
+     `AXIS.rows`/`AXIS.samples`/`AXIS.assemble`/`AXIS.ingest`. That is the
+     model's whole identity handling: rows for `measurement()`, tagged samples
+     for `forward`, the signal `fit` assembles by identity, and the axis
+     `ingest_protocol` reads. A model with two axes (qMT-SPGR: angle *and*
+     offset) owns its own rows.
 2. Register the module in `models/mod.rs`.
 3. Add **one** `ModelEntry` to `registry::all()` in `registry.rs` (name +
    BIDS suffix + `build` + `describe` + `dump` + `effective` — the four
@@ -200,6 +209,17 @@ before any data is resolved; `build` is the fit-ready path.
    errors ("no set definition named `<SUFFIX>`") unless the dataset ships its
    own `--config` grouping. This is the one shell-side edit a new model needs;
    the CLI/wasm/`bidsify`/engine paths are all registry-driven.
+
+   That block is also the *only* home for which entities index the suffix.
+   `Model::bids()` names the suffix and nothing else, so the grouping grammar
+   and the model cannot disagree about it.
+
+   Which datatype directory the suffix is written to and read from is *not* a
+   model decision: `rust_bids::datatype_for_suffix` answers it for raw
+   acquisitions, preprocessed aux maps and derivative outputs alike, so a
+   transmit-field suffix lands in `fmap/` and a weighted series in `anat/`
+   without the model saying anything. A suffix outside the families that rule
+   knows must be added there rather than left to inherit the `anat` default.
 5. Fill in that entry's `doc: ModelDoc` — title, `Category`, one-paragraph
    summary, LaTeX equation, `symbols` (each naming a real `param_names()`
    entry), BibTeX citation keys added to `docs/references.bib`, `source_dir`,
@@ -212,9 +232,34 @@ before any data is resolved; `build` is the fit-ready path.
    The model's page, its gallery card and its sidebar entry are generated from
    that metadata — there is no page to write by hand. CI fails if the committed
    pages are stale.
-6. Tests: forward→fit round-trip; config parse/validate; `ingest_protocol`
-   composes from a resolved `Protocol`; if `bids_outputs()` is non-empty,
-   assert every entry names a real `output_names()` value.
+
+   `Category` is the taxonomy's single home: each variant names the `family` a
+   reader browses by, an optional `subgroup` within it, the `order` families and
+   subgroups are read in, a Lucide `icon`, and the `slug` its documentation
+   directory takes. The gallery and the playground's picker both rebuild the
+   whole tree by sorting on `order` and grouping consecutive runs, so a new
+   category needs no edit in either. Several categories may share a `slug` (both
+   magnetization-transfer ones do), but only within one family.
+6. Tests: **only what is specific to this model.** The contract every model
+   owes is already asserted once, over `registry::all()`, in
+   `crates/qmrust-core/tests/properties.rs` — `forward` yields one sample per
+   volume, `fit` one value per declared output, params stay in bounds,
+   `bids_outputs()` names real outputs, a `Series` assembles by identity and
+   rejects an identity it does not know, a model needing an acquisition refuses
+   to build without one. A new model is covered by all of them the moment it is
+   registered, so do not copy them into the model's own module.
+
+   What belongs with the model is what only it can state: the forward→fit
+   round-trip against known truth, agreement with qMRLab where the source
+   prescribes something unobvious (an out-of-domain branch, a clamp), config
+   parse/validate, and any labelling rule of its own.
+
+   Every *fitting option* the model adds also needs a sentence in `HELP`
+   (`docs/playground/labels.js`) saying what choosing it costs. An acquisition
+   field needs none: it is named by the quantity it carries.
+   `scripts/tests/option_help.test.mjs` reads the option surface out of
+   `qmrust catalog` and fails naming any option without one, so this is
+   enforced rather than remembered.
 7. Two `--config` recipes (`recipes/README.md`): `recipes/non-bids/<name>_config.yaml`
    **with** the acquisition arrays (the non-BIDS/`--mat`/`bidsify` protocol source),
    mask via the `--mask` flag; and `recipes/bids/<name>_config.yaml` **without** them

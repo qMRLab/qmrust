@@ -6,7 +6,7 @@
 //! `MToff` level of 1 so the sim round-trip recovers a known MTR exactly.
 
 use crate::core::model::{
-    Aux, BidsSpec, BidsVolume, EntityRole, InputSpec, Measurement, MeasurementKind, Model, Protocol,
+    Aux, BidsSpec, BidsVolume, InputSpec, Measurement, MeasurementKind, Model,
 };
 use crate::models::mt_ratio::config::MtRatioConfig;
 use crate::models::mt_ratio::fit;
@@ -19,8 +19,6 @@ pub struct MtRatioModel;
 /// Volume roles, in acquisition order. Index `i` maps to `bids_volume(i)` and
 /// to the BIDS grouping's `named_set` role of the same name.
 const ROLES: &[&str] = &["MTon", "MToff"];
-const MTR_ENTITIES: &[EntityRole] = &[EntityRole::Mt];
-
 impl MtRatioModel {
     pub fn new(_cfg: MtRatioConfig) -> Self {
         Self
@@ -79,10 +77,7 @@ impl Model for MtRatioModel {
         }
     }
     fn bids(&self) -> Option<BidsSpec> {
-        Some(BidsSpec {
-            suffix: "MTR",
-            entities: MTR_ENTITIES,
-        })
+        Some(BidsSpec { suffix: "MTR" })
     }
     fn bids_outputs(&self) -> Vec<(&'static str, &'static str, &'static str)> {
         vec![("MTR", "MTRmap", "%")]
@@ -102,34 +97,12 @@ impl crate::core::model::ModelConfig for MtRatioConfig {
     }
 }
 
-/// Structural interrogation entry point (see [`describe_model`](crate::core::model::describe_model)).
-pub fn describe(v: &serde_yaml::Value) -> Result<Box<dyn Model>> {
-    crate::core::model::describe_model::<MtRatioConfig>(v)
-}
-
-/// Registry builder (see [`build_model`](crate::core::model::build_model)).
-pub fn build(v: &serde_yaml::Value, proto: &Protocol) -> Result<Box<dyn Model>> {
-    crate::core::model::build_model::<MtRatioConfig>(v, proto)
-}
-
-/// Registry dumper (see [`dump_model`](crate::core::model::dump_model)).
-pub fn dump(v: &serde_yaml::Value) -> Result<String> {
-    crate::core::model::dump_model::<MtRatioConfig>(v)
-}
-
-/// Registry option-surface entry point (see
-/// [`effective_model`](crate::core::model::effective_model)): every option this
-/// model accepts, at its effective value, plus any validation complaint.
-pub fn effective(
-    v: &serde_yaml::Value,
-    proto: &Protocol,
-) -> Result<crate::core::model::EffectiveConfig> {
-    crate::core::model::effective_model::<MtRatioConfig>(v, proto)
-}
+crate::model_entry_points!(MtRatioConfig);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::model::Protocol;
 
     fn mtr_value() -> serde_yaml::Value {
         serde_yaml::from_str("model: mt_ratio\n").unwrap()
@@ -178,18 +151,6 @@ mod tests {
         let off = m.bids_volume(1);
         assert_eq!(off.entities, vec![("mt", "off".to_string())]);
         assert_eq!(off.sidecar["MTState"], json!(false));
-    }
-
-    #[test]
-    fn bids_outputs_reference_real_output_names() {
-        let m = build(&mtr_value(), &Protocol::default()).unwrap();
-        let names = m.output_names();
-        for (out, _suffix, _units) in m.bids_outputs() {
-            assert!(
-                names.iter().any(|n| n == out),
-                "bids_outputs references '{out}', not in output_names {names:?}"
-            );
-        }
     }
 
     #[test]

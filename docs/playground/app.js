@@ -45,7 +45,7 @@ import { wireSegment } from "./segment.js";
 import { clearMapHover, onLocation, onMapHover, redrawCurve, resizeCurve } from "./curve.js";
 import { closeFileModal, closeJsonModal, closeNotice, openMapModal } from "./modal.js";
 import { onBrowse, onDrop } from "./drop.js";
-import { THEMES, initTheme, onThemeChange, setFamily, setMode } from "./themes.js";
+import { THEMES, initTheme, nextMode, onThemeChange, setFamily, setMode } from "./themes.js";
 import { createLevelControl, repaintLevels } from "./level.js";
 import { fitSlice } from "./fit.js";
 import { loadModel } from "./model.js";
@@ -202,17 +202,25 @@ function wireTheme() {
     $("panel-logo").src =
       document.documentElement.dataset.mode === "light" ? "./logo_light.png" : "./logo_dark.png";
     $("theme-pick").title = `Theme: ${THEMES.find((t) => t.id === select.value)?.label ?? ""}`;
-    // A two-state control, not two switches: each half selects its own mode, so
-    // clicking the one already lit does nothing.
+    // One switch drawn as two halves, not two buttons that happen to touch.
+    // The lit half reports the mode; either half flips it. A control that
+    // ignores a click because you hit the side already lit is two buttons
+    // wearing a switch's clothes, and it reads as broken.
     const dark = document.documentElement.dataset.mode === "dark";
+    const toLabel = `Switch to ${dark ? "light" : "dark"} mode`;
     for (const [id, on] of [["mode-dark", dark], ["mode-light", !dark]]) {
       $(id).classList.toggle("active", on);
-      $(id).setAttribute("aria-pressed", String(on));
+      // `aria-pressed` would describe each half as its own toggle. This is one
+      // switch: both halves do the same thing, and say so.
+      $(id).removeAttribute("aria-pressed");
+      $(id).title = toLabel;
+      $(id).setAttribute("aria-label", toLabel);
     }
   });
   select.onchange = (e) => setFamily(e.target.value);
-  $("mode-light").onclick = () => setMode("light");
-  $("mode-dark").onclick = () => setMode("dark");
+  const flipMode = () => setMode(nextMode(document.documentElement.dataset.mode));
+  $("mode-light").onclick = flipMode;
+  $("mode-dark").onclick = flipMode;
 }
 
 // The model picker, the recipe editor, and Fit.
