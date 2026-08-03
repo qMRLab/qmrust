@@ -484,6 +484,10 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
         # never a filename guessed here.
         "config": (repo_root / model["recipes"]["non_bids"]).read_text(),
         "config_bids": (repo_root / model["recipes"]["bids"]).read_text(),
+        # Three recipes, because a recipe is protocol + options and where the
+        # protocol comes from differs: the sim recipe carries the acquisition
+        # and a sim: block of ground-truth parameters, and reads no image data.
+        "config_sim": (repo_root / model["recipes"]["sim"]).read_text(),
         # The dataset archive this model's data lives in, by the same
         # `ds-<lowercased BIDS suffix>` rule `make_bids_examples.sh` builds and
         # zips (resolved against `sources.json`'s host).
@@ -554,7 +558,14 @@ def main(argv=None):
         names = sorted(
             m["name"] for m in models if (data_dir / f"{m['name']}.json").exists()
         )
-        (data_dir / "index.json").write_text(json.dumps({"models": names}, indent=1))
+        # The accepted sim.noise.type values are a global fact from NoiseKind,
+        # not a per-model one, so they ride the index rather than each payload.
+        catalog = json.loads(args.catalog.read_text())
+        (data_dir / "index.json").write_text(
+            json.dumps(
+                {"models": names, "noise_kinds": catalog["noise_kinds"]}, indent=1
+            )
+        )
     return 0
 
 

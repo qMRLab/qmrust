@@ -136,5 +136,6 @@
     "MTR": 53.84615384615385
    }
   }
- ]
+ ],
+ "config_sim": "model: mt_sat\n\n# Simulation: the acquisition comes from this file. Per-weighting nominal flip\n# angle (deg) and repetition time (s), as the MTS sidecars carry them.\nmtw: { flip_angle: 6, repetition_time: 0.028 }\npdw: { flip_angle: 6, repetition_time: 0.028 }\nt1w: { flip_angle: 20, repetition_time: 0.018 }\n\nb1_correction_factor: 0.4\nexport_mtr: true\n\n# Ground truth: white matter at 3 T. A is the apparent signal amplitude; MTSAT\n# is in percent, near 5% in white matter and 2% in grey.\nsim:\n  params: { A: 1000.0, T1: 1.0, MTSAT: 3.0 }\n  noise: { type: rician, snr: 100.0 }\n  seed: 0\n  trials: 100\n  sweep: { param: MTSAT, start: 1.0, stop: 8.0, steps: 10 }\n  distributions:\n    T1: { mean: 1.0, std: 0.15 }\n    MTSAT: { mean: 3.0, std: 0.5 }\n"
 }

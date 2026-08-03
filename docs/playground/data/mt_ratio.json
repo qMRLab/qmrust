@@ -100,5 +100,6 @@
     "MTR": 7.694824146881754
    }
   }
- ]
+ ],
+ "config_sim": "model: mt_ratio\n\n# Simulation: MTR = 100 * (MToff - MTon) / MToff. There is no acquisition\n# protocol and no fit options, so the model name and the sim block are the\n# whole recipe.\n#\n# Ground truth: white matter at 3 T, MTR in percent.\nsim:\n  params: { MTR: 40.0 }\n  noise: { type: rician, snr: 100.0 }\n  seed: 0\n  trials: 100\n  sweep: { param: MTR, start: 5.0, stop: 60.0, steps: 10 }\n  distributions:\n    MTR: { mean: 40.0, std: 5.0 }\n"
 }

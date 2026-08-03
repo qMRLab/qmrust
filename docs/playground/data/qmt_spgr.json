@@ -255,5 +255,6 @@
     "T2r": 1.1935427445800394e-05
    }
   }
- ]
+ ],
+ "config_sim": "model: qmt_spgr\nqmt_spgr:\n  model: Ramani\n  fitting:\n    use_r1map_to_constrain_r1f: false\n    fx: [false, false, true, true, false, false]\nsim:\n  params: { F: 0.15, kr: 25.0, R1f: 1.0, R1r: 1.0, T2f: 0.028, T2r: 1.1e-5 }\n  b1: 1.0\n  b0: 0.0\n  noise: { type: rician, snr: 100.0 }\n  seed: 0\n  trials: 100\n  sweep: { param: F, start: 0.05, stop: 0.30, steps: 10 }\n  distributions:\n    F:  { mean: 0.15, std: 0.02 }\n    kr: { mean: 25.0, std: 3.0 }\n"
 }
