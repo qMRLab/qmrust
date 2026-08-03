@@ -17,6 +17,9 @@ export function isSimMode() {
 // written down here: the noise kinds come from the index, and the sweepable
 // parameters are the model's own parameter list.
 export function seedSimRecipe(meta) {
+  // A model load ends the run that was in flight for the previous model: its
+  // report belongs to parameters that no longer exist on screen.
+  cancelSim({ announce: false });
   const canSim = Boolean(meta.config_sim);
   // A model whose payload cannot simulate must not leave the page stranded in
   // a mode it cannot serve. Leaving that mode first also keeps the departing
@@ -24,6 +27,7 @@ export function seedSimRecipe(meta) {
   if (!canSim && isSimMode()) setPageMode("data");
   app.simEditorText = meta.config_sim ?? "";
   app.simReport = null;
+  renderSimReport(null);
   if (canSim) {
     app.enumFields.set("sim.sweep.param", meta.params);
     if (app.noiseKinds?.length) app.enumFields.set("sim.noise.type", app.noiseKinds);
@@ -37,6 +41,9 @@ export function seedSimRecipe(meta) {
 function setPageMode(mode) {
   const next = mode === "sim" ? "sim" : "data";
   if (next === "sim" && $("page-sim").disabled) return;
+  // Leaving Simulate mode ends any run in flight: its result would otherwise
+  // land under whatever the Data page goes on to show.
+  if (app.pageMode === "sim" && next !== "sim") cancelSim({ announce: false });
   // Park the live text under the mode being left, so edits survive the switch.
   if (app.pageMode === "sim") app.simEditorText = editor.text;
   else app.dataEditorText = editor.text;
@@ -80,14 +87,18 @@ function ensureWorker() {
   return worker;
 }
 
-function cancelSim() {
+// A button click cancels a run the reader is watching, and announces it. A
+// model or page-mode change aborts a run whose context just vanished; the
+// caller sets its own status right after, so it stays silent rather than
+// stomping (or being stomped by) that message.
+function cancelSim({ announce = true } = {}) {
   if (!pending) return;
   worker?.terminate();
   worker = null;
   pending = 0;
   hideProgress();
   setRunning(false);
-  status("Simulation cancelled", "info");
+  if (announce) status("Simulation cancelled", "info");
 }
 
 // While a run is in flight the primary button cancels it: a reader who started
