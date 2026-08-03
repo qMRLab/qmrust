@@ -31,3 +31,28 @@ export function statsRows(report) {
     rmse: s.rmse,
   }));
 }
+
+// Positions are the honest fallback label: a sample the caller has no identity
+// for is still a sample, and numbering it says only where it sits.
+function axisLabels(count, labels = []) {
+  return Array.from({ length: count }, (_, k) => labels[k] ?? String(k + 1));
+}
+
+export function signalSeries(report, labels = []) {
+  const values = report?.signal ?? [];
+  return { values, labels: axisLabels(values.length, labels) };
+}
+
+// Three curves: the noise-free signal at the truth, the first trial's noisy
+// measurement, and the forward signal at what that trial fitted. Read together
+// they answer whether the fit recovered the truth, which is the question the
+// mode exists for. All three come from the report; none is recomputed here.
+export function singleVoxelSeries(report, labels = []) {
+  const noisy = report?.noisy_signal ?? [];
+  return {
+    clean: report?.clean_signal ?? [],
+    noisy,
+    fitted: report?.fitted_signal ?? [],
+    labels: axisLabels(noisy.length, labels),
+  };
+}

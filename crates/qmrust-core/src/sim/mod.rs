@@ -160,6 +160,8 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
     }
     let stats = compute_stats(model.as_ref(), &truth, &per_trial);
     let names = model.param_names();
+    let fitted_params = fitted_to_param_vec(model.as_ref(), &per_trial[0]);
+    let fitted_signal = measurement_values(model.as_ref(), &model.forward(&fitted_params, &aux));
     Ok(SingleVoxelReport {
         mode: "single-voxel".into(),
         model: cfg.model.clone(),
@@ -169,6 +171,8 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
             .zip(truth.iter().copied())
             .collect(),
         noisy_signal: first_noisy,
+        clean_signal: clean.clone(),
+        fitted_signal,
         trials: sim.trials,
         fitted_names: model.output_names(),
         stats,
@@ -355,16 +359,7 @@ pub fn run_sim(mode: &str, config: PathBuf, output: PathBuf, plot: Option<PathBu
             report::print_stats(&format!("single-voxel ({} trials)", r.trials), &r.stats);
             report::write_json(&r, &output)?;
             if let Some(p) = plot {
-                // Rebuild clean + fitted curves for the plot.
-                let model = build_model(&cfg, &raw)?;
-                let aux = sim_aux(sim);
-                let truth = param_vector(model.as_ref(), sim)?;
-                let clean = measurement_values(model.as_ref(), &model.forward(&truth, &aux));
-                // fitted-curve = forward of the first trial's fitted params, mapped by name.
-                let fitted_params = fitted_to_param_vec(model.as_ref(), &r.per_trial[0]);
-                let fitted_curve =
-                    measurement_values(model.as_ref(), &model.forward(&fitted_params, &aux));
-                plot::plot_single_voxel(&clean, &r.noisy_signal, &fitted_curve, &p)?;
+                plot::plot_single_voxel(&r.clean_signal, &r.noisy_signal, &r.fitted_signal, &p)?;
                 eprintln!("wrote plot {:?}", p);
             }
         }
@@ -473,6 +468,28 @@ sim:
         let r = run_single_voxel(&cfg, &raw).unwrap();
         let f = r.stats.iter().find(|s| s.name == "F").unwrap();
         assert!((f.mean - 0.15).abs() < 0.03, "F mean: {}", f.mean);
+    }
+
+    #[test]
+    fn single_voxel_carries_the_three_curves_a_recovery_plot_needs() {
+        // Whether the fit recovered the truth is a question about three curves,
+        // so the report carries all three rather than leaving two to be
+        // recomputed by every caller that wants to draw them.
+        let (cfg, raw) = qmt_cfg("  noise: { type: gaussian, snr: 100.0 }\n  trials: 3\n");
+        let r = run_single_voxel(&cfg, &raw).unwrap();
+        let n = r.noisy_signal.len();
+        assert_eq!(r.clean_signal.len(), n, "clean covers every volume");
+        assert_eq!(r.fitted_signal.len(), n, "fitted covers every volume");
+        assert!(
+            r.clean_signal.iter().all(|v| v.is_finite()),
+            "a noise-free forward signal must be finite",
+        );
+        // The clean curve is the forward signal at the truth, so it is not the
+        // noisy one it is plotted against.
+        assert!(
+            r.clean_signal != r.noisy_signal,
+            "noise was requested, so the clean curve must differ from the noisy one",
+        );
     }
 
     #[test]

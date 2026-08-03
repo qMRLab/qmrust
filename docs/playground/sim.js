@@ -5,8 +5,9 @@
 import { $, hideProgress, setProgress, showProgress, status } from "./dom.js";
 import { app, editor } from "./state.js";
 import { setEditorText } from "./recipe.js";
-import { SIM_MODES, recipeForMode, statsRows } from "./sim-series.js";
+import { SIM_MODES, recipeForMode, statsRows, signalSeries, singleVoxelSeries } from "./sim-series.js";
 import { showNotice } from "./modal.js";
+import * as echarts from "./vendor/echarts.js";
 
 export function isSimMode() {
   return app.pageMode === "sim";
@@ -171,8 +172,162 @@ function setSimMode(id) {
   renderSimReport(null);
 }
 
+let chart = null;
+// The last drawn report, so a theme change can repaint in the new palette
+// without re-running the simulation.
+let drawn = null;
+
+function ensureChart() {
+  const host = $("sim-chart");
+  if (!chart) {
+    chart = echarts.init(host, null, { renderer: "canvas" });
+    new ResizeObserver(() => chart.resize()).observe(host);
+  }
+  return chart;
+}
+
+export function resizeSimChart() {
+  chart?.resize();
+}
+
+export function redrawSimChart() {
+  if (drawn) drawSim(drawn);
+}
+
+// The palette every sim chart is drawn in, read from the theme's own tokens so
+// a family change needs no second definition here.
+function palette() {
+  const style = getComputedStyle(document.documentElement);
+  const read = (token) => style.getPropertyValue(token).trim();
+  return {
+    ink: read("--ink"),
+    muted: read("--muted"),
+    line: read("--line"),
+    accent: read("--accent"),
+    rust: read("--rust"),
+    panel: read("--panel"),
+  };
+}
+
+// Axes, tooltip and legend styling shared by every sim chart, so the four modes
+// read as one family rather than four charts that happen to sit in one card.
+function baseOption(p, { xName, yName, xData, legend = [] }) {
+  return {
+    animation: false,
+    grid: { left: 64, right: 20, top: 30, bottom: 44, containLabel: false },
+    legend: legend.length
+      ? { data: legend, top: 0, textStyle: { color: p.muted, fontSize: 11 }, inactiveColor: p.line }
+      : undefined,
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: p.panel,
+      borderColor: p.line,
+      textStyle: { color: p.ink, fontSize: 11 },
+      axisPointer: { type: "cross", label: { backgroundColor: p.muted } },
+    },
+    xAxis: {
+      type: "category",
+      data: xData,
+      name: xName,
+      nameLocation: "middle",
+      nameGap: 26,
+      nameTextStyle: { color: p.muted, fontSize: 10 },
+      axisLine: { lineStyle: { color: p.line } },
+      axisLabel: { color: p.muted, fontSize: 10, hideOverlap: true },
+      axisTick: { lineStyle: { color: p.line } },
+    },
+    yAxis: {
+      type: "value",
+      scale: true,
+      name: yName,
+      nameTextStyle: { color: p.muted, fontSize: 10, align: "right" },
+      axisLine: { lineStyle: { color: p.line } },
+      axisLabel: { color: p.muted, fontSize: 10 },
+      splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
+    },
+  };
+}
+
+function drawSim(report) {
+  drawn = report;
+  const p = palette();
+  const labels = app.current?.meta?.labels ?? [];
+  if (report.mode === "signal") {
+    const s = signalSeries(report, labels);
+    ensureChart().setOption(
+      {
+        ...baseOption(p, { xName: "acquisition", yName: "signal", xData: s.labels }),
+        series: [{
+          name: "predicted",
+          type: "line",
+          showSymbol: true,
+          symbolSize: 6,
+          lineStyle: { color: p.rust, width: 2 },
+          itemStyle: { color: p.rust },
+          data: s.values,
+        }],
+      },
+      { notMerge: true },
+    );
+    $("sim-note").textContent =
+      "Noise-free forward signal at the ground-truth parameters.";
+    return;
+  }
+  if (report.mode === "single-voxel") {
+    const s = singleVoxelSeries(report, labels);
+    ensureChart().setOption(
+      {
+        ...baseOption(p, {
+          xName: "acquisition",
+          yName: "signal",
+          xData: s.labels,
+          legend: ["truth", "noisy", "fitted"],
+        }),
+        series: [
+          {
+            name: "truth",
+            type: "line",
+            showSymbol: false,
+            lineStyle: { color: p.muted, width: 1.5, type: "dashed" },
+            itemStyle: { color: p.muted },
+            data: s.clean,
+          },
+          {
+            name: "noisy",
+            type: "scatter",
+            symbolSize: 7,
+            itemStyle: { color: p.accent },
+            data: s.noisy,
+          },
+          {
+            name: "fitted",
+            type: "line",
+            showSymbol: false,
+            lineStyle: { color: p.rust, width: 2 },
+            itemStyle: { color: p.rust },
+            data: s.fitted,
+          },
+        ],
+      },
+      { notMerge: true },
+    );
+    $("sim-note").textContent =
+      `The first of ${report.trials} noisy trials, against the truth it was `
+      + "generated from and the curve fitted back from it. The table reports every trial.";
+    return;
+  }
+  $("sim-note").textContent = "";
+}
+
 function renderSimReport(report) {
   renderStatsTable(report);
+  if (!report) {
+    drawn = null;
+    chart?.clear();
+    $("sim-note").textContent = "";
+    return;
+  }
+  drawSim(report);
 }
 
 function renderStatsTable(report) {

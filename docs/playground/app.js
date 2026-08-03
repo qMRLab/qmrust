@@ -50,7 +50,7 @@ import { createLevelControl, repaintLevels } from "./level.js";
 import { fitSlice } from "./fit.js";
 import { loadModel } from "./model.js";
 import { buildModelTree, compareByTaxonomy } from "./picker.js";
-import { isSimMode, runSim, wireSimControls } from "./sim.js";
+import { isSimMode, redrawSimChart, resizeSimChart, runSim, wireSimControls } from "./sim.js";
 
 // ---------------------------------------------------------------------------
 // Tooltips for the panel info buttons. One element, moved and refilled — a
@@ -126,6 +126,7 @@ function setRecipeCollapsed(collapsed) {
   btn.setAttribute("aria-expanded", String(!collapsed));
   // The chart and viewers are sized by the space this frees or takes.
   resizeCurve();
+  resizeSimChart();
   sizeViewers();
 }
 
@@ -184,6 +185,7 @@ function wireTheme() {
     applyViewerTheme();
     repaintLevels();
     redrawCurve();
+    redrawSimChart();
   });
   const select = $("theme-family");
   for (const { id, label } of THEMES) {

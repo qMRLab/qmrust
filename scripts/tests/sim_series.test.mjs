@@ -1,7 +1,13 @@
 // Run: node --test scripts/tests/*.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
-import { recipeForMode, SIM_MODES, statsRows } from "../../docs/playground/sim-series.js";
+import {
+  recipeForMode,
+  SIM_MODES,
+  statsRows,
+  signalSeries,
+  singleVoxelSeries,
+} from "../../docs/playground/sim-series.js";
 
 test("each page mode edits its own recipe", () => {
   const texts = { dataText: "model: a", simText: "model: a\nsim: {}" };
@@ -35,4 +41,42 @@ test("stats rows come straight from the report's own stats", () => {
 
 test("a report with no stats yields no rows rather than throwing", () => {
   assert.deepEqual(statsRows({ mode: "signal", signal: [1, 2] }), []);
+});
+
+test("a signal report plots its own vector", () => {
+  const s = signalSeries({ mode: "signal", signal: [3, 2, 1] });
+  assert.deepEqual(s.values, [3, 2, 1]);
+  assert.deepEqual(s.labels, ["1", "2", "3"]);
+});
+
+test("a signal report labels its points from the model's volume identities", () => {
+  const s = signalSeries({ mode: "signal", signal: [3, 2] }, ["TI=0.35", "TI=0.5"]);
+  assert.deepEqual(s.labels, ["TI=0.35", "TI=0.5"]);
+});
+
+test("labels shorter than the signal fall back to positions for the rest", () => {
+  // A Series model whose fit excludes a volume returns fewer samples than the
+  // acquisition has, so the two lengths genuinely differ.
+  const s = signalSeries({ mode: "signal", signal: [3, 2, 1] }, ["a"]);
+  assert.deepEqual(s.labels, ["a", "2", "3"]);
+});
+
+test("single-voxel plots the three curves a recovery reading needs", () => {
+  const s = singleVoxelSeries({
+    mode: "single-voxel",
+    clean_signal: [10, 8, 6],
+    noisy_signal: [10.2, 7.7, 6.1],
+    fitted_signal: [10.1, 7.9, 6.05],
+    stats: [{ name: "T1", truth: 1, mean: 1, bias: 0, std: 0, rmse: 0 }],
+  });
+  assert.deepEqual(s.clean, [10, 8, 6]);
+  assert.deepEqual(s.noisy, [10.2, 7.7, 6.1]);
+  assert.deepEqual(s.fitted, [10.1, 7.9, 6.05]);
+});
+
+test("a single-voxel report missing a curve yields an empty one rather than throwing", () => {
+  const s = singleVoxelSeries({ mode: "single-voxel", noisy_signal: [1, 2] });
+  assert.deepEqual(s.noisy, [1, 2]);
+  assert.deepEqual(s.clean, []);
+  assert.deepEqual(s.fitted, []);
 });

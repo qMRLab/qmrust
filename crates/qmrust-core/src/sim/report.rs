@@ -28,6 +28,11 @@ pub struct SingleVoxelReport {
     pub model: String,
     pub truth: Vec<(String, f64)>,
     pub noisy_signal: Vec<f64>,
+    /// The noise-free forward signal at the ground truth, and the forward
+    /// signal at the first trial's fitted parameters. The three curves a
+    /// recovery plot needs travel together, so no caller recomputes them.
+    pub clean_signal: Vec<f64>,
+    pub fitted_signal: Vec<f64>,
     pub trials: usize,
     pub fitted_names: Vec<String>,
     pub stats: Vec<ParamStat>,
