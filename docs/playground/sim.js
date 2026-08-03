@@ -12,6 +12,7 @@ import {
   signalSeries,
   singleVoxelSeries,
   sensitivitySeries,
+  montecarloBoxes,
 } from "./sim-series.js";
 import { showNotice } from "./modal.js";
 import { LABELS } from "./draw.js";
@@ -426,6 +427,48 @@ function drawSim(report) {
     $("sim-note").textContent =
       `Bias against ${report.swept_param}, as a percentage of the truth at each `
       + "point. The band is plus and minus one standard deviation over the trials.";
+    return;
+  }
+  if (report.mode === "montecarlo") {
+    const boxes = montecarloBoxes(report);
+    // Errors are in each parameter's own units, so one shared value axis would
+    // flatten every small one. A category axis of parameters with a log-free
+    // shared axis is still the honest reading here because the quantity plotted
+    // is an error, and a reader compares a box against its own zero line.
+    ensureChart().setOption(
+      {
+        ...baseOption(p, {
+          xName: "parameter",
+          yName: "error (fitted minus truth)",
+          xData: boxes.map((b) => b.name),
+        }),
+        tooltip: {
+          trigger: "item",
+          backgroundColor: p.panel,
+          borderColor: p.line,
+          textStyle: { color: p.ink, fontSize: 11 },
+        },
+        series: [{
+          type: "boxplot",
+          data: boxes.map((b) => ({
+            value: b.box,
+            itemStyle: { color: `${p.accent}55`, borderColor: p.accent, borderWidth: 1.4 },
+          })),
+          boxWidth: [12, 44],
+          markLine: {
+            silent: true,
+            symbol: "none",
+            label: { show: false },
+            lineStyle: { color: p.line, type: "dashed" },
+            data: [{ yAxis: 0 }],
+          },
+        }],
+      },
+      { notMerge: true },
+    );
+    $("sim-note").textContent =
+      `Error over ${report.trials} draws, per parameter. Whiskers span the full `
+      + "range, so a fit that failed at a bound is visible rather than hidden.";
     return;
   }
   $("sim-note").textContent = "";

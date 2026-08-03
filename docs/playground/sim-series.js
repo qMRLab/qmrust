@@ -105,3 +105,37 @@ export function sensitivitySeries(report) {
     }),
   };
 }
+
+// Linear-interpolated quantile of an already-sorted array, which is the
+// convention ECharts' own boxplot transform uses.
+function quantile(sorted, q) {
+  if (!sorted.length) return NaN;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+// One box per reported parameter, over the trial errors the report carries. The
+// whiskers are the full range rather than 1.5 IQR: a fit that failed at a
+// boundary is exactly what a reader is looking for here, and hiding it as an
+// outlier would be the wrong default.
+export function montecarloBoxes(report) {
+  const rows = report?.per_trial_error ?? [];
+  const stats = report?.stats ?? [];
+  if (!rows.length || !stats.length) return [];
+  return stats.map((s, j) => {
+    const sorted = rows.map((row) => row[j]).filter(Number.isFinite).sort((a, b) => a - b);
+    return {
+      name: s.name,
+      box: [
+        sorted[0],
+        quantile(sorted, 0.25),
+        quantile(sorted, 0.5),
+        quantile(sorted, 0.75),
+        sorted[sorted.length - 1],
+      ],
+      outliers: [],
+    };
+  });
+}

@@ -8,6 +8,7 @@ import {
   signalSeries,
   singleVoxelSeries,
   sensitivitySeries,
+  montecarloBoxes,
 } from "../../docs/playground/sim-series.js";
 
 test("each page mode edits its own recipe", () => {
@@ -181,4 +182,28 @@ test("the band straddles the bias line whenever the std exceeds the bias", () =>
   const upper = (-0.09838 + 1.311) * scale;
   assert.ok(mtr.lower[0] < 0, "the lower edge is negative when bias - std is negative");
   assert.equal(mtr.lower[0] + mtr.band[0], upper);
+});
+
+test("a montecarlo report becomes one box per reported parameter", () => {
+  const report = {
+    mode: "montecarlo",
+    trials: 5,
+    stats: [
+      { name: "T1", truth: 1, mean: 1, bias: 0, std: 0.1, rmse: 0.1 },
+      { name: "M0", truth: 1000, mean: 1000, bias: 0, std: 10, rmse: 10 },
+    ],
+    per_trial_error: [
+      [1, 10], [2, 20], [3, 30], [4, 40], [5, 50],
+    ],
+  };
+  const boxes = montecarloBoxes(report);
+  assert.deepEqual(boxes.map((b) => b.name), ["T1", "M0"]);
+  // Five sorted values: min 1, median 3, max 5.
+  assert.equal(boxes[0].box[0], 1);
+  assert.equal(boxes[0].box[2], 3);
+  assert.equal(boxes[0].box[4], 5);
+});
+
+test("a report with no per-trial errors yields no boxes rather than throwing", () => {
+  assert.deepEqual(montecarloBoxes({ mode: "montecarlo", stats: [], per_trial_error: [] }), []);
 });

@@ -327,6 +327,7 @@ pub fn run_montecarlo(cfg: &Config, raw: &serde_yaml::Value) -> Result<MonteCarl
 
     // Stats: bias/rmse against each voxel's own drawn truth (averaged).
     let mut stats = Vec::new();
+    let mut error_columns: Vec<Vec<f64>> = Vec::new();
     for (pi, name) in names.iter().enumerate() {
         let Some(fi) = model.output_names().iter().position(|n| n == name) else {
             continue;
@@ -347,12 +348,18 @@ pub fn run_montecarlo(cfg: &Config, raw: &serde_yaml::Value) -> Result<MonteCarl
             bias,
             rmse,
         });
+        error_columns.push(errs);
     }
+    // stats is one row per reported parameter; the report is one row per trial.
+    let per_trial_error: Vec<Vec<f64>> = (0..sim.trials)
+        .map(|t| error_columns.iter().map(|col| col[t]).collect())
+        .collect();
     Ok(MonteCarloReport {
         mode: "montecarlo".into(),
         model: cfg.model.clone(),
         trials: sim.trials,
         stats,
+        per_trial_error,
     })
 }
 
@@ -531,6 +538,34 @@ sim:
         let r = run_montecarlo(&cfg, &raw).unwrap();
         assert_eq!(r.trials, 5);
         assert!(!r.stats.is_empty());
+    }
+
+    #[test]
+    fn montecarlo_reports_every_trials_error_aligned_with_its_stats() {
+        // The summary alone cannot describe a distribution's shape, so the
+        // report carries the errors the stats were computed from.
+        let (cfg, raw) =
+            qmt_cfg("  trials: 7\n  distributions:\n    F: { mean: 0.15, std: 0.01 }\n");
+        let r = run_montecarlo(&cfg, &raw).unwrap();
+        assert_eq!(r.per_trial_error.len(), 7, "one row per trial");
+        for row in &r.per_trial_error {
+            assert_eq!(
+                row.len(),
+                r.stats.len(),
+                "one column per reported parameter"
+            );
+        }
+        // The reported bias is the mean of the errors reported beside it.
+        for (j, s) in r.stats.iter().enumerate() {
+            let mean = r.per_trial_error.iter().map(|row| row[j]).sum::<f64>() / 7.0;
+            assert!(
+                (mean - s.bias).abs() < 1e-12,
+                "{}: bias {} is not the mean error {}",
+                s.name,
+                s.bias,
+                mean
+            );
+        }
     }
 
     #[test]
