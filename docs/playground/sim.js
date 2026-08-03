@@ -283,6 +283,73 @@ function baseOption(p, { xName, yName, xData, legend = [] }) {
   };
 }
 
+// One panel per reported parameter, each with its own y axis: a T1 error of
+// 0.1 s and an `a` error of 12 cannot share a scale, and forcing them onto
+// one would flatten the smaller to an invisible line. This is `measure.js`'s
+// `chartOption` pattern (one grid/xAxis/yAxis triple per item, laid out
+// across the width as percentages), applied to one box per parameter instead
+// of one box per region. `baseOption` builds a single shared-axis option and
+// is kept as-is for the other three modes; this mode needs its own shape
+// rather than a forced fit, so it gets its own builder.
+function montecarloOption(p, boxes) {
+  const cols = boxes.length || 1;
+  const hues = LABELS.map((l) => l.color);
+  const axisText = { color: p.muted, fontSize: 10 };
+  return {
+    animation: false,
+    tooltip: {
+      trigger: "item",
+      backgroundColor: p.panel,
+      borderColor: p.line,
+      textStyle: { color: p.ink, fontSize: 11 },
+    },
+    grid: boxes.map((_, i) => ({
+      left: `${4 + (i * 96) / cols}%`,
+      width: `${96 / cols - 6}%`,
+      top: 30,
+      bottom: 30,
+    })),
+    xAxis: boxes.map((_, i) => ({
+      gridIndex: i,
+      type: "category",
+      data: [""],
+      axisLine: { lineStyle: { color: p.line } },
+      axisTick: { show: false },
+      axisLabel: { show: false },
+    })),
+    yAxis: boxes.map((b, i) => ({
+      gridIndex: i,
+      type: "value",
+      scale: true,
+      name: b.name,
+      nameTextStyle: { ...axisText, align: "left" },
+      axisLine: { lineStyle: { color: p.line } },
+      axisLabel: axisText,
+      splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
+    })),
+    series: boxes.map((b, i) => {
+      const colour = hues[i % hues.length];
+      return {
+        type: "boxplot",
+        xAxisIndex: i,
+        yAxisIndex: i,
+        data: [{
+          value: b.box,
+          itemStyle: { color: `${colour}55`, borderColor: colour, borderWidth: 1.4 },
+        }],
+        boxWidth: [12, 44],
+        markLine: {
+          silent: true,
+          symbol: "none",
+          label: { show: false },
+          lineStyle: { color: p.line, type: "dashed" },
+          data: [{ yAxis: 0 }],
+        },
+      };
+    }),
+  };
+}
+
 function drawSim(report) {
   drawn = report;
   const p = palette();
@@ -431,41 +498,7 @@ function drawSim(report) {
   }
   if (report.mode === "montecarlo") {
     const boxes = montecarloBoxes(report);
-    // Errors are in each parameter's own units, so one shared value axis would
-    // flatten every small one. A category axis of parameters with a log-free
-    // shared axis is still the honest reading here because the quantity plotted
-    // is an error, and a reader compares a box against its own zero line.
-    ensureChart().setOption(
-      {
-        ...baseOption(p, {
-          xName: "parameter",
-          yName: "error (fitted minus truth)",
-          xData: boxes.map((b) => b.name),
-        }),
-        tooltip: {
-          trigger: "item",
-          backgroundColor: p.panel,
-          borderColor: p.line,
-          textStyle: { color: p.ink, fontSize: 11 },
-        },
-        series: [{
-          type: "boxplot",
-          data: boxes.map((b) => ({
-            value: b.box,
-            itemStyle: { color: `${p.accent}55`, borderColor: p.accent, borderWidth: 1.4 },
-          })),
-          boxWidth: [12, 44],
-          markLine: {
-            silent: true,
-            symbol: "none",
-            label: { show: false },
-            lineStyle: { color: p.line, type: "dashed" },
-            data: [{ yAxis: 0 }],
-          },
-        }],
-      },
-      { notMerge: true },
-    );
+    ensureChart().setOption(montecarloOption(p, boxes), { notMerge: true });
     $("sim-note").textContent =
       `Error over ${report.trials} draws, per parameter. Whiskers span the full `
       + "range, so a fit that failed at a bound is visible rather than hidden.";
