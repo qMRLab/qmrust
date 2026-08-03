@@ -146,12 +146,14 @@ impl SimConfig {
     /// sim-input requirements are enforced separately, via each model's
     /// `Model::sim_required_aux` (see `sim::model::validate_sim_inputs`).
     pub fn validate(&self) -> Result<()> {
-        match self.noise.kind.as_str() {
-            "none" | "gaussian" | "rician" => {}
-            other => bail!(
-                "sim.noise.type must be none|gaussian|rician, got '{}'",
-                other
-            ),
+        // NoiseKind is the one home for these names; restating them here is how
+        // the two lists would drift.
+        if crate::sim::noise::NoiseKind::from_str(&self.noise.kind).is_err() {
+            bail!(
+                "sim.noise.type must be one of {}, got '{}'",
+                crate::sim::noise::noise_kind_names().join("|"),
+                self.noise.kind
+            );
         }
         if self.noise.kind != "none" && self.noise.snr <= 0.0 {
             bail!("sim.noise.snr must be > 0 when noise is enabled");

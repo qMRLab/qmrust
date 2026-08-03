@@ -13,6 +13,10 @@ use qmrust_core::registry::{self, ModelEntry};
 #[derive(Serialize)]
 pub struct Catalog {
     pub models: Vec<ModelCard>,
+    /// Accepted `sim.noise.type` values, from `NoiseKind` itself. A global fact
+    /// rather than a per-model one, so it sits beside `models` rather than in
+    /// each entry.
+    pub noise_kinds: Vec<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -319,7 +323,10 @@ pub fn build(repo_root: &Path) -> Result<Catalog> {
         .iter()
         .map(|e| card(e, repo_root))
         .collect::<Result<Vec<_>>>()?;
-    Ok(Catalog { models })
+    Ok(Catalog {
+        models,
+        noise_kinds: qmrust_core::sim::noise::noise_kind_names(),
+    })
 }
 
 /// Print the catalog as pretty JSON on stdout.
@@ -336,6 +343,17 @@ mod tests {
 
     fn repo_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    #[test]
+    fn catalog_carries_the_noise_kinds_so_the_playground_sees_them() {
+        // The playground offers these as a dropdown, and must not restate them.
+        let cat = build(&repo_root()).unwrap();
+        assert_eq!(
+            cat.noise_kinds,
+            qmrust_core::sim::noise::noise_kind_names(),
+            "the catalog's noise kinds must be NoiseKind's own",
+        );
     }
 
     #[test]

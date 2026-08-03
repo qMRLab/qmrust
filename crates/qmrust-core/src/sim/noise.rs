@@ -1,6 +1,6 @@
 //! Seeded measurement noise for simulation: Gaussian and Rician, SNR-defined.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, Normal};
@@ -13,15 +13,33 @@ pub enum NoiseKind {
 }
 
 impl NoiseKind {
+    /// Every kind, in the order a reader is offered them: no noise first, then
+    /// increasing realism.
+    pub const ALL: [NoiseKind; 3] = [NoiseKind::None, NoiseKind::Gaussian, NoiseKind::Rician];
+
+    /// The name this kind is written as in a `sim.noise.type` field. The single
+    /// spelling of each kind; `from_str` is its inverse.
+    pub fn name(&self) -> &'static str {
+        match self {
+            NoiseKind::None => "none",
+            NoiseKind::Gaussian => "gaussian",
+            NoiseKind::Rician => "rician",
+        }
+    }
+
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<NoiseKind> {
-        Ok(match s {
-            "none" => NoiseKind::None,
-            "gaussian" => NoiseKind::Gaussian,
-            "rician" => NoiseKind::Rician,
-            other => bail!("unknown noise type '{}'", other),
-        })
+        NoiseKind::ALL
+            .into_iter()
+            .find(|k| k.name() == s)
+            .ok_or_else(|| anyhow::anyhow!("unknown noise type '{}'", s))
     }
+}
+
+/// The accepted `sim.noise.type` values, for anything that has to offer them as
+/// a choice rather than parse one.
+pub fn noise_kind_names() -> Vec<&'static str> {
+    NoiseKind::ALL.iter().map(NoiseKind::name).collect()
 }
 
 /// Deterministic RNG seeded from `seed`.
@@ -109,5 +127,36 @@ mod tests {
             NoiseKind::Rician
         ));
         assert!(NoiseKind::from_str("bogus").is_err());
+    }
+
+    #[test]
+    fn every_kind_round_trips_through_its_name() {
+        for kind in NoiseKind::ALL {
+            assert_eq!(
+                NoiseKind::from_str(kind.name()).unwrap(),
+                kind,
+                "{} does not parse back to itself",
+                kind.name()
+            );
+        }
+    }
+
+    #[test]
+    fn config_validation_accepts_exactly_the_declared_kinds() {
+        // The config's accepted set is NoiseKind's, not a second list beside it:
+        // a kind added to the enum is accepted by config without another edit.
+        //
+        // Built from YAML rather than a struct literal because SimConfig has no
+        // Default, and every field but `noise` here is serde-defaulted anyway.
+        let cfg_for = |kind: &str| -> crate::config::SimConfig {
+            serde_yaml::from_str(&format!("noise: {{ type: {kind}, snr: 100.0 }}")).unwrap()
+        };
+        for name in noise_kind_names() {
+            assert!(cfg_for(name).validate().is_ok(), "{name} must be accepted");
+        }
+        assert!(
+            cfg_for("poisson").validate().is_err(),
+            "an unknown kind must be rejected"
+        );
     }
 }
