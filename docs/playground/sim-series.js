@@ -67,3 +67,41 @@ export function singleVoxelSeries(report) {
     labels: axisLabels(noisy.length, report?.identities),
   };
 }
+
+// A sweep's parameters have wildly different magnitudes (a fraction near 0.15
+// beside a rate near 25), so absolute bias on one axis flattens the smaller to
+// nothing. Everything here is therefore a percentage of the truth at that
+// point, which is comparable across parameters and is what "where does the fit
+// break down" actually asks.
+//
+// The band is returned as a lower edge plus a height, which is what a stacked
+// area chart needs: the lower series is drawn invisibly and the height sits on
+// top of it.
+export function sensitivitySeries(report) {
+  const points = report?.points ?? [];
+  const names = (points[0]?.stats ?? []).map((s) => s.name);
+  return {
+    xLabels: points.map((p) => String(Number(p.value.toPrecision(4)))),
+    params: names.map((name) => {
+      const bias = [];
+      const lower = [];
+      const band = [];
+      for (const point of points) {
+        const s = point.stats.find((entry) => entry.name === name);
+        // A zero truth has no percentage. Reporting Infinity would draw a
+        // measurement that does not exist, so the point is a gap instead.
+        if (!s || s.truth === 0) {
+          bias.push(null);
+          lower.push(null);
+          band.push(null);
+          continue;
+        }
+        const scale = 100 / Math.abs(s.truth);
+        bias.push(s.bias * scale);
+        lower.push((s.bias - s.std) * scale);
+        band.push(2 * s.std * scale);
+      }
+      return { name, bias, lower, band };
+    }),
+  };
+}

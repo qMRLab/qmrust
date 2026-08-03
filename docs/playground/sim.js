@@ -5,7 +5,14 @@
 import { $, hideProgress, setProgress, showProgress, status } from "./dom.js";
 import { app, editor } from "./state.js";
 import { setEditorText } from "./recipe.js";
-import { SIM_MODES, recipeForMode, statsRows, signalSeries, singleVoxelSeries } from "./sim-series.js";
+import {
+  SIM_MODES,
+  recipeForMode,
+  statsRows,
+  signalSeries,
+  singleVoxelSeries,
+  sensitivitySeries,
+} from "./sim-series.js";
 import { showNotice } from "./modal.js";
 import * as echarts from "./vendor/echarts.js";
 
@@ -313,6 +320,76 @@ function drawSim(report) {
     $("sim-note").textContent =
       `The first of ${report.trials} noisy trials, against the truth it was `
       + "generated from and the curve fitted back from it. The table reports every trial.";
+    return;
+  }
+  if (report.mode === "sensitivity") {
+    const s = sensitivitySeries(report);
+    // One hue per parameter, cycling the theme's two accents so a line and its
+    // band always match.
+    const hues = [p.accent, p.rust, p.ink, p.muted];
+    const series = [];
+    for (const [i, param] of s.params.entries()) {
+      const colour = hues[i % hues.length];
+      // The band is two stacked series: an invisible lower edge, then its
+      // height drawn as a faded area sitting on top.
+      series.push({
+        name: `${param.name} band`,
+        type: "line",
+        stack: `band-${param.name}`,
+        symbol: "none",
+        lineStyle: { opacity: 0 },
+        itemStyle: { opacity: 0 },
+        tooltip: { show: false },
+        silent: true,
+        data: param.lower,
+      });
+      series.push({
+        name: `${param.name} spread`,
+        type: "line",
+        stack: `band-${param.name}`,
+        symbol: "none",
+        lineStyle: { opacity: 0 },
+        areaStyle: { color: colour, opacity: 0.14 },
+        tooltip: { show: false },
+        silent: true,
+        data: param.band,
+      });
+      series.push({
+        name: param.name,
+        type: "line",
+        showSymbol: true,
+        symbolSize: 5,
+        lineStyle: { color: colour, width: 2 },
+        itemStyle: { color: colour },
+        data: param.bias,
+      });
+    }
+    // Zero bias is the line every parameter is being judged against, so it is
+    // drawn rather than left to be inferred from the axis labels.
+    if (series.length) {
+      series[series.length - 1].markLine = {
+        silent: true,
+        symbol: "none",
+        label: { show: false },
+        lineStyle: { color: p.line, type: "dashed" },
+        data: [{ yAxis: 0 }],
+      };
+    }
+    ensureChart().setOption(
+      {
+        ...baseOption(p, {
+          xName: report.swept_param,
+          yName: "bias [% of truth]",
+          xData: s.xLabels,
+          legend: s.params.map((param) => param.name),
+        }),
+        series,
+      },
+      { notMerge: true },
+    );
+    $("sim-note").textContent =
+      `Bias against ${report.swept_param}, as a percentage of the truth at each `
+      + "point. The band is plus and minus one standard deviation over the trials.";
     return;
   }
   $("sim-note").textContent = "";

@@ -7,6 +7,7 @@ import {
   statsRows,
   signalSeries,
   singleVoxelSeries,
+  sensitivitySeries,
 } from "../../docs/playground/sim-series.js";
 
 test("each page mode edits its own recipe", () => {
@@ -110,4 +111,57 @@ test("single-voxel labels its points from the report's own identities", () => {
     identities: [{ InversionTime: 0.35 }, { InversionTime: 0.5 }],
   });
   assert.deepEqual(s.labels, ["InversionTime=0.35", "InversionTime=0.5"]);
+});
+
+const sweep = {
+  mode: "sensitivity",
+  swept_param: "T1",
+  points: [
+    { value: 0.5, stats: [{ name: "T1", truth: 0.5, mean: 0.55, std: 0.05, bias: 0.05, rmse: 0.07 }] },
+    { value: 1.0, stats: [{ name: "T1", truth: 1.0, mean: 0.9, std: 0.10, bias: -0.10, rmse: 0.14 }] },
+  ],
+};
+
+test("a sweep is plotted against the swept value", () => {
+  assert.deepEqual(sensitivitySeries(sweep).xLabels, ["0.5", "1"]);
+});
+
+test("bias is relative to the truth at each point, so every parameter shares one axis", () => {
+  const [t1] = sensitivitySeries(sweep).params;
+  assert.equal(t1.name, "T1");
+  assert.deepEqual(t1.bias, [10, -10]);
+});
+
+test("the band spans plus and minus one std, also relative", () => {
+  const [t1] = sensitivitySeries(sweep).params;
+  assert.deepEqual(t1.lower, [0, -20]);
+  assert.deepEqual(t1.band, [20, 20]);
+});
+
+test("a point whose truth is zero has no relative bias and leaves a gap", () => {
+  // Dividing by a zero truth would report Infinity as if it were a measurement.
+  const zero = {
+    mode: "sensitivity",
+    swept_param: "b",
+    points: [{ value: 0, stats: [{ name: "b", truth: 0, mean: 0.1, std: 0.1, bias: 0.1, rmse: 0.1 }] }],
+  };
+  const [b] = sensitivitySeries(zero).params;
+  assert.deepEqual(b.bias, [null]);
+  assert.deepEqual(b.lower, [null]);
+  assert.deepEqual(b.band, [null]);
+});
+
+test("every parameter the report carries gets its own line", () => {
+  const two = {
+    mode: "sensitivity",
+    swept_param: "F",
+    points: [{
+      value: 0.1,
+      stats: [
+        { name: "F", truth: 0.1, mean: 0.1, std: 0.01, bias: 0, rmse: 0.01 },
+        { name: "kr", truth: 25, mean: 26, std: 2, bias: 1, rmse: 2 },
+      ],
+    }],
+  };
+  assert.deepEqual(sensitivitySeries(two).params.map((p) => p.name), ["F", "kr"]);
 });
