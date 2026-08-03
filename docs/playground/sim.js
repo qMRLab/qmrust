@@ -16,20 +16,21 @@ export function isSimMode() {
 // written down here: the noise kinds come from the index, and the sweepable
 // parameters are the model's own parameter list.
 export function seedSimRecipe(meta) {
+  const canSim = Boolean(meta.config_sim);
+  // A model whose payload cannot simulate must not leave the page stranded in
+  // a mode it cannot serve. Leaving that mode first also keeps the departing
+  // mode's park from writing the previous model's text over the seed below.
+  if (!canSim && isSimMode()) setPageMode("data");
   app.simEditorText = meta.config_sim ?? "";
   app.simReport = null;
-  if (meta.config_sim) {
+  if (canSim) {
     app.enumFields.set("sim.sweep.param", meta.params);
     if (app.noiseKinds?.length) app.enumFields.set("sim.noise.type", app.noiseKinds);
   }
-  const canSim = Boolean(meta.config_sim);
   $("page-sim").disabled = !canSim;
   $("page-sim").title = canSim
     ? ""
     : "This model's payload carries no sim recipe, so it cannot be simulated";
-  // A model whose payload cannot simulate must not leave the page stranded in
-  // a mode it cannot serve.
-  if (!canSim && isSimMode()) setPageMode("data");
 }
 
 function setPageMode(mode) {
