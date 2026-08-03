@@ -165,3 +165,20 @@ test("every parameter the report carries gets its own line", () => {
   };
   assert.deepEqual(sensitivitySeries(two).params.map((p) => p.name), ["F", "kr"]);
 });
+
+test("the band straddles the bias line whenever the std exceeds the bias", () => {
+  // A stacked-area band is drawn as a lower edge plus a height on top of it,
+  // so the two must recombine to the upper edge exactly, and the lower edge
+  // must be free to go negative: a rendering that cannot place a negative
+  // lower edge cannot show a band straddling zero.
+  const wide = {
+    mode: "sensitivity",
+    swept_param: "MTR",
+    points: [{ value: 5, stats: [{ name: "MTR", truth: 5, mean: 4.9, std: 1.311, bias: -0.09838, rmse: 1.3 }] }],
+  };
+  const [mtr] = sensitivitySeries(wide).params;
+  const scale = 100 / 5;
+  const upper = (-0.09838 + 1.311) * scale;
+  assert.ok(mtr.lower[0] < 0, "the lower edge is negative when bias - std is negative");
+  assert.equal(mtr.lower[0] + mtr.band[0], upper);
+});

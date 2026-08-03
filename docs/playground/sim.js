@@ -14,6 +14,7 @@ import {
   sensitivitySeries,
 } from "./sim-series.js";
 import { showNotice } from "./modal.js";
+import { LABELS } from "./draw.js";
 import * as echarts from "./vendor/echarts.js";
 
 export function isSimMode() {
@@ -219,9 +220,15 @@ function palette() {
 // Axes, tooltip and legend styling shared by every sim chart, so the four modes
 // read as one family rather than four charts that happen to sit in one card.
 function baseOption(p, { xName, yName, xData, legend = [] }) {
+  // The left inset has to fit the y-axis name in full: a fixed number sized for
+  // "signal" clips a longer name like "bias [% of truth]" at its leading edge.
+  // Deriving it from the name's own length, rather than hand-tuning per mode,
+  // is exact for the callers today ("signal" lands on the value this used to
+  // be hardcoded to) and correct for whatever name a future mode declares.
+  const gridLeft = 40 + yName.length * 4;
   return {
     animation: false,
-    grid: { left: 64, right: 20, top: 30, bottom: 44, containLabel: false },
+    grid: { left: gridLeft, right: 20, top: 30, bottom: 44, containLabel: false },
     legend: legend.length
       ? { data: legend, top: 0, textStyle: { color: p.muted, fontSize: 11 }, inactiveColor: p.line }
       : undefined,
@@ -324,18 +331,26 @@ function drawSim(report) {
   }
   if (report.mode === "sensitivity") {
     const s = sensitivitySeries(report);
-    // One hue per parameter, cycling the theme's two accents so a line and its
-    // band always match.
-    const hues = [p.accent, p.rust, p.ink, p.muted];
+    // One hue per parameter, from the app's own categorical set (the same one
+    // draw.js and measure.js use for a fixed set of named items), so a sweep
+    // reporting all six of qmt_spgr's parameters keeps every line distinct.
+    // Cycles if a model ever reports more than the palette has.
+    const hues = LABELS.map((l) => l.color);
     const series = [];
     for (const [i, param] of s.params.entries()) {
       const colour = hues[i % hues.length];
       // The band is two stacked series: an invisible lower edge, then its
-      // height drawn as a faded area sitting on top.
+      // height drawn as a faded area sitting on top. A point's lower edge is
+      // routinely negative (bias minus a std larger than the bias), and
+      // ECharts' default stacking keeps positive and negative stacks separate
+      // rather than adding a positive height onto a negative base, which would
+      // misplace the band above zero instead of straddling the line.
+      // stackStrategy "all" makes the stack ignore sign so the two combine.
       series.push({
         name: `${param.name} band`,
         type: "line",
         stack: `band-${param.name}`,
+        stackStrategy: "all",
         symbol: "none",
         lineStyle: { opacity: 0 },
         itemStyle: { opacity: 0 },
@@ -347,6 +362,7 @@ function drawSim(report) {
         name: `${param.name} spread`,
         type: "line",
         stack: `band-${param.name}`,
+        stackStrategy: "all",
         symbol: "none",
         lineStyle: { opacity: 0 },
         areaStyle: { color: colour, opacity: 0.14 },
