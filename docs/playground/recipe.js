@@ -517,8 +517,11 @@ function arrowIcon(pointsLeft) {
 export function syncFitArmed() {
   const fit = $("fit");
   if (!fit) return;
-  fit.disabled = Boolean(app.overrideProtocol);
-  fit.title = app.overrideProtocol
+  // A simulation reads no dataset, so a disarmed protocol cannot contradict
+  // one: the rule below is about fitting acquired volumes only.
+  const blocked = app.pageMode !== "sim" && Boolean(app.overrideProtocol);
+  fit.disabled = blocked;
+  fit.title = blocked
     ? "Arm the protocol inputs to fit: edited values cannot be fitted against a BIDS dataset"
     : "";
 }

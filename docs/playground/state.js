@@ -105,6 +105,24 @@ export const app = {
   // the model's protocol keys. Read from the loaded dataset, never from the
   // recipe: the recipe's contents are the thing being rendered.
   protocolResolved: false,
+
+  // Which activity the page is showing: "data" fits acquired volumes, "sim"
+  // simulates from ground-truth parameters and reads no image data at all.
+  pageMode: "data",
+  // The recipe text for each page mode, held apart so a reader's edits to one
+  // survive switching to the other and back. The live text is always
+  // `editor.text`; these are the two parked copies.
+  dataEditorText: "",
+  simEditorText: "",
+  // Which simulation a Simulate run performs: one of the four modes the core
+  // implements.
+  simMode: "single-voxel",
+  // The last sim report, as the core's own JSON. Null before the first run and
+  // whenever the model changes.
+  simReport: null,
+  // The noise kinds the payload index declares (e.g. none/gaussian/rician),
+  // for the `sim.noise.type` dropdown. One list, read from the index alone.
+  noiseKinds: [],
 };
 
 // A misspelled field must not silently become a new one, leaving the real field

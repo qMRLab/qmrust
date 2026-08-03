@@ -522,6 +522,8 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    specificity, so a single class would keep their word-sized padding. */
 .seg.seg-icon { padding: 2px; }
 .seg.seg-icon button { padding: 4px 8px; }
+.mode-seg { margin-right: auto; }
+.mode-seg button[disabled] { opacity: .45; cursor: not-allowed; }
 
 .model-line { margin: 12px 0; color: var(--ink-2); }
 .model-line select { margin-left: 4px; }

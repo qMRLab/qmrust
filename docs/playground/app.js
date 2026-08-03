@@ -50,6 +50,7 @@ import { createLevelControl, repaintLevels } from "./level.js";
 import { fitSlice } from "./fit.js";
 import { loadModel } from "./model.js";
 import { buildModelTree, compareByTaxonomy } from "./picker.js";
+import { wireSimControls } from "./sim.js";
 
 // ---------------------------------------------------------------------------
 // Tooltips for the panel info buttons. One element, moved and refilled — a
@@ -235,6 +236,7 @@ function wireRecipeControls() {
   // (see `withProtocolComments`); it must never reach the recipe parser.
   $("cfg-yaml").oninput = (e) => setEditorText(stripProtocolComments(e.target.value));
   $("cfg-yaml").addEventListener("scroll", syncYamlScroll);
+  wireSimControls();
 }
 
 // Accumulated wheel `deltaY` crosses this before a frame steps — tuned to the
@@ -382,6 +384,7 @@ async function populateModels() {
     return false;
   }
   app.modelNames = index.models;
+  app.noiseKinds = index.noise_kinds ?? [];
   const select = $("model");
   const metas = {};
   for (const name of index.models) {

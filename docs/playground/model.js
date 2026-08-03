@@ -8,6 +8,7 @@ import { app, editor, nvIn, nvOut } from "./state.js";
 import { loadBundle } from "./bundles.js";
 import { fetchDataset, identityLabel, stage } from "./dataset.js";
 import { setEditorText } from "./recipe.js";
+import { isSimMode, seedSimRecipe } from "./sim.js";
 import {
   buildSeriesNifti,
   readMask,
@@ -64,7 +65,8 @@ async function loadModelFromBids(name, meta) {
   app.protocolResolved = Boolean(resolved.protocol_json);
   // The recipe for BIDS input carries options only; the acquisition comes from
   // the sidecars, via `resolved.protocol_json`.
-  setEditorText(meta.config_bids);
+  app.dataEditorText = meta.config_bids;
+  setEditorText(isSimMode() ? app.simEditorText : meta.config_bids);
 
   stage(`Loading ${resolved.data_files.length} volumes…`);
   const parts = resolved.data_files.map((path) => {
@@ -222,6 +224,7 @@ export async function loadModel(name) {
   $("curve-note").textContent = "";
   clearCurve();
   app.enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
+  seedSimRecipe(meta);
   app.wheelAccum = 0;
   app.dataset = null;
   app.protocolResolved = false;
@@ -261,7 +264,8 @@ export async function loadModel(name) {
     }
   }
 
-  setEditorText(meta.config);
+  app.dataEditorText = meta.config;
+  setEditorText(isSimMode() ? app.simEditorText : meta.config);
   const [nx, ny, nz, nt] = meta.dims;
   let volume, maskVolume;
   try {

@@ -57,6 +57,12 @@
   <div class="recipe-card card">
     <div class="section-h recipe-head">
       <img class="panel-logo" id="panel-logo" src="./logo_dark.png" alt="qMRust">
+      <!-- One switch drawn as two halves, matching the light/dark control in the
+           navbar: the lit half reports the mode and either half flips it. -->
+      <div class="seg mode-seg" role="group" aria-label="Fit data or simulate">
+        <button id="page-data" type="button" class="active">Data</button>
+        <button id="page-sim" type="button">Simulate</button>
+      </div>
       <div class="seg recipe-seg" role="tablist" aria-label="Recipe editor view">
         <button id="tab-form" class="active" role="tab" aria-selected="true"><span data-icon="form" data-icon-size="13"></span>Form</button>
         <button id="tab-yaml" role="tab" aria-selected="false"><span data-icon="code-xml" data-icon-size="13"></span>YAML</button>
@@ -171,7 +177,7 @@
     </div>
   </div>
 
-  <div class="curve-wrap card">
+  <div class="curve-wrap card" id="curve-wrap">
     <div class="viewer-head">
       <h2 class="section-h" id="voxel-title" style="margin:0">Voxel &amp; regions<button class="info" type="button" aria-label="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume." data-tip="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume."><span data-icon="info" data-icon-size="14"></span></button></h2>
       <div class="seg" role="tablist" aria-label="Voxel fit or region measurements">
