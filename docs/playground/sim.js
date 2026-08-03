@@ -217,18 +217,38 @@ function palette() {
   };
 }
 
+// The font every axis name renders in. The one place this is stated, read by
+// both the style ECharts is told to use and the offscreen measurement below,
+// so the two can never disagree.
+const AXIS_NAME_FONT_SIZE = 10;
+
+// A canvas 2D context measures glyphs the way the chart's own canvas renderer
+// does. Character count is not a usable proxy in a proportional font: ten Ws
+// and ten i's render at very different widths despite equal length. ECharts'
+// default font family, which this option never overrides, is "sans-serif".
+let measureCtx = null;
+function textWidth(text, fontSize) {
+  measureCtx ??= document.createElement("canvas").getContext("2d");
+  measureCtx.font = `${fontSize}px sans-serif`;
+  return measureCtx.measureText(text).width;
+}
+
 // Axes, tooltip and legend styling shared by every sim chart, so the four modes
 // read as one family rather than four charts that happen to sit in one card.
 function baseOption(p, { xName, yName, xData, legend = [] }) {
-  // The left inset has to fit the y-axis name in full: a fixed number sized for
-  // "signal" clips a longer name like "bias [% of truth]" at its leading edge.
-  // Deriving it from the name's own length, rather than hand-tuning per mode,
-  // is exact for the callers today ("signal" lands on the value this used to
-  // be hardcoded to) and correct for whatever name a future mode declares.
-  const gridLeft = 40 + yName.length * 4;
   return {
     animation: false,
-    grid: { left: gridLeft, right: 20, top: 30, bottom: 44, containLabel: false },
+    // The left inset has to fit the y-axis name in full. containLabel sizes
+    // the grid to fit the numeric tick labels, whose width depends on the
+    // data, but it reserves nothing for the axis name itself, so the name's
+    // measured width is supplied as the floor containLabel builds on.
+    grid: {
+      left: Math.ceil(textWidth(yName, AXIS_NAME_FONT_SIZE)),
+      right: 20,
+      top: 30,
+      bottom: 44,
+      containLabel: true,
+    },
     legend: legend.length
       ? { data: legend, top: 0, textStyle: { color: p.muted, fontSize: 11 }, inactiveColor: p.line }
       : undefined,
@@ -254,7 +274,7 @@ function baseOption(p, { xName, yName, xData, legend = [] }) {
       type: "value",
       scale: true,
       name: yName,
-      nameTextStyle: { color: p.muted, fontSize: 10, align: "right" },
+      nameTextStyle: { color: p.muted, fontSize: AXIS_NAME_FONT_SIZE, align: "right" },
       axisLine: { lineStyle: { color: p.line } },
       axisLabel: { color: p.muted, fontSize: 10 },
       splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
