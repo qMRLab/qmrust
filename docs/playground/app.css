@@ -235,6 +235,7 @@ button.primary {
   box-shadow: 0 0 14px var(--glow);
 }
 button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.primary.cancel { background: var(--rust); }
 #status { color: var(--muted); }
 
 #fallback {
@@ -466,6 +467,22 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   grid-column: 2 / span 2; grid-row: 2;
   display: flex; flex-direction: column; min-height: 0;
 }
+/* Simulate mode replaces the whole right-hand region: there are no viewers to
+   show, and a sweep needs the room a single card can give it. */
+.sim-wrap {
+  grid-column: 2 / span 2; grid-row: 1 / span 2;
+  display: flex; flex-direction: column; min-height: 0;
+}
+.sim-chart { flex: 1 1 auto; min-height: 220px; }
+.sim-note { color: var(--muted); font-size: 11px; padding: 2px 4px 6px; }
+.sim-table { overflow: auto; max-height: 40%; }
+.sim-table table { border-collapse: collapse; width: 100%; font-size: 11px; }
+.sim-table th, .sim-table td {
+  text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.sim-table th { color: var(--muted); font-weight: 500; }
+.sim-table td:first-child, .sim-table th:first-child { text-align: left; }
 .drop-wrap { flex: 0 0 auto; }
 @media (max-height: 620px) {
   body { height: auto; min-height: 100dvh; overflow: auto; }
@@ -480,7 +497,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
      the recipe: `flex: 1 1 0` with no height to distribute collapses to nothing
      while its content spills over the cards below. */
   .left-col { display: contents; }
-  .viewer-in-wrap, .viewer-out-wrap, .curve-wrap, .recipe-card, .fit-strip {
+  .viewer-in-wrap, .viewer-out-wrap, .curve-wrap, .recipe-card, .fit-strip, .sim-wrap {
     grid-column: 1; grid-row: auto;
   }
   /* Everything sizes to its content and the page scrolls, rather than dividing

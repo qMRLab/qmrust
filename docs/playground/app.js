@@ -50,7 +50,7 @@ import { createLevelControl, repaintLevels } from "./level.js";
 import { fitSlice } from "./fit.js";
 import { loadModel } from "./model.js";
 import { buildModelTree, compareByTaxonomy } from "./picker.js";
-import { wireSimControls } from "./sim.js";
+import { isSimMode, runSim, wireSimControls } from "./sim.js";
 
 // ---------------------------------------------------------------------------
 // Tooltips for the panel info buttons. One element, moved and refilled — a
@@ -227,7 +227,7 @@ function wireTheme() {
 // The model picker, the recipe editor, and Fit.
 function wireRecipeControls() {
   $("model").onchange = (e) => loadModel(e.target.value);
-  $("fit").onclick = fitSlice;
+  $("fit").onclick = () => (isSimMode() ? runSim() : fitSlice());
   const toggleRecipeView = () =>
     showTab($("tab-form").classList.contains("active") ? "yaml" : "form");
   $("tab-form").onclick = toggleRecipeView;

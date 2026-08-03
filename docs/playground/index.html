@@ -201,6 +201,16 @@
     </div>
   </div>
 
+  <div class="sim-wrap card" id="sim-wrap" hidden>
+    <div class="viewer-head">
+      <h2 class="section-h" style="margin:0">Simulation<button class="info" type="button" aria-label="Generate data from ground-truth parameters and fit it back, with no image data involved. Signal shows what the model predicts; Voxel fits one voxel repeatedly under noise; Sweep varies one parameter to find where it stops being identifiable; Population draws parameters from distributions." data-tip="Generate data from ground-truth parameters and fit it back, with no image data involved. Signal shows what the model predicts; Voxel fits one voxel repeatedly under noise; Sweep varies one parameter to find where it stops being identifiable; Population draws parameters from distributions."><span data-icon="info" data-icon-size="14"></span></button></h2>
+      <div class="seg" id="sim-modes" role="tablist" aria-label="Simulation mode"></div>
+    </div>
+    <div id="sim-chart" class="sim-chart"></div>
+    <div id="sim-note" class="sim-note"></div>
+    <div id="sim-table" class="sim-table"></div>
+  </div>
+
 </div>
 
 <div class="modal" id="chart-modal" hidden>

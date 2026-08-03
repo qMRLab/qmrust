@@ -2,10 +2,11 @@
 // so this owns a recipe of its own (the model's sim recipe, carrying the
 // acquisition plus a sim: block of ground-truth parameters) and a card of its
 // own, and it works even when a dataset failed to load.
-import { $, status } from "./dom.js";
+import { $, hideProgress, setProgress, showProgress, status } from "./dom.js";
 import { app, editor } from "./state.js";
 import { setEditorText } from "./recipe.js";
-import { recipeForMode } from "./sim-series.js";
+import { SIM_MODES, recipeForMode, statsRows } from "./sim-series.js";
+import { showNotice } from "./modal.js";
 
 export function isSimMode() {
   return app.pageMode === "sim";
@@ -48,6 +49,7 @@ function setPageMode(mode) {
     ["viewer-out-wrap", next === "sim"],
     ["curve-wrap", next === "sim"],
     ["drop-wrap", next === "sim"],
+    ["sim-wrap", next !== "sim"],
   ]) {
     $(id).hidden = hidden;
   }
@@ -55,6 +57,7 @@ function setPageMode(mode) {
   setEditorText(
     recipeForMode(next, { dataText: app.dataEditorText, simText: app.simEditorText }),
   );
+  if (next !== "sim") renderSimReport(null);
   status(next === "sim" ? "Ready to simulate" : "Ready", "ok");
 }
 
@@ -62,4 +65,142 @@ export function wireSimControls() {
   const flip = () => setPageMode(isSimMode() ? "data" : "sim");
   $("page-data").onclick = flip;
   $("page-sim").onclick = flip;
+  buildModeTabs();
+  setSimMode(app.simMode);
+}
+
+// One worker, created on first use. A cancel terminates it, since a wasm call
+// already in flight cannot be interrupted from outside; the next run makes a
+// fresh one.
+let worker = null;
+let pending = 0;
+
+function ensureWorker() {
+  worker ??= new Worker(new URL("./sim-worker.js", import.meta.url), { type: "module" });
+  return worker;
+}
+
+function cancelSim() {
+  if (!pending) return;
+  worker?.terminate();
+  worker = null;
+  pending = 0;
+  hideProgress();
+  setRunning(false);
+  status("Simulation cancelled", "info");
+}
+
+// While a run is in flight the primary button cancels it: a reader who started
+// a long sweep by accident should not have to reload the page.
+function setRunning(running) {
+  const btn = $("fit");
+  btn.textContent = running ? "Cancel" : "Simulate";
+  btn.classList.toggle("cancel", running);
+  for (const b of $("sim-modes").querySelectorAll("button")) b.disabled = running;
+}
+
+export async function runSim() {
+  if (!app.wasm) {
+    status("Simulation unavailable: wasm failed to load", "error");
+    return;
+  }
+  if (pending) {
+    cancelSim();
+    return;
+  }
+  if (!editor.valid) {
+    status("Recipe YAML is invalid: fix it before simulating", "error");
+    return;
+  }
+  const id = ++pending;
+  const yaml = editor.text;
+  const mode = app.simMode;
+  status(`Simulating ${mode}…`, "busy");
+  // No progress is available inside one wasm call, so the bar runs full with
+  // its stripes moving: a busy indicator rather than a false measurement.
+  showProgress();
+  setProgress(100);
+  setRunning(true);
+  const t0 = performance.now();
+
+  const report = await new Promise((resolve) => {
+    const w = ensureWorker();
+    w.onmessage = (event) => {
+      if (event.data.id !== id) return;
+      resolve(event.data);
+    };
+    w.onerror = (e) => resolve({ id, ok: false, error: e.message ?? "worker failed" });
+    w.postMessage({ id, mode, yaml });
+  });
+
+  // A cancel between posting and resolving already reset everything.
+  if (pending !== id) return;
+  pending = 0;
+  hideProgress();
+  setRunning(false);
+  if (!report.ok) {
+    status("Simulation failed", "error");
+    showNotice("triangle-alert", "Simulation failed", report.error);
+    return;
+  }
+  app.simReport = report.report;
+  renderSimReport(report.report);
+  status(`Simulated in ${((performance.now() - t0) / 1000).toFixed(1)} s`, "ok");
+}
+
+function setSimMode(id) {
+  app.simMode = id;
+  for (const b of $("sim-modes").querySelectorAll("button")) {
+    const on = b.dataset.mode === id;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", String(on));
+  }
+  // A report answers one mode's question; it must not be read as another's.
+  app.simReport = null;
+  renderSimReport(null);
+}
+
+function renderSimReport(report) {
+  renderStatsTable(report);
+}
+
+function renderStatsTable(report) {
+  const host = $("sim-table");
+  const rows = statsRows(report);
+  if (!rows.length) {
+    host.replaceChildren();
+    return;
+  }
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  for (const h of ["param", "truth", "mean", "bias", "std", "RMSE"]) {
+    const th = document.createElement("th");
+    th.textContent = h;
+    head.append(th);
+  }
+  table.append(head);
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    for (const v of [r.name, r.truth, r.mean, r.bias, r.std, r.rmse]) {
+      const td = document.createElement("td");
+      td.textContent = typeof v === "number" ? String(Number(v.toPrecision(4))) : v;
+      tr.append(td);
+    }
+    table.append(tr);
+  }
+  host.replaceChildren(table);
+}
+
+function buildModeTabs() {
+  const host = $("sim-modes");
+  host.replaceChildren();
+  for (const m of SIM_MODES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.mode = m.id;
+    b.textContent = m.label;
+    b.setAttribute("role", "tab");
+    b.onclick = () => setSimMode(m.id);
+    host.append(b);
+  }
 }

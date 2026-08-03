@@ -7,3 +7,27 @@
 export function recipeForMode(mode, { dataText, simText }) {
   return mode === "sim" ? simText : dataText;
 }
+
+// The four modes, in the order they answer questions about a model: what does
+// it predict, can the fit recover it, where does it break down, how does it
+// behave over a population.
+export const SIM_MODES = [
+  { id: "signal", label: "Signal" },
+  { id: "single-voxel", label: "Voxel" },
+  { id: "sensitivity", label: "Sweep" },
+  { id: "montecarlo", label: "Population" },
+];
+
+// The stats table's rows. The core reports one entry per parameter its fitter
+// actually estimates, so a parameter the model declares but does not report
+// simply has no row.
+export function statsRows(report) {
+  return (report?.stats ?? []).map((s) => ({
+    name: s.name,
+    truth: s.truth,
+    mean: s.mean,
+    bias: s.bias,
+    std: s.std,
+    rmse: s.rmse,
+  }));
+}
