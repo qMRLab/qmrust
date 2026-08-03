@@ -25,7 +25,7 @@ sim:
   b0: 0.0
   noise: { type: rician, snr: 100.0 }
   seed: 0
-  trials: 200
+  trials: 100
   sweep: { param: F, start: 0.05, stop: 0.30, steps: 10 }
   distributions:
     F:  { mean: 0.15, std: 0.02 }
@@ -36,6 +36,9 @@ sim:
 page lists under **Signal model**. `seed` makes every noisy mode
 reproducible: the same seed yields the same trials on every platform, native
 or wasm.
+
+Every registered model ships a sim recipe under `recipes/sim/`, declared by
+its registry entry. `qmrust catalog --json` reports the path for each model.
 
 ## `signal` — what does the model predict?
 
@@ -90,5 +93,12 @@ qmrust sim montecarlo --config recipes/sim/qmt_sim_ramani.yaml \
 ## In the browser
 
 The same four modes run in wasm through `sim(mode, cfg_yaml)`, with identical
-numbers — see [Browser & wasm](browser.md) and the
-[playground](../playground.md).
+numbers, and the [playground](../playground.md) exposes them directly: switch
+the recipe card from Data to Simulate, and the model's own sim recipe becomes
+the editable recipe. Simulation reads no image data, so it works whether or not
+a dataset loaded.
+
+Long runs execute in a worker rather than on the page's main thread, so a sweep
+of a few thousand fits leaves the page responsive and cancellable. It is the
+same single call with the same seed, so a browser run and a CLI run of the same
+recipe agree exactly.
