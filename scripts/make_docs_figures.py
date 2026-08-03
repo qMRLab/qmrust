@@ -523,7 +523,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     out_root = args.out or (args.repo_root / "docs" / "figures")
-    models = json.loads(args.catalog.read_text())["models"]
+    catalog = json.loads(args.catalog.read_text())
+    models = catalog["models"]
     for model in models:
         print(f"{model['name']}:")
         coll = dataset.find(args.bids_dir, model)
@@ -560,7 +561,6 @@ def main(argv=None):
         )
         # The accepted sim.noise.type values are a global fact from NoiseKind,
         # not a per-model one, so they ride the index rather than each payload.
-        catalog = json.loads(args.catalog.read_text())
         (data_dir / "index.json").write_text(
             json.dumps(
                 {"models": names, "noise_kinds": catalog["noise_kinds"]}, indent=1

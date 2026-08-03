@@ -32,7 +32,7 @@ def named_model(**over):
         "required_inputs": [],
         "outputs": [{"name": "MTR", "bids_suffix": "MTR", "unit": "%", "diagnostic": False}],
         "params": [{"name": "MTR", "lower": None, "upper": None, "fixed": False}],
-        "recipes": {"bids": "recipe.yaml", "non_bids": "recipe.yaml", "sim": None},
+        "recipes": {"bids": "recipe.yaml", "non_bids": "recipe.yaml", "sim": "recipe.yaml"},
     }
     m.update(over)
     return m
