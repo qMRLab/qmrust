@@ -70,11 +70,12 @@ pub struct MonteCarloReport {
     pub model: String,
     pub trials: usize,
     pub stats: Vec<ParamStat>,
-    /// Each trial's error for each entry of `stats`, in the same order:
-    /// `per_trial_error[trial][i]` belongs to `stats[i]`. A summary cannot
-    /// describe the shape of a distribution, so the errors it was computed
-    /// from travel with it.
-    pub per_trial_error: Vec<Vec<f64>>,
+    /// Each trial's drawn input and fitted value for each entry of `stats`, in
+    /// the same order: column `i` belongs to `stats[i]`. A summary cannot
+    /// describe the shape of a distribution, and the error is the difference of
+    /// these two, so only the pair travels.
+    pub per_trial_input: Vec<Vec<f64>>,
+    pub per_trial_fitted: Vec<Vec<f64>>,
 }
 
 /// Sample mean and (n-1) standard deviation. std=0 for n<2.

@@ -499,15 +499,27 @@ fn every_model_simulates_from_its_declared_sim_recipe() {
         assert_eq!(mc.trials, sim.trials, "{name}: montecarlo trial count");
         assert_eq!(mc.stats.len(), estimated, "{name}: montecarlo stats count");
         assert_eq!(
-            mc.per_trial_error.len(),
+            mc.per_trial_input.len(),
             sim.trials,
-            "{name}: one error row per montecarlo trial",
+            "{name}: one input row per montecarlo trial",
         );
-        for row in &mc.per_trial_error {
+        assert_eq!(
+            mc.per_trial_fitted.len(),
+            sim.trials,
+            "{name}: one fitted row per montecarlo trial",
+        );
+        for row in &mc.per_trial_input {
             assert_eq!(
                 row.len(),
                 mc.stats.len(),
-                "{name}: an error row must cover every reported parameter",
+                "{name}: an input row must cover every reported parameter",
+            );
+        }
+        for row in &mc.per_trial_fitted {
+            assert_eq!(
+                row.len(),
+                mc.stats.len(),
+                "{name}: a fitted row must cover every reported parameter",
             );
         }
     }

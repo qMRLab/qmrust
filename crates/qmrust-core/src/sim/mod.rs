@@ -330,19 +330,19 @@ pub fn run_montecarlo(cfg: &Config, raw: &serde_yaml::Value) -> Result<MonteCarl
 
     // Stats: bias/rmse against each voxel's own drawn truth (averaged).
     let mut stats = Vec::new();
-    let mut error_columns: Vec<Vec<f64>> = Vec::new();
+    let mut input_columns: Vec<Vec<f64>> = Vec::new();
+    let mut fitted_columns: Vec<Vec<f64>> = Vec::new();
     for (pi, name) in names.iter().enumerate() {
         let Some(fi) = model.output_names().iter().position(|n| n == name) else {
             continue;
         };
-        let errs: Vec<f64> = (0..sim.trials)
-            .map(|t| per_trial_fit[t][fi] - per_trial_truth[t][pi])
-            .collect();
-        let ests: Vec<f64> = per_trial_fit.iter().map(|t| t[fi]).collect();
-        let (mean, std) = mean_std(&ests);
+        let inputs: Vec<f64> = per_trial_truth.iter().map(|t| t[pi]).collect();
+        let fitted: Vec<f64> = per_trial_fit.iter().map(|t| t[fi]).collect();
+        let errs: Vec<f64> = (0..sim.trials).map(|t| fitted[t] - inputs[t]).collect();
+        let (mean, std) = mean_std(&fitted);
         let (bias, _) = mean_std(&errs);
         let rmse = (errs.iter().map(|e| e * e).sum::<f64>() / errs.len().max(1) as f64).sqrt();
-        let truth_mean = mean_std(&per_trial_truth.iter().map(|t| t[pi]).collect::<Vec<_>>()).0;
+        let truth_mean = mean_std(&inputs).0;
         stats.push(ParamStat {
             name: name.to_string(),
             truth: truth_mean,
@@ -351,18 +351,23 @@ pub fn run_montecarlo(cfg: &Config, raw: &serde_yaml::Value) -> Result<MonteCarl
             bias,
             rmse,
         });
-        error_columns.push(errs);
+        input_columns.push(inputs);
+        fitted_columns.push(fitted);
     }
     // stats is one row per reported parameter; the report is one row per trial.
-    let per_trial_error: Vec<Vec<f64>> = (0..sim.trials)
-        .map(|t| error_columns.iter().map(|col| col[t]).collect())
+    let per_trial_input: Vec<Vec<f64>> = (0..sim.trials)
+        .map(|t| input_columns.iter().map(|col| col[t]).collect())
+        .collect();
+    let per_trial_fitted: Vec<Vec<f64>> = (0..sim.trials)
+        .map(|t| fitted_columns.iter().map(|col| col[t]).collect())
         .collect();
     Ok(MonteCarloReport {
         mode: "montecarlo".into(),
         model: cfg.model.clone(),
         trials: sim.trials,
         stats,
-        per_trial_error,
+        per_trial_input,
+        per_trial_fitted,
     })
 }
 
@@ -559,31 +564,48 @@ sim:
     }
 
     #[test]
-    fn montecarlo_reports_every_trials_error_aligned_with_its_stats() {
-        // The summary alone cannot describe a distribution's shape, so the
-        // report carries the errors the stats were computed from.
+    fn montecarlo_reports_each_trials_input_and_fitted_value() {
+        // The scatter of fitted against input is the question this mode answers,
+        // so the pairs it is drawn from travel with the summary rather than being
+        // recomputed by a second path.
         let (cfg, raw) =
             qmt_cfg("  trials: 7\n  distributions:\n    F: { mean: 0.15, std: 0.01 }\n");
         let r = run_montecarlo(&cfg, &raw).unwrap();
-        assert_eq!(r.per_trial_error.len(), 7, "one row per trial");
-        for row in &r.per_trial_error {
+        assert_eq!(r.per_trial_input.len(), 7, "one input row per trial");
+        assert_eq!(r.per_trial_fitted.len(), 7, "one fitted row per trial");
+        for (inputs, fitted) in r.per_trial_input.iter().zip(&r.per_trial_fitted) {
             assert_eq!(
-                row.len(),
+                inputs.len(),
                 r.stats.len(),
-                "one column per reported parameter"
+                "one input per reported parameter"
+            );
+            assert_eq!(
+                fitted.len(),
+                r.stats.len(),
+                "one fit per reported parameter"
             );
         }
-        // The reported bias is the mean of the errors reported beside it.
-        for (j, s) in r.stats.iter().enumerate() {
-            let mean = r.per_trial_error.iter().map(|row| row[j]).sum::<f64>() / 7.0;
+        // The reported bias is the mean of fitted minus input, over the same trials.
+        for (i, s) in r.stats.iter().enumerate() {
+            let mean_err = (0..7)
+                .map(|t| r.per_trial_fitted[t][i] - r.per_trial_input[t][i])
+                .sum::<f64>()
+                / 7.0;
             assert!(
-                (mean - s.bias).abs() < 1e-12,
-                "{}: bias {} is not the mean error {}",
+                (mean_err - s.bias).abs() < 1e-12,
+                "{}: bias {} is not the mean of fitted minus input {}",
                 s.name,
                 s.bias,
-                mean
+                mean_err
             );
         }
+        // A drawn parameter varies across trials; a fixed one does not.
+        let f = r.stats.iter().position(|s| s.name == "F").unwrap();
+        let first = r.per_trial_input[0][f];
+        assert!(
+            r.per_trial_input.iter().any(|row| row[f] != first),
+            "F is drawn from a distribution, so its input must vary across trials",
+        );
     }
 
     #[test]

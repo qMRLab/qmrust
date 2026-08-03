@@ -192,18 +192,24 @@ test("a montecarlo report becomes one box per reported parameter", () => {
       { name: "T1", truth: 1, mean: 1, bias: 0, std: 0.1, rmse: 0.1 },
       { name: "M0", truth: 1000, mean: 1000, bias: 0, std: 10, rmse: 10 },
     ],
-    per_trial_error: [
+    per_trial_input: [
+      [0, 0], [0, 0], [0, 0], [0, 0], [0, 0],
+    ],
+    per_trial_fitted: [
       [1, 10], [2, 20], [3, 30], [4, 40], [5, 50],
     ],
   };
   const boxes = montecarloBoxes(report);
   assert.deepEqual(boxes.map((b) => b.name), ["T1", "M0"]);
-  // Five sorted values: min 1, median 3, max 5.
+  // Five sorted errors (fitted - input): min 1, median 3, max 5.
   assert.equal(boxes[0].box[0], 1);
   assert.equal(boxes[0].box[2], 3);
   assert.equal(boxes[0].box[4], 5);
 });
 
-test("a report with no per-trial errors yields no boxes rather than throwing", () => {
-  assert.deepEqual(montecarloBoxes({ mode: "montecarlo", stats: [], per_trial_error: [] }), []);
+test("a report with no per-trial pairs yields no boxes rather than throwing", () => {
+  assert.deepEqual(
+    montecarloBoxes({ mode: "montecarlo", stats: [], per_trial_input: [], per_trial_fitted: [] }),
+    [],
+  );
 });

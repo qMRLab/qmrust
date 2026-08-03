@@ -121,9 +121,11 @@ function quantile(sorted, q) {
 // boundary is exactly what a reader is looking for here, and hiding it as an
 // outlier would be the wrong default.
 export function montecarloBoxes(report) {
-  const rows = report?.per_trial_error ?? [];
+  const inputs = report?.per_trial_input ?? [];
+  const fitted = report?.per_trial_fitted ?? [];
   const stats = report?.stats ?? [];
-  if (!rows.length || !stats.length) return [];
+  if (!inputs.length || !fitted.length || !stats.length) return [];
+  const rows = inputs.map((row, t) => row.map((v, j) => fitted[t][j] - v));
   return stats.map((s, j) => {
     const sorted = rows.map((row) => row[j]).filter(Number.isFinite).sort((a, b) => a - b);
     return {
