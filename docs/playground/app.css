@@ -483,6 +483,11 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .sim-table th { color: var(--muted); font-weight: 500; }
 .sim-table td:first-child, .sim-table th:first-child { text-align: left; }
+/* `[hidden]` is a UA rule at specificity 0,1,0, so any class that sets
+   `display` defeats it. Every card the page-mode switch toggles therefore
+   states its own hidden case. */
+.sim-wrap[hidden], .viewer-in-wrap[hidden], .viewer-out-wrap[hidden],
+.curve-wrap[hidden], .drop-wrap[hidden] { display: none; }
 .drop-wrap { flex: 0 0 auto; }
 @media (max-height: 620px) {
   body { height: auto; min-height: 100dvh; overflow: auto; }
