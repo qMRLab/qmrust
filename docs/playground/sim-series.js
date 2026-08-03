@@ -1,5 +1,6 @@
 // Pure mappings from a sim report, and from a page mode, to the values the UI
 // draws. No DOM and no wasm here, so every rule below is unit-testable.
+import { identityLabel } from "./dom.js";
 
 // Which recipe a page mode edits. The two texts are held apart rather than
 // re-derived from the payload on every switch, so a reader's edits to either
@@ -32,27 +33,37 @@ export function statsRows(report) {
   }));
 }
 
-// Positions are the honest fallback label: a sample the caller has no identity
-// for is still a sample, and numbering it says only where it sits.
-function axisLabels(count, labels = []) {
-  return Array.from({ length: count }, (_, k) => labels[k] ?? String(k + 1));
+// A sample's x-axis label: its own identity, formatted the same way a
+// BIDS-resolved volume's is, or (for a sample the report gives no identity
+// for) its position. Position is the honest fallback — a sample with no
+// identity is still a sample, and numbering it says only where it sits. The
+// core built the measurement, so the report's own `identities` are the only
+// source; a loaded dataset's labels describe a different acquisition once the
+// recipe has been edited, and must never stand in for these.
+function axisLabels(count, identities = []) {
+  return Array.from({ length: count }, (_, k) => {
+    const id = identities[k];
+    return id === undefined
+      ? String(k + 1)
+      : identityLabel(typeof id === "string" ? { role: id } : { params: id });
+  });
 }
 
-export function signalSeries(report, labels = []) {
+export function signalSeries(report) {
   const values = report?.signal ?? [];
-  return { values, labels: axisLabels(values.length, labels) };
+  return { values, labels: axisLabels(values.length, report?.identities) };
 }
 
 // Three curves: the noise-free signal at the truth, the first trial's noisy
 // measurement, and the forward signal at what that trial fitted. Read together
 // they answer whether the fit recovered the truth, which is the question the
 // mode exists for. All three come from the report; none is recomputed here.
-export function singleVoxelSeries(report, labels = []) {
+export function singleVoxelSeries(report) {
   const noisy = report?.noisy_signal ?? [];
   return {
     clean: report?.clean_signal ?? [],
     noisy,
     fitted: report?.fitted_signal ?? [],
-    labels: axisLabels(noisy.length, labels),
+    labels: axisLabels(noisy.length, report?.identities),
   };
 }

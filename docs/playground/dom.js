@@ -20,7 +20,17 @@ export const status = (m, kind = "info") => {
 
 // Compact number for a label: drops trailing zeros so 0.35 reads as 0.35 and
 // 90.0 as 90.
-export const fmt = (v) => (typeof v === "number" ? String(Number(v.toPrecision(6))) : String(v));
+const fmt = (v) => (typeof v === "number" ? String(Number(v.toPrecision(6))) : String(v));
+
+// A volume's label, from whatever identity it resolved to — a role name for a
+// named measurement, its parameter values for a series one. Never keyed on a
+// model or parameter name.
+export function identityLabel(id) {
+  if (!id) return "volume";
+  if (id.role) return id.role;
+  const parts = Object.entries(id.params ?? {}).map(([k, v]) => `${k}=${fmt(v)}`);
+  return parts.length ? parts.join(", ") : "volume";
+}
 
 // Rounds a colour-scale bound to ~3 significant figures for display in the
 // min/max inputs — full float precision is not a meaningful "default", and

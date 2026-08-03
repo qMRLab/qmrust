@@ -3,10 +3,10 @@
 // holding the volume, mask and auxiliary inputs a fit needs — so everything
 // downstream is blind to where the data came from.
 import { NVImage } from "./vendor/niivue.js";
-import { $, status } from "./dom.js";
+import { $, identityLabel, status } from "./dom.js";
 import { app, editor, nvIn, nvOut } from "./state.js";
 import { loadBundle } from "./bundles.js";
-import { fetchDataset, identityLabel, stage } from "./dataset.js";
+import { fetchDataset, stage } from "./dataset.js";
 import { setEditorText } from "./recipe.js";
 import { isSimMode, seedSimRecipe } from "./sim.js";
 import {

@@ -251,9 +251,8 @@ function baseOption(p, { xName, yName, xData, legend = [] }) {
 function drawSim(report) {
   drawn = report;
   const p = palette();
-  const labels = app.current?.meta?.labels ?? [];
   if (report.mode === "signal") {
-    const s = signalSeries(report, labels);
+    const s = signalSeries(report);
     ensureChart().setOption(
       {
         ...baseOption(p, { xName: "acquisition", yName: "signal", xData: s.labels }),
@@ -274,7 +273,7 @@ function drawSim(report) {
     return;
   }
   if (report.mode === "single-voxel") {
-    const s = singleVoxelSeries(report, labels);
+    const s = singleVoxelSeries(report);
     ensureChart().setOption(
       {
         ...baseOption(p, {

@@ -49,16 +49,36 @@ test("a signal report plots its own vector", () => {
   assert.deepEqual(s.labels, ["1", "2", "3"]);
 });
 
-test("a signal report labels its points from the model's volume identities", () => {
-  const s = signalSeries({ mode: "signal", signal: [3, 2] }, ["TI=0.35", "TI=0.5"]);
-  assert.deepEqual(s.labels, ["TI=0.35", "TI=0.5"]);
+test("a signal report labels its points from its own identities, not a loaded dataset's", () => {
+  // The report's identities describe the acquisition it was actually
+  // simulated from (a Series model's per-sample parameter row), never
+  // whatever dataset happened to be loaded before the recipe was edited.
+  const s = signalSeries({
+    mode: "signal",
+    signal: [403, 410],
+    identities: [{ InversionTime: 2.1 }, { InversionTime: 2.2 }],
+  });
+  assert.deepEqual(s.labels, ["InversionTime=2.1", "InversionTime=2.2"]);
 });
 
-test("labels shorter than the signal fall back to positions for the rest", () => {
+test("a Named measurement's role identities format by role name", () => {
+  const s = signalSeries({
+    mode: "signal",
+    signal: [1, 2, 3],
+    identities: ["MTw", "PDw", "T1w"],
+  });
+  assert.deepEqual(s.labels, ["MTw", "PDw", "T1w"]);
+});
+
+test("identities shorter than the signal fall back to positions for the rest", () => {
   // A Series model whose fit excludes a volume returns fewer samples than the
   // acquisition has, so the two lengths genuinely differ.
-  const s = signalSeries({ mode: "signal", signal: [3, 2, 1] }, ["a"]);
-  assert.deepEqual(s.labels, ["a", "2", "3"]);
+  const s = signalSeries({
+    mode: "signal",
+    signal: [3, 2, 1],
+    identities: [{ InversionTime: 0.35 }],
+  });
+  assert.deepEqual(s.labels, ["InversionTime=0.35", "2", "3"]);
 });
 
 test("single-voxel plots the three curves a recovery reading needs", () => {
@@ -79,4 +99,15 @@ test("a single-voxel report missing a curve yields an empty one rather than thro
   assert.deepEqual(s.noisy, [1, 2]);
   assert.deepEqual(s.clean, []);
   assert.deepEqual(s.fitted, []);
+});
+
+test("single-voxel labels its points from the report's own identities", () => {
+  const s = singleVoxelSeries({
+    mode: "single-voxel",
+    clean_signal: [10, 8],
+    noisy_signal: [10.2, 7.7],
+    fitted_signal: [10.1, 7.9],
+    identities: [{ InversionTime: 0.35 }, { InversionTime: 0.5 }],
+  });
+  assert.deepEqual(s.labels, ["InversionTime=0.35", "InversionTime=0.5"]);
 });

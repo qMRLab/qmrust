@@ -12,7 +12,7 @@ use anyhow::{bail, Result};
 use rand_distr::{Distribution, Normal};
 
 use crate::config::Config;
-use crate::core::model::{Measurement, MeasurementKind, Model, Sample};
+use crate::core::model::{Measurement, MeasurementKind, Model, Sample, VolumeId};
 use model::{build_model, param_vector, sim_aux, validate_sim_inputs};
 use noise::{add_noise, seeded_rng, sigma_for, NoiseKind};
 use rand::rngs::StdRng;
@@ -78,6 +78,24 @@ fn measurement_values(model: &dyn Model, m: &Measurement) -> Vec<f64> {
     }
 }
 
+/// Extract a measurement's per-sample identities in the same order
+/// `measurement_values` extracts its values, so a value and its identity can
+/// never come apart: `Series` → each sample's own `params`; `Named` → the
+/// model's declared role order (never the map's own, alphabetical, iteration
+/// order).
+fn measurement_ids(model: &dyn Model, m: &Measurement) -> Vec<VolumeId> {
+    match m {
+        Measurement::Named(_) => named_roles(model)
+            .iter()
+            .map(|r| VolumeId::Role(r))
+            .collect(),
+        Measurement::Series(s) => s
+            .iter()
+            .map(|s| VolumeId::Params(s.params.clone()))
+            .collect(),
+    }
+}
+
 /// Apply `add_noise` to a measurement's values, preserving its shape and
 /// identities. Noise is drawn in `measurement_values` order, so the RNG draw
 /// sequence is identical to noising the extracted value vector directly, and
@@ -121,7 +139,9 @@ pub fn run_signal(cfg: &Config, raw: &serde_yaml::Value) -> Result<SignalReport>
     let model = build_model(cfg, raw)?;
     let aux = sim_aux(sim);
     let truth = param_vector(model.as_ref(), sim)?;
-    let signal = measurement_values(model.as_ref(), &model.forward(&truth, &aux));
+    let meas = model.forward(&truth, &aux);
+    let signal = measurement_values(model.as_ref(), &meas);
+    let identities = measurement_ids(model.as_ref(), &meas);
     let names = model.param_names();
     Ok(SignalReport {
         mode: "signal".into(),
@@ -132,6 +152,7 @@ pub fn run_signal(cfg: &Config, raw: &serde_yaml::Value) -> Result<SignalReport>
             .zip(truth.iter().copied())
             .collect(),
         signal,
+        identities,
     })
 }
 
@@ -145,6 +166,7 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
     let truth = param_vector(model.as_ref(), sim)?;
     let clean_meas = model.forward(&truth, &aux);
     let clean = measurement_values(model.as_ref(), &clean_meas);
+    let identities = measurement_ids(model.as_ref(), &clean_meas);
     let kind = NoiseKind::from_str(&sim.noise.kind)?;
     let sigma = sigma_for(&clean, sim.noise.snr);
     let mut rng = seeded_rng(sim.seed);
@@ -171,8 +193,9 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
             .zip(truth.iter().copied())
             .collect(),
         noisy_signal: first_noisy,
-        clean_signal: clean.clone(),
+        clean_signal: clean,
         fitted_signal,
+        identities,
         trials: sim.trials,
         fitted_names: model.output_names(),
         stats,
@@ -576,6 +599,27 @@ sim:
         // Alphabetical (BTreeMap) order would be [MTw, PDw, T1w] = [2.0, 1.0, 3.0].
         // Declared role order is [T1w, PDw, MTw] = [3.0, 1.0, 2.0].
         assert_eq!(measurement_values(&model, &meas), vec![3.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn measurement_ids_named_follows_declared_role_order_not_alphabetical() {
+        let model = NamedStub;
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("MTw", 2.0);
+        map.insert("PDw", 1.0);
+        map.insert("T1w", 3.0);
+        let meas = Measurement::Named(map);
+        let ids = measurement_ids(&model, &meas);
+        let roles: Vec<&str> = ids
+            .iter()
+            .map(|id| match id {
+                VolumeId::Role(r) => *r,
+                VolumeId::Params(_) => panic!("a Named measurement's ids must all be Role"),
+            })
+            .collect();
+        // Alphabetical (BTreeMap) order would be [MTw, PDw, T1w].
+        // Declared role order is [T1w, PDw, MTw], matching measurement_values.
+        assert_eq!(roles, vec!["T1w", "PDw", "MTw"]);
     }
 
     #[test]

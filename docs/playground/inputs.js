@@ -7,9 +7,9 @@
 // chooses how to draw it, and branches on the verdict's shape alone — never on a
 // model, suffix, or parameter name.
 import { icon } from "./vendor/icons.js";
-import { $ } from "./dom.js";
+import { $, identityLabel } from "./dom.js";
 import { app, nvIn } from "./state.js";
-import { hideDownloadProgress, identityLabel } from "./dataset.js";
+import { hideDownloadProgress } from "./dataset.js";
 import { openFileModal, openJsonModal } from "./modal.js";
 import { sizeViewers } from "./viewers.js";
 
