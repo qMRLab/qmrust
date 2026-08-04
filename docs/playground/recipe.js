@@ -705,6 +705,18 @@ export function syncYamlScroll() {
   hl.scrollLeft = ta.scrollLeft;
 }
 
+/**
+ * Rebuild the form's rows for a changed simulation mode.
+ *
+ * Which settings the form shows depends on the mode (see `simModeReads`), so a
+ * mode switch has to rebuild the rows exactly as a recipe edit does. The recipe
+ * text itself is unchanged — every mode's settings stay in it, and the YAML tab
+ * goes on showing all of them — so only the form is affected.
+ */
+export function syncFormRows() {
+  if (editor.valid) renderForm();
+}
+
 export function showTab(tab) {
   const isForm = tab === "form";
   $("tab-form").classList.toggle("active", isForm);

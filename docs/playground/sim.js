@@ -4,7 +4,7 @@
 // own, and it works even when a dataset failed to load.
 import { $, hideProgress, setProgress, showProgress, status } from "./dom.js";
 import { app, editor } from "./state.js";
-import { setEditorText, syncFitArmed } from "./recipe.js";
+import { setEditorText, syncFitArmed, syncFormRows } from "./recipe.js";
 import {
   SIM_MODES,
   recipeForMode,
@@ -173,6 +173,9 @@ export async function runSim() {
 
 function setSimMode(id) {
   app.simMode = id;
+  // The form shows only the settings this mode's run reads, so it has to be
+  // rebuilt here: the recipe has not changed, only which of it applies.
+  syncFormRows();
   for (const b of $("sim-modes").querySelectorAll("button")) {
     const on = b.dataset.mode === id;
     b.classList.toggle("active", on);
