@@ -12,10 +12,11 @@ const datasetCache = {};
 // data/sources.json, fetched once.
 let sourcesCache = null;
 
-// The download ring, on the fitted-map skeleton — the one panel with nothing
-// else to say while bytes arrive. `fraction` is null when the server sent no
-// `Content-Length`, in which case the ring stays hidden rather than animating a
-// number it cannot know.
+// The download ring lives in the navbar (`#navbar-dl`, holding the `.dl-ring`
+// SVG and `#dl-pct`), not on either viewer: the bytes arriving are a page-wide
+// fact, not something either panel alone is waiting on. `fraction` is null
+// when the server sent no `Content-Length`, in which case the ring stays
+// hidden rather than animating a number it cannot know.
 const RING_CIRCUMFERENCE = 2 * Math.PI * 36; // r=36, matching the SVG
 
 // Three states, because a download has three phases a reader can distinguish:

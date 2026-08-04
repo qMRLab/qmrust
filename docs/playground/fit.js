@@ -77,6 +77,9 @@ export async function fitSlice() {
   const [nx, ny, nz, nt] = meta.dims;
   status("Fitting…", "busy");
   showProgress();
+  // The fit is about to fill the fitted-map panel, so its skeleton is the one
+  // that shows now; the inputs panel already has its dataset and stays put.
+  $("skel-out").hidden = false;
   $("fit").disabled = true;
   const t0 = performance.now();
   const data = readVolumeSeries(volume, nx, ny, nz, nt);
@@ -90,6 +93,7 @@ export async function fitSlice() {
     status("Fit failed", "error");
     showNotice("triangle-alert", "Fit failed", String(e?.message ?? e));
     hideProgress();
+    $("skel-out").hidden = true;
     syncFitArmed();
     return;
   }
@@ -135,6 +139,7 @@ export async function fitSlice() {
     status(`Fitted, but could not display it: ${e?.message ?? e}`, "error");
   } finally {
     hideProgress();
+    $("skel-out").hidden = true;
     syncFitArmed();
     syncMapViewControls();
   }

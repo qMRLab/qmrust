@@ -68,11 +68,10 @@ export function showInputsTab(tab) {
 // stale list or an empty black canvas. `expect` is the file count if known.
 export function showLoading(note, expect = 12) {
   app.loading = true;
-  // Both viewers shimmer: the fitted map has nothing to show until a fit runs,
-  // and during a load it has no dataset to run against either. The overlays sit
-  // inside their viewers, so neither card changes size.
+  // A dataset load only fills the Inputs panel, so only its skeleton appears;
+  // the fitted map gets its own skeleton from `fitSlice`, while a fit runs.
+  // The overlay sits inside its viewer, so the card does not change size.
   $("skel-in").hidden = false;
-  $("skel-out").hidden = false;
   const tree = $("files-tree");
   tree.replaceChildren();
   $("files-summary").textContent = note;
