@@ -555,19 +555,24 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    toggle it. */
 .mode-switch {
   position: relative; isolation: isolate; cursor: pointer;
-  display: grid; grid-template-columns: 1fr 1fr;
+  display: grid; grid-template-columns: 1fr 1fr; padding: 3px;
+  /* Transparent: the visible track border is `::after`'s, drawn one layer
+     behind. This one only claims the same box-model space a real border
+     would, so the switch matches a `.seg` toggle's height pixel for pixel. */
+  border: 1px solid transparent;
 }
 .mode-switch input {
   position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0;
   pointer-events: none;
 }
-.mode-switch span {
+.mode-switch > span {
   position: relative; z-index: 1; text-align: center;
   padding: 5px 12px; font: 600 12px var(--font-ui);
   color: var(--muted); opacity: .75;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
   transition: opacity .3s ease .15s, color .3s ease .15s;
 }
-.mode-switch span:hover { opacity: 1; transition-duration: 0s; }
+.mode-switch > span:hover { opacity: 1; transition-duration: 0s; }
 .mode-switch input:not(:checked) ~ span:first-of-type,
 .mode-switch input:checked ~ span:last-of-type {
   color: var(--ink); opacity: 1;
@@ -1137,6 +1142,18 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 #status.ok { color: var(--good); font-weight: 700; }
 #status.busy { color: var(--rust); font-weight: 700; }
 #status.error { color: var(--bad); font-weight: 700; }
+/* A lit dot ahead of the status text, coloured from the element's own `color`
+   rather than a per-kind rule: `currentColor` tracks whichever of the states
+   above is active (and the plain `info` state) with one declaration, so a
+   future status kind inherits the dot for free. Decorative, so it lives on
+   `::before` rather than as a markup element, keeping it out of the
+   accessibility tree. */
+#status::before {
+  content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px;
+  border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 5px currentColor, 0 0 2px currentColor;
+  vertical-align: middle; transform: translateY(-1px);
+}
 
 .ghost-btn {
   background: none; border: 1px solid var(--line); color: var(--ink-2);
