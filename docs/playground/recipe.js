@@ -396,6 +396,10 @@ function buildRows(container, rows, parentLocked = false) {
     if (row.children) {
       const group = document.createElement("div");
       group.className = "group";
+      // Its own key, so the stylesheet can address a particular group without
+      // the wiring knowing which groups are special. `sim` is styled as the
+      // simulation's gold block on the strength of this.
+      group.dataset.group = row.key;
       const title = document.createElement("div");
       title.className = "group-title";
       title.textContent = groupLabel(row.key, app.modelParams);

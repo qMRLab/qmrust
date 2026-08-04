@@ -774,6 +774,22 @@ body.sim-mode .seg button.active { color: var(--brass); }
   font: 700 11px var(--font-mono); text-transform: uppercase; letter-spacing: .07em;
   color: var(--muted); margin-bottom: 8px;
 }
+/* The simulation block is gold, like the panel it drives and the card around it:
+   what a reader sets under here is ground truth they chose, not a measurement
+   read off a dataset, and that difference is worth seeing without reading a
+   label. Keyed off the group's own name rather than the page mode, because the
+   block is gold for what it is — a recipe declaring a simulation anywhere would
+   be marked the same way.
+
+   The nested groups are included, so Ground Truth, Noise and the rest sit in the
+   same family instead of leaving neutral boxes patched into a tinted one. The
+   tint is weak enough that `--ink` on it stays above 10:1 in every theme, and
+   `--brass` clears the mark floor it is already held to. */
+.group[data-group="sim"], .group[data-group="sim"] .group {
+  border-color: color-mix(in srgb, var(--brass) 55%, var(--line));
+  background: color-mix(in srgb, var(--brass) 6%, var(--panel-2));
+}
+.group[data-group="sim"] .group-title { color: var(--brass); }
 .group .form-fields { gap: 8px; }
 .field-row {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
