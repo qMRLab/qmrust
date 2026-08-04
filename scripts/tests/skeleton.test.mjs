@@ -5,7 +5,7 @@
 // one hits, rather than restating the formulas verbatim.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeGrid, cellDelayMs, cellRampIndex } from "../../docs/playground/skeleton.js";
+import { computeGrid, cellDelayMs, cellRampIndex, cycleMs } from "../../docs/playground/skeleton.js";
 
 test("a wide panel tiles exactly: cols * cell width covers the full width with no gap", () => {
   const { cols, rows } = computeGrid(1200, 200, 16, 10000);
@@ -53,4 +53,37 @@ test("the ramp index cycles rather than running off the nine-step ramp", () => {
       assert.ok(idx >= 0 && idx < 9, "always a valid --ripple-N index");
     }
   }
+});
+
+// The grid must fill whole before any of it clears. A cell lights `LIT_AT` into
+// the cycle and holds until `CLEARS_AT`, both as shares of the cycle, matching
+// the `ripple` keyframes in app.css. If the first cell's hold does not outlast
+// the wave's traverse, the top left empties while the bottom right is still
+// filling, which is the one thing this animation must not do. These numbers
+// have to be kept in step with those keyframes by hand, so the test states
+// them rather than deriving them.
+const LIT_AT = 0.08;
+const CLEARS_AT = 0.53;
+
+for (const [label, cols, rows] of [
+  ["a wide panel", 48, 12],
+  ["a tall panel", 12, 48],
+  ["a square panel", 30, 30],
+  ["a single cell", 1, 1],
+]) {
+  test(`${label} fills completely before any cell clears`, () => {
+    const cycle = cycleMs(cols, rows);
+    const traverse = cellDelayMs(rows - 1, cols - 1);
+    const lastLitAt = traverse + LIT_AT * cycle;
+    const firstClearsAt = CLEARS_AT * cycle;
+    assert.ok(
+      firstClearsAt >= lastLitAt,
+      `first cell clears at ${firstClearsAt}ms but the last lights at ${lastLitAt}ms`,
+    );
+  });
+}
+
+test("the cycle grows with the panel, since a longer traverse needs a longer hold", () => {
+  assert.ok(cycleMs(48, 12) > cycleMs(12, 12), "a wider panel takes longer to cross");
+  assert.ok(cycleMs(60, 60) > cycleMs(30, 30), "a bigger grid takes longer to cross");
 });

@@ -1071,19 +1071,26 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .cell {
   background-color: transparent; border-radius: 2px;
-  animation: 2.2s ripple ease infinite;
+  /* `--cycle` is set per panel by `fillSkeleton`, because the plateau below has
+     to outlast the wave's traverse and the traverse depends on the panel's size.
+     The fallback covers a cell somehow rendered outside that path. */
+  animation: var(--cycle, 2.2s) ripple linear infinite;
 }
-/* The lit peak is the ramp colour held well short of full strength. At full
+/* The grid fills from the top left, holds whole, then clears from the top left.
+   The plateau between the two edges is what keeps the first cell lit until the
+   last one has arrived, so the grid is never simultaneously filling in one
+   corner and emptying in another; `cycleMs` in skeleton.js sizes the cycle
+   against this share, and the two must be changed together.
+
+   The lit level is the ramp colour held well short of full strength: at full
    strength the ramp's saturated ends read as a glare over the viewer's black
    rather than as tissue-sized blocks filling in, and a placeholder should not
-   out-shout the image it stands in for. The trailing return to transparent is
-   what keeps this a wave rather than a fill: a grid that stayed lit would
-   accumulate toward full and imply a progress fraction, which is a claim no
-   caller here can make. */
+   out-shout the image it stands in for. */
 @keyframes ripple {
   0%   { background-color: transparent; }
-  30%  { background-color: color-mix(in srgb, var(--cell-color) 52%, transparent); }
-  60%  { background-color: transparent; }
+  8%   { background-color: color-mix(in srgb, var(--cell-color) 52%, transparent); }
+  53%  { background-color: color-mix(in srgb, var(--cell-color) 52%, transparent); }
+  61%  { background-color: transparent; }
   100% { background-color: transparent; }
 }
 @media (prefers-reduced-motion: reduce) {

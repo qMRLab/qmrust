@@ -31,6 +31,17 @@ const STEP_MS = 65;
 // The colour ramp's step count, `--ripple-1` through `--ripple-9`.
 const RAMP_STEPS = 9;
 
+// The share of one cycle a cell stays lit, matching the plateau between the
+// `ripple` keyframes' fill and wipe edges in app.css. The two must agree: this
+// is the number `cycleMs` sizes the cycle against, and the keyframes are where
+// the plateau actually lives.
+const PLATEAU_SHARE = 0.45;
+
+// A margin on top of the minimum cycle, so the last cell to light is fully lit
+// for a beat before the first one starts to clear rather than the two events
+// landing on the same frame.
+const PLATEAU_MARGIN = 1.15;
+
 /**
  * The column and row count that tiles a `width` by `height` panel with
  * cells at or near `targetCellPx`, growing the cell size if that would
@@ -65,6 +76,22 @@ export function cellRampIndex(row, col, steps = RAMP_STEPS) {
 }
 
 /**
+ * How long one cycle must run so that no cell begins to clear before every
+ * cell has lit.
+ *
+ * A cell lights `delay` into the cycle and holds for `PLATEAU_SHARE` of it.
+ * The last cell's delay is the wave's full traverse, so the first cell's
+ * plateau has to cover that traverse or the grid starts emptying from the top
+ * left while the bottom right is still filling. The traverse grows with the
+ * panel, so the cycle cannot be a constant in the stylesheet and is set per
+ * panel instead.
+ */
+export function cycleMs(cols, rows, stepMs = STEP_MS, plateauShare = PLATEAU_SHARE) {
+  const traverseMs = cellDelayMs(rows - 1, cols - 1, stepMs);
+  return Math.round((traverseMs / plateauShare) * PLATEAU_MARGIN);
+}
+
+/**
  * Fills `skel`'s `.loader` with a grid of cells sized to the panel's own
  * measured area, each coloured and delayed by its position on the diagonal.
  * Call this after the skeleton's `hidden` attribute is cleared (so its size
@@ -76,6 +103,9 @@ export function fillSkeleton(skel) {
   const { cols, rows } = computeGrid(width || TARGET_CELL_PX, height || TARGET_CELL_PX);
   loader.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
   loader.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+  // One duration for every cell in this panel: the cells differ only by delay,
+  // and the plateau that keeps the grid whole is a share of this.
+  loader.style.setProperty("--cycle", `${cycleMs(cols, rows)}ms`);
   loader.replaceChildren();
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
