@@ -1071,11 +1071,18 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .cell {
   background-color: transparent; border-radius: 2px;
-  animation: 1.5s ripple ease infinite;
+  animation: 2.2s ripple ease infinite;
 }
+/* The lit peak is the ramp colour held well short of full strength. At full
+   strength the ramp's saturated ends read as a glare over the viewer's black
+   rather than as tissue-sized blocks filling in, and a placeholder should not
+   out-shout the image it stands in for. The trailing return to transparent is
+   what keeps this a wave rather than a fill: a grid that stayed lit would
+   accumulate toward full and imply a progress fraction, which is a claim no
+   caller here can make. */
 @keyframes ripple {
   0%   { background-color: transparent; }
-  30%  { background-color: var(--cell-color); }
+  30%  { background-color: color-mix(in srgb, var(--cell-color) 52%, transparent); }
   60%  { background-color: transparent; }
   100% { background-color: transparent; }
 }

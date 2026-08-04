@@ -11,8 +11,10 @@
 // is on screen. `fillSkeleton` measures the panel and builds exactly the
 // cells that size calls for.
 
-// A cell this size reads as a voxel without needing per-panel tuning.
-const TARGET_CELL_PX = 16;
+// A cell this size reads as a voxel without needing per-panel tuning: large
+// enough to be a distinct block rather than grain, small enough that a panel
+// holds a grid rather than a handful of tiles.
+const TARGET_CELL_PX = 22;
 
 // Caps the DOM node count a very large panel would otherwise ask for: a 4K
 // panel at the target size would be tens of thousands of divs. Rather than
@@ -20,8 +22,11 @@ const TARGET_CELL_PX = 16;
 // the grid fits under it.
 const MAX_CELLS = 900;
 
-// How much later each step along the diagonal ripples, in milliseconds.
-const STEP_MS = 45;
+// How much later each step along the diagonal ripples, in milliseconds. This
+// sets how fast the wave front crosses the panel, which is the motion a reader
+// actually perceives; the cell's own fade duration only sets how long one block
+// stays lit as the front passes it.
+const STEP_MS = 65;
 
 // The colour ramp's step count, `--ripple-1` through `--ripple-9`.
 const RAMP_STEPS = 9;
