@@ -8,7 +8,9 @@ import {
   signalSeries,
   singleVoxelSeries,
   sensitivitySeries,
-  montecarloBoxes,
+  multiVoxelScatter,
+  multiVoxelErrors,
+  errorHistogram,
 } from "../../docs/playground/sim-series.js";
 
 test("each page mode edits its own recipe", () => {
@@ -158,32 +160,45 @@ test("a report with no points yields no panels rather than throwing", () => {
   assert.deepEqual(sensitivitySeries({ mode: "sensitivity", points: [] }).params, []);
 });
 
-test("a montecarlo report becomes one box per reported parameter", () => {
-  const report = {
-    mode: "montecarlo",
-    trials: 5,
-    stats: [
-      { name: "T1", truth: 1, mean: 1, bias: 0, std: 0.1, rmse: 0.1 },
-      { name: "M0", truth: 1000, mean: 1000, bias: 0, std: 10, rmse: 10 },
-    ],
-    per_trial_input: [
-      [0, 0], [0, 0], [0, 0], [0, 0], [0, 0],
-    ],
-    per_trial_fitted: [
-      [1, 10], [2, 20], [3, 30], [4, 40], [5, 50],
-    ],
-  };
-  const boxes = montecarloBoxes(report);
-  assert.deepEqual(boxes.map((b) => b.name), ["T1", "M0"]);
-  // Five sorted errors (fitted - input): min 1, median 3, max 5.
-  assert.equal(boxes[0].box[0], 1);
-  assert.equal(boxes[0].box[2], 3);
-  assert.equal(boxes[0].box[4], 5);
+const mc = {
+  mode: "montecarlo",
+  trials: 4,
+  stats: [
+    { name: "T1", truth: 1.0, mean: 1.02, bias: 0.02, std: 0.05, rmse: 0.05 },
+    { name: "M0", truth: 1000, mean: 1001, bias: 1, std: 10, rmse: 10 },
+  ],
+  per_trial_input: [[0.9, 990], [1.0, 1000], [1.1, 1010], [1.2, 1020]],
+  per_trial_fitted: [[0.93, 995], [1.01, 1002], [1.08, 1008], [1.25, 1019]],
+};
+
+test("each parameter's scatter pairs the input a voxel was given with what was fitted", () => {
+  const s = multiVoxelScatter(mc);
+  assert.deepEqual(s.map((p) => p.name), ["T1", "M0"]);
+  assert.deepEqual(s[0].points, [[0.9, 0.93], [1.0, 1.01], [1.1, 1.08], [1.2, 1.25]]);
+  assert.deepEqual(s[1].points[0], [990, 995]);
 });
 
-test("a report with no per-trial pairs yields no boxes rather than throwing", () => {
-  assert.deepEqual(
-    montecarloBoxes({ mode: "montecarlo", stats: [], per_trial_input: [], per_trial_fitted: [] }),
-    [],
-  );
+test("errors are the fitted value minus the input that produced it", () => {
+  const e = multiVoxelErrors(mc).find((p) => p.name === "T1");
+  assert.equal(e.errors.length, 4);
+  assert.ok(Math.abs(e.errors[0] - 0.03) < 1e-12);
+  assert.ok(Math.abs(e.errors[3] - 0.05) < 1e-12);
+});
+
+test("a histogram bins values and reports a centre per bin", () => {
+  const h = errorHistogram([0, 1, 1, 2], 2);
+  assert.equal(h.counts.length, 2);
+  assert.equal(h.centers.length, 2);
+  assert.equal(h.counts.reduce((a, b) => a + b, 0), 4);
+});
+
+test("a histogram of identical values does not divide by a zero range", () => {
+  const h = errorHistogram([3, 3, 3], 4);
+  assert.equal(h.counts.reduce((a, b) => a + b, 0), 3);
+  assert.ok(h.centers.every(Number.isFinite));
+});
+
+test("an absent per-trial matrix yields nothing rather than throwing", () => {
+  assert.deepEqual(multiVoxelScatter({ mode: "montecarlo", stats: [] }), []);
+  assert.deepEqual(multiVoxelErrors({ mode: "montecarlo", stats: [] }), []);
 });

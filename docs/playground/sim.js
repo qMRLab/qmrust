@@ -12,7 +12,9 @@ import {
   signalSeries,
   singleVoxelSeries,
   sensitivitySeries,
-  montecarloBoxes,
+  multiVoxelScatter,
+  multiVoxelErrors,
+  errorHistogram,
 } from "./sim-series.js";
 import { showNotice } from "./modal.js";
 import { LABELS } from "./draw.js";
@@ -293,18 +295,35 @@ function baseOption(p, { xName, yName, xData, legend = [] }) {
   };
 }
 
-// One panel per reported parameter, each with its own y axis: a T1 error of
-// 0.1 s and an `a` error of 12 cannot share a scale, and forcing them onto
-// one would flatten the smaller to an invisible line. This is `measure.js`'s
-// `chartOption` pattern (one grid/xAxis/yAxis triple per item, laid out
-// across the width as percentages), applied to one box per parameter instead
-// of one box per region. `baseOption` builds a single shared-axis option and
-// is kept as-is for the other three modes; this mode needs its own shape
-// rather than a forced fit, so it gets its own builder.
-function montecarloOption(p, boxes) {
-  const cols = boxes.length || 1;
+// A shared axis range for a scatter panel, from the full extent of both
+// coordinates: an Input-vs-Fit diagonal only reads as 45 degrees when the x
+// and y axes cover the same span. A degenerate (single-valued) parameter -
+// qmt_spgr fixes R1f and R1r, so their input never varies and their fit
+// matches it exactly - is padded around that one value instead of collapsing
+// to a zero-width axis.
+function sharedRange(values) {
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi > lo ? hi - lo : Math.abs(hi || 1) * 0.1 || 1;
+  return hi > lo
+    ? [lo - span / 20, hi + span / 20]
+    : [lo - span / 2, hi + span / 2];
+}
+
+// Two rows of panels, one column per reported parameter: the top row is
+// qMRLab's `Input vs. Fit` scatter, the bottom its `Error` histogram. Follows
+// `sensitivityOption`'s one-grid-per-parameter layout, extended with a second
+// row rather than a second scheme, since a T1 error in seconds and an `a`
+// error in signal units cannot share an axis any more than their means could.
+function montecarloOption(p, scatter, errors) {
+  const cols = scatter.length || 1;
   const hues = LABELS.map((l) => l.color);
   const axisText = { color: p.muted, fontSize: 10 };
+  const hists = errors.map((e) => errorHistogram(e.errors));
+  const ranges = scatter.map((param) => sharedRange(param.points.flat()));
+
+  const col = (i) => ({ left: `${4 + (i * 96) / cols}%`, width: `${96 / cols - 6}%` });
+
   return {
     animation: false,
     tooltip: {
@@ -313,50 +332,111 @@ function montecarloOption(p, boxes) {
       borderColor: p.line,
       textStyle: { color: p.ink, fontSize: 11 },
     },
-    grid: boxes.map((_, i) => ({
-      left: `${4 + (i * 96) / cols}%`,
-      width: `${96 / cols - 6}%`,
-      top: 30,
-      bottom: 30,
-    })),
-    xAxis: boxes.map((_, i) => ({
-      gridIndex: i,
-      type: "category",
-      data: [""],
-      axisLine: { lineStyle: { color: p.line } },
-      axisTick: { show: false },
-      axisLabel: { show: false },
-    })),
-    yAxis: boxes.map((b, i) => ({
-      gridIndex: i,
-      type: "value",
-      scale: true,
-      name: `${b.name} error`,
-      nameTextStyle: { ...axisText, align: "left" },
-      axisLine: { lineStyle: { color: p.line } },
-      axisLabel: axisText,
-      splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
-    })),
-    series: boxes.map((b, i) => {
-      const colour = hues[i % hues.length];
-      return {
-        type: "boxplot",
-        xAxisIndex: i,
-        yAxisIndex: i,
-        data: [{
-          value: b.box,
-          itemStyle: { color: `${colour}55`, borderColor: colour, borderWidth: 1.4 },
-        }],
-        boxWidth: [12, 44],
-        markLine: {
-          silent: true,
-          symbol: "none",
-          label: { show: false },
-          lineStyle: { color: p.line, type: "dashed" },
-          data: [{ yAxis: 0 }],
-        },
-      };
-    }),
+    grid: [
+      ...scatter.map((_, i) => ({ ...col(i), top: "8%", bottom: "58%" })),
+      ...scatter.map((_, i) => ({ ...col(i), top: "64%", bottom: "12%" })),
+    ],
+    xAxis: [
+      ...scatter.map((param, i) => ({
+        gridIndex: i,
+        type: "value",
+        min: ranges[i][0],
+        max: ranges[i][1],
+        name: `Input ${param.name}`,
+        nameLocation: "middle",
+        nameGap: 18,
+        nameTextStyle: axisText,
+        axisLine: { lineStyle: { color: p.line } },
+        axisLabel: { ...axisText, hideOverlap: true, formatter: formatTick },
+        axisTick: { lineStyle: { color: p.line } },
+        splitLine: { show: false },
+      })),
+      ...hists.map((h, i) => {
+        const halfW = h.centers.length > 1
+          ? (h.centers[1] - h.centers[0]) / 2
+          : Math.abs(h.centers[0] || 1) * 0.05 + 0.01;
+        return {
+          gridIndex: cols + i,
+          type: "value",
+          min: (h.centers[0] ?? 0) - halfW,
+          max: (h.centers[h.centers.length - 1] ?? 0) + halfW,
+          name: `Error ${scatter[i].name}`,
+          nameLocation: "middle",
+          nameGap: 18,
+          nameTextStyle: axisText,
+          axisLine: { lineStyle: { color: p.line } },
+          axisLabel: { ...axisText, hideOverlap: true, formatter: formatTick },
+          axisTick: { lineStyle: { color: p.line } },
+          splitLine: { show: false },
+        };
+      }),
+    ],
+    yAxis: [
+      ...scatter.map((param, i) => ({
+        gridIndex: i,
+        type: "value",
+        min: ranges[i][0],
+        max: ranges[i][1],
+        name: `Fitted ${param.name}`,
+        nameTextStyle: { ...axisText, align: "left" },
+        axisLine: { lineStyle: { color: p.line } },
+        axisLabel: { ...axisText, formatter: formatTick },
+        splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
+      })),
+      ...hists.map((h, i) => {
+        const top = Math.max(1, ...h.counts);
+        return {
+          gridIndex: cols + i,
+          type: "value",
+          min: 0,
+          max: top + Math.max(1, Math.ceil(top / 10)),
+          name: "voxels",
+          nameTextStyle: { ...axisText, align: "left" },
+          axisLine: { lineStyle: { color: p.line } },
+          axisLabel: axisText,
+          splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
+        };
+      }),
+    ],
+    series: [
+      ...scatter.map((param, i) => {
+        const colour = hues[i % hues.length];
+        return {
+          name: param.name,
+          type: "scatter",
+          xAxisIndex: i,
+          yAxisIndex: i,
+          symbolSize: 5,
+          itemStyle: { color: colour, opacity: 0.5 },
+          data: param.points,
+          markLine: {
+            silent: true,
+            symbol: "none",
+            label: { show: false },
+            lineStyle: { color: p.line, type: "dashed" },
+            data: [[{ coord: [ranges[i][0], ranges[i][0]] }, { coord: [ranges[i][1], ranges[i][1]] }]],
+          },
+        };
+      }),
+      ...hists.map((h, i) => {
+        const colour = hues[i % hues.length];
+        return {
+          name: `${scatter[i].name} error`,
+          type: "bar",
+          xAxisIndex: cols + i,
+          yAxisIndex: cols + i,
+          itemStyle: { color: colour, opacity: 0.6 },
+          data: h.centers.map((c, k) => [c, h.counts[k]]),
+          markLine: {
+            silent: true,
+            symbol: "none",
+            label: { show: false },
+            lineStyle: { color: p.line, type: "dashed" },
+            data: [{ xAxis: 0 }, { xAxis: errors[i].meanError }],
+          },
+        };
+      }),
+    ],
   };
 }
 
@@ -576,11 +656,13 @@ function drawSim(report) {
     return;
   }
   if (report.mode === "montecarlo") {
-    const boxes = montecarloBoxes(report);
-    ensureChart().setOption(montecarloOption(p, boxes), { notMerge: true });
+    const scatter = multiVoxelScatter(report);
+    const errors = multiVoxelErrors(report);
+    ensureChart().setOption(montecarloOption(p, scatter, errors), { notMerge: true });
     $("sim-note").textContent =
-      `Error over ${report.trials} draws, per parameter. Whiskers span the full `
-      + "range, so a fit that failed at a bound is visible rather than hidden.";
+      `Input against fit over ${report.trials} voxels, per parameter, with each `
+      + "parameter's error below it. The scatter's diagonal is perfect recovery; "
+      + "the histogram's two lines are zero error and the mean error actually observed.";
     return;
   }
   $("sim-note").textContent = "";

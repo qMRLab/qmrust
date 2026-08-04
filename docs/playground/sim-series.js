@@ -16,7 +16,7 @@ export const SIM_MODES = [
   { id: "signal", label: "Signal" },
   { id: "single-voxel", label: "Voxel" },
   { id: "sensitivity", label: "Sensitivity" },
-  { id: "montecarlo", label: "Population" },
+  { id: "montecarlo", label: "Multi-Voxel" },
 ];
 
 // The stats table's rows. The core reports one entry per parameter its fitter
@@ -100,38 +100,58 @@ export function sensitivitySeries(report) {
   };
 }
 
-// Linear-interpolated quantile of an already-sorted array, which is the
-// convention ECharts' own boxplot transform uses.
-function quantile(sorted, q) {
-  if (!sorted.length) return NaN;
-  const pos = (sorted.length - 1) * q;
-  const lo = Math.floor(pos);
-  const hi = Math.ceil(pos);
-  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
-}
-
-// One box per reported parameter, over the trial errors the report carries. The
-// whiskers are the full range rather than 1.5 IQR: a fit that failed at a
-// boundary is exactly what a reader is looking for here, and hiding it as an
-// outlier would be the wrong default.
-export function montecarloBoxes(report) {
+// One series per reported parameter, pairing each trial's input with what the
+// fit recovered from it. This is qMRLab's `Input vs. Fit` view: a scatter
+// close to the diagonal is a fit that recovers what it was given.
+export function multiVoxelScatter(report) {
   const inputs = report?.per_trial_input ?? [];
   const fitted = report?.per_trial_fitted ?? [];
   const stats = report?.stats ?? [];
   if (!inputs.length || !fitted.length || !stats.length) return [];
-  const rows = inputs.map((row, t) => row.map((v, j) => fitted[t][j] - v));
+  return stats.map((s, j) => ({
+    name: s.name,
+    points: inputs.map((row, t) => [row[j], fitted[t][j]]),
+  }));
+}
+
+// One series per reported parameter, the trial-by-trial error the fit made
+// (fitted minus input, never stored beside the pair it is derived from) plus
+// the two references the histogram's markLines need: zero error and the mean
+// error actually observed. A trial whose fit diverged reports a non-finite
+// error; it is dropped from the histogram, and counted rather than silently
+// discarded, since a fit that failed is information rather than noise.
+export function multiVoxelErrors(report) {
+  const inputs = report?.per_trial_input ?? [];
+  const fitted = report?.per_trial_fitted ?? [];
+  const stats = report?.stats ?? [];
+  if (!inputs.length || !fitted.length || !stats.length) return [];
   return stats.map((s, j) => {
-    const sorted = rows.map((row) => row[j]).filter(Number.isFinite).sort((a, b) => a - b);
-    return {
-      name: s.name,
-      box: [
-        sorted[0],
-        quantile(sorted, 0.25),
-        quantile(sorted, 0.5),
-        quantile(sorted, 0.75),
-        sorted[sorted.length - 1],
-      ],
-      outliers: [],
-    };
+    const all = inputs.map((row, t) => fitted[t][j] - row[j]);
+    const errors = all.filter(Number.isFinite);
+    const meanError = errors.length
+      ? errors.reduce((a, b) => a + b, 0) / errors.length
+      : 0;
+    return { name: s.name, errors, dropped: all.length - errors.length, truthMean: 0, meanError };
   });
+}
+
+// A fixed bin count over a value's own range, matching qMRLab's `hist(x, 30)`.
+// A degenerate (zero-width) range is padded rather than divided by, so a
+// parameter whose every trial lands on the same value still gets a chart
+// instead of a division by zero.
+export function errorHistogram(values, bins = 30) {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) return { centers: [], counts: [] };
+  const lo = Math.min(...finite);
+  const hi = Math.max(...finite);
+  const span = hi > lo ? hi - lo : Math.abs(hi || 1) * 0.1 || 1;
+  const min = hi > lo ? lo : lo - span / 2;
+  const width = span / bins;
+  const counts = new Array(bins).fill(0);
+  for (const v of finite) {
+    const idx = Math.min(bins - 1, Math.max(0, Math.floor((v - min) / width)));
+    counts[idx]++;
+  }
+  const centers = Array.from({ length: bins }, (_, k) => min + width * (k + 0.5));
+  return { centers, counts };
 }
