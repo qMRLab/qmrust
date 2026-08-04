@@ -3,7 +3,7 @@
 // comes from the dataset's own JSON sidecars, so the recipe for this path
 // carries options only — see `meta.config_bids`.
 import { unzipSync } from "./vendor/fflate.js";
-import { $, status } from "./dom.js";
+import { $, setBusy, status } from "./dom.js";
 import { app } from "./state.js";
 import { fetchOrThrow } from "./bundles.js";
 
@@ -26,10 +26,10 @@ function showDownloadPending() {
   const box = $("navbar-dl");
   box.hidden = false;
   box.classList.add("pending");
-  // The indeterminate half of the pair: the ring reports a percentage when there
-  // is one to report, while the navbar's sweep says "still working" through the
-  // phases that have no measurable total — extracting an archive, resolving it.
-  $("navbar").classList.add("loading");
+  // The ring reports a percentage once there is one to report; the sweep says
+  // "still working" for the whole download, including the phases that have no
+  // measurable total at all — extracting an archive, resolving it.
+  setBusy(true);
   $("dl-pct").hidden = true;
   $("dl-arc").style.strokeDashoffset = "";
 }
@@ -39,7 +39,7 @@ function setDownloadProgress(fraction) {
   if (fraction === null) {
     box.hidden = true;
     box.classList.remove("pending");
-    $("navbar").classList.remove("loading");
+    setBusy(false);
     return;
   }
   box.hidden = false;

@@ -62,8 +62,23 @@ export function cssColorToRgba(token, alpha = 1) {
 // track at idle, not an element that appears and reflows the page); only its fill
 // width and the "active" stripe animation change. Anything that takes long enough
 // to need a bar drives this one — there is only ever one long computation running.
+/**
+ * The navbar's indeterminate sweep: "the page is working", raised by every long
+ * stage there is.
+ *
+ * The determinate readouts each live in one place — the striped bar under the
+ * recipe, the ring beside the status — and a reader watching a different panel
+ * has nothing else telling them the page is busy at all. The sweep is the one
+ * signal visible wherever they are looking, so it is not reserved for stages
+ * that lack a percentage; it runs alongside the measured ones.
+ */
+export function setBusy(on) {
+  $("navbar").classList.toggle("loading", on);
+}
+
 export function showProgress() {
   $("progress-bar").classList.add("active");
+  setBusy(true);
   setProgress(0);
 }
 
@@ -73,6 +88,7 @@ export function setProgress(pct) {
 
 export function hideProgress() {
   $("progress-bar").classList.remove("active");
+  setBusy(false);
   setProgress(0);
 }
 

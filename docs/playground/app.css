@@ -256,11 +256,12 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .navbar-status { font-size: 13.5px; }
 /* Indeterminate loading, along the navbar's lower edge: a gradient segment
-   sweeping on a loop. It says "still working" without claiming progress, which
-   is the honest signal while a stage has no total to measure against — the ring
-   beside the status takes over whenever a percentage actually exists.
-   Animating `background-position` rather than a child's transform keeps it to
-   one pseudo-element with nothing to clip. */
+   sweeping on a loop. It says "still working" without claiming progress, and is
+   raised by every long stage — a download, a fit, a simulation, a segmentation —
+   because it is the only busy signal in view no matter which panel the reader is
+   watching. The determinate readouts each sit in one place and report the amount
+   alongside it. Animating `background-position` rather than a child's transform
+   keeps it to one pseudo-element with nothing to clip. */
 .navbar.loading::after {
   content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
   background-image: linear-gradient(90deg, transparent, var(--accent), transparent);
