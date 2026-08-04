@@ -22,11 +22,14 @@ export function recipeForMode(mode, { dataText, simText }) {
 // Multi-Voxel included, where it supplies any parameter that has no
 // distribution. `signal` is the noise-free forward signal, so it reads nothing
 // else.
+// `icon` names the glyph the mode's tab carries, from the vendored set: a
+// waveform for the bare signal, one box for one voxel, a shuffle for a swept
+// range, a stack of boxes for a population of them.
 export const SIM_MODES = [
-  { id: "signal", label: "Signal", reads: ["params"] },
-  { id: "single-voxel", label: "Voxel", reads: ["params", "noise", "seed", "trials"] },
-  { id: "sensitivity", label: "Sensitivity", reads: ["params", "noise", "seed", "trials", "sweep"] },
-  { id: "montecarlo", label: "Multi-Voxel", reads: ["params", "noise", "seed", "trials", "distributions"] },
+  { id: "signal", label: "Signal", icon: "audio-waveform", reads: ["params"] },
+  { id: "single-voxel", label: "Voxel", icon: "box", reads: ["params", "noise", "seed", "trials"] },
+  { id: "sensitivity", label: "Sensitivity", icon: "shuffle", reads: ["params", "noise", "seed", "trials", "sweep"] },
+  { id: "montecarlo", label: "Multi-Voxel", icon: "boxes", reads: ["params", "noise", "seed", "trials", "distributions"] },
 ];
 
 /**

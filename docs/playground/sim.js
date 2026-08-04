@@ -2,6 +2,7 @@
 // so this owns a recipe of its own (the model's sim recipe, carrying the
 // acquisition plus a sim: block of ground-truth parameters) and a card of its
 // own, and it works even when a dataset failed to load.
+import { icon } from "./vendor/icons.js";
 import { $, hideProgress, setProgress, showProgress, status } from "./dom.js";
 import { app, editor } from "./state.js";
 import { setEditorText, syncFitArmed, syncFormRows } from "./recipe.js";
@@ -64,6 +65,10 @@ function setPageMode(mode) {
   else app.dataEditorText = editor.text;
 
   app.pageMode = next;
+  // The one hook the stylesheet needs for the mode: simulating is gold where
+  // fitting acquired data is not, and that cue belongs to several panels at
+  // once. A class on the root beats each panel carrying its own flag.
+  document.body.classList.toggle("sim-mode", next === "sim");
   $("page-mode").checked = next === "sim";
   for (const [id, hidden] of [
     ["viewer-in-wrap", next === "sim"],
@@ -738,7 +743,10 @@ function buildModeTabs() {
     const b = document.createElement("button");
     b.type = "button";
     b.dataset.mode = m.id;
-    b.textContent = m.label;
+    // Glyph then word, as the page-mode switch reads. `append` with a string
+    // makes a text node, so the label is never parsed as markup.
+    b.innerHTML = icon(m.icon, 14);
+    b.append(m.label);
     b.setAttribute("role", "tab");
     b.onclick = () => setSimMode(m.id);
     host.append(b);

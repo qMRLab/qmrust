@@ -456,6 +456,19 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    is what makes the two black boxes match. Sizing the viewers directly does
    not work: a fixed height cannot shrink, and overflows the card. */
 :root { --foot-h: 68px; }
+/* The graph paper's ruling pitch. One square is about a line of the stats table
+   below the chart, which is what keeps the paper reading as a background rather
+   than as a texture. */
+:root { --paper-step: 22px; }
+/* Simulating is gold, fitting acquired data is not: the mode changes what the
+   numbers on screen *are* — ground truth the reader chose rather than a
+   measurement — and that deserves a cue outside the switch that set it. Gold is
+   `--brass`, which every theme already guarantees, so the cue retargets per
+   family with no per-theme list. Stated as one block, so the set of things that
+   turn gold is readable in one place. */
+body.sim-mode .recipe-card,
+body.sim-mode .sim-wrap { border-color: color-mix(in srgb, var(--brass) 55%, var(--line)); }
+body.sim-mode .seg button.active { color: var(--brass); }
 /* A fixed box, not a minimum: the two feet carry different controls, and a foot
    that sized itself to its own would put the two viewers at different heights.
    `syncFootHeight` sets the value to the taller foot's content, so the box holds
@@ -472,6 +485,18 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .sim-wrap {
   grid-column: 2 / span 2; grid-row: 1 / span 2;
   display: flex; flex-direction: column; min-height: 0;
+  /* Graph paper, because what this panel holds is plotted rather than imaged:
+     two hairline rulings over the card's own fill, in `--brass` at low mix so
+     they read as paper rather than as a chart's own gridlines. The charts draw
+     no background, so the ruling shows through behind the curves, which is the
+     point of it. `background-attachment: local` pins the ruling to the card, so
+     a scrolling stats table does not drag the paper with it. */
+  background-image:
+    repeating-linear-gradient(to right,
+      color-mix(in srgb, var(--brass) 12%, transparent) 0 1px, transparent 1px var(--paper-step)),
+    repeating-linear-gradient(to bottom,
+      color-mix(in srgb, var(--brass) 12%, transparent) 0 1px, transparent 1px var(--paper-step));
+  background-attachment: local;
 }
 .sim-chart { flex: 1 1 auto; min-height: 220px; }
 .sim-note { color: var(--muted); font-size: 11px; padding: 2px 4px 6px; }
