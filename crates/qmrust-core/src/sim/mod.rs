@@ -193,7 +193,7 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
     }
     let stats = compute_stats(model.as_ref(), &truth, &per_trial);
     let names = model.param_names();
-    let fitted_params = fitted_to_param_vec(model.as_ref(), &per_trial[0]);
+    let fitted_params = fitted_to_param_vec(model.as_ref(), &per_trial[0], &truth);
     let fitted_signal = measurement_values(model.as_ref(), &model.forward(&fitted_params, &aux));
     Ok(SingleVoxelReport {
         mode: "single-voxel".into(),
@@ -428,17 +428,24 @@ pub fn run_sim(mode: &str, config: PathBuf, output: PathBuf, plot: Option<PathBu
 /// Map a fitter's output vector back to a param-order vector, filling any
 /// param the fitter doesn't estimate from... the fitted value if present,
 /// else leaving 0.0. Used only to draw the fitted curve.
-fn fitted_to_param_vec(model: &dyn Model, fitted: &[f64]) -> Vec<f64> {
+/// The fit's outputs as a full parameter vector, taking any parameter the model
+/// does not report from `base`. A model may hold a parameter fixed rather than
+/// fit it — `qmt_spgr` fixes `R1f` and `R1r` — and such a parameter is absent
+/// from `output_names` while still being required by `forward`. Filling it with
+/// a placeholder would forward a signal from a parameter set no fit ever
+/// claimed, so the configured value stands in instead.
+fn fitted_to_param_vec(model: &dyn Model, fitted: &[f64], base: &[f64]) -> Vec<f64> {
     let names = model.param_names();
     let fnames = model.output_names();
     names
         .iter()
-        .map(|name| {
+        .enumerate()
+        .map(|(k, name)| {
             fnames
                 .iter()
                 .position(|n| n == name)
                 .map(|i| fitted[i])
-                .unwrap_or(0.0)
+                .unwrap_or(base[k])
         })
         .collect()
 }

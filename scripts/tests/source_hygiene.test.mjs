@@ -49,6 +49,16 @@ test("a card hidden via a mode-switch loop stays visible if its display rule has
   );
   const cssWithOverride = `${cssWithoutOverride}\n.sim-wrap[hidden] { display: none; }`;
   assert.deepEqual(hiddenDisplayGaps(cssWithOverride, [html], [script]), []);
+
+  // An override inside a breakpoint hides the card only while that breakpoint
+  // matches, so the card is still unhideable at every other width. Only an
+  // unconditional override closes the gap.
+  const cssWithConditionalOverride = `${cssWithoutOverride}
+    @media (max-width: 600px) { .sim-wrap[hidden] { display: none; } }`;
+  assert.equal(
+    hiddenDisplayGaps(cssWithConditionalOverride, [html], [script]).length,
+    1,
+  );
 });
 
 test("a plain $(id).hidden assignment is traced the same way", () => {

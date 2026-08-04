@@ -148,6 +148,25 @@ export function multiVoxelErrors(report) {
   });
 }
 
+// The finite `[lo, hi]` of a value list, in one pass, or `null` when nothing in
+// it is finite. Every axis range in the simulation charts starts here rather
+// than at `Math.min(...values)`, which is wrong in three ways that all reach the
+// charts: an all-diverged list yields `Infinity`/`-Infinity` instead of
+// announcing that it has no range, a single non-finite entry poisons the result
+// with NaN, and one spread argument per trial overflows the call stack once a
+// run asks for enough trials. Returning `null` rather than a fallback keeps the
+// choice of degenerate range with the panel that has to draw it.
+export function extent(values) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of values) {
+    if (!Number.isFinite(v)) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return lo <= hi ? [lo, hi] : null;
+}
+
 // A fixed bin count over a value's own range, matching qMRLab's `hist(x, 30)`.
 // A degenerate (zero-width) range collapses to a single bin centred exactly on
 // that value, rather than a padded range whose bin centres land near but not
@@ -155,9 +174,9 @@ export function multiVoxelErrors(report) {
 // chart with its one bar where the value actually is.
 export function errorHistogram(values, bins = 30) {
   const finite = values.filter(Number.isFinite);
-  if (!finite.length) return { centers: [], counts: [] };
-  const lo = Math.min(...finite);
-  const hi = Math.max(...finite);
+  const span = extent(finite);
+  if (!span) return { centers: [], counts: [] };
+  const [lo, hi] = span;
   if (hi === lo) return { centers: [lo], counts: [finite.length] };
   const width = (hi - lo) / bins;
   const counts = new Array(bins).fill(0);
@@ -177,12 +196,12 @@ export function errorHistogram(values, bins = 30) {
 export function histogramXRange(hist, meanError) {
   const centers = hist.centers;
   const refs = [0, meanError].filter(Number.isFinite);
-  if (!centers.length) return refs.length ? [Math.min(...refs), Math.max(...refs)] : [-1, 1];
+  if (!centers.length) return extent(refs) ?? [-1, 1];
   const halfW = centers.length > 1
     ? (centers[1] - centers[0]) / 2
     : Math.abs(centers[0] || 1) * 0.05 + 0.01;
   const values = [centers[0] - halfW, centers[centers.length - 1] + halfW, ...refs];
-  return [Math.min(...values), Math.max(...values)];
+  return extent(values) ?? [-1, 1];
 }
 
 // A sweep panel's y extent before padding: the errorbar spread of every point
@@ -208,10 +227,11 @@ export function sensitivityFinitePoints(param) {
 export function sensitivityYExtent(param, finite) {
   const points = finite.mean.flatMap((m, k) => [m - finite.std[k], m + finite.std[k]]);
   if (param.isSwept) {
-    if (param.x.length) points.push(Math.min(...param.x), Math.max(...param.x));
+    const sweep = extent(param.x);
+    if (sweep) points.push(...sweep);
   } else {
     const truth = param.truth.find((t) => Number.isFinite(t));
     if (truth !== undefined) points.push(truth);
   }
-  return points.length ? [Math.min(...points), Math.max(...points)] : [0, 1];
+  return extent(points) ?? [0, 1];
 }

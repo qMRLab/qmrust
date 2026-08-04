@@ -155,8 +155,15 @@ impl SimConfig {
                 self.noise.kind
             )
         })?;
-        if kind != crate::sim::noise::NoiseKind::None && self.noise.snr <= 0.0 {
-            bail!("sim.noise.snr must be > 0 when noise is enabled");
+        // Finite as well as positive: a comparison against zero admits both NaN
+        // (every ordering with NaN is false) and infinity, and neither survives
+        // downstream. `sigma_for` divides by the SNR, so NaN reaches
+        // `Normal::new` and panics the module, and infinity yields sigma zero,
+        // which is a silently noise-free run for a config that asked for noise.
+        if kind != crate::sim::noise::NoiseKind::None
+            && !(self.noise.snr.is_finite() && self.noise.snr > 0.0)
+        {
+            bail!("sim.noise.snr must be a finite value > 0 when noise is enabled");
         }
         if self.trials == 0 {
             bail!("sim.trials must be >= 1");

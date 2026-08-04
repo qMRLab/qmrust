@@ -15,6 +15,7 @@ import {
   multiVoxelScatter,
   multiVoxelErrors,
   errorHistogram,
+  extent,
   histogramXRange,
   sensitivityFinitePoints,
   sensitivityYExtent,
@@ -302,8 +303,13 @@ function baseOption(p, { xName, yName, xData, legend = [] }) {
 // matches it exactly - is padded around that one value instead of collapsing
 // to a zero-width axis.
 function sharedRange(values) {
-  const lo = Math.min(...values);
-  const hi = Math.max(...values);
+  const range = extent(values);
+  // No finite coordinate at all, which is what a parameter whose every trial
+  // diverged leaves behind. The panel still draws its axes and its identity
+  // diagonal, and both need real numbers, so an empty scatter gets a unit range
+  // to be empty inside of.
+  if (!range) return [0, 1];
+  const [lo, hi] = range;
   const span = hi > lo ? hi - lo : Math.abs(hi || 1) * 0.1 || 1;
   return hi > lo
     ? [lo - span / 20, hi + span / 20]
@@ -490,9 +496,14 @@ function sensitivityOption(p, s) {
   const axisText = { color: p.muted, fontSize: 10 };
   const finites = s.params.map(sensitivityFinitePoints);
   const xRanges = s.params.map((param) => {
-    const lo = Math.min(...param.x);
-    const hi = Math.max(...param.x);
-    const pad = (hi - lo) / 50;
+    const range = extent(param.x);
+    if (!range) return [0, 1];
+    const [lo, hi] = range;
+    // A one-step sweep puts every point at the same x, so lo === hi. Pad by an
+    // absolute amount there, as `yRanges` below does for a flat y extent: a
+    // proportion of a zero-width extent is zero, and a zero-width axis draws
+    // nothing.
+    const pad = hi > lo ? (hi - lo) / 50 : Math.abs(hi || 1) / 10;
     return [lo - pad, hi + pad];
   });
   const yRanges = s.params.map((param, i) => {

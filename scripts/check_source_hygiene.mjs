@@ -233,12 +233,16 @@ export function unescapedHtmlSinks(files) {
 }
 
 /**
- * `css` with every `@media`/`@supports` wrapper removed but its rules kept
- * (so a rule inside a breakpoint is seen exactly like one outside it), and
- * every `@keyframes` block dropped whole (its `0% { ... }` steps are not
- * selector rules, and would otherwise be misread as one).
+ * `css` with its conditional at-rules resolved and every `@keyframes` block
+ * dropped whole (its `0% { ... }` steps are not selector rules, and would
+ * otherwise be misread as one).
+ *
+ * `conditional` says what to do with `@media`/`@supports`: `"flatten"` keeps
+ * their rules but removes the wrapper, so a rule inside a breakpoint is seen
+ * exactly like one outside it; `"drop"` discards them entirely, leaving only
+ * the rules that apply in every environment.
  */
-export function flattenAtRules(css) {
+export function flattenAtRules(css, conditional = "flatten") {
   let out = "";
   let i = 0;
   while (i < css.length) {
@@ -268,7 +272,7 @@ export function flattenAtRules(css) {
         else if (css[j] === "}") depth--;
         if (depth > 0) j++;
       }
-      out += flattenAtRules(css.slice(bodyStart, j));
+      if (conditional === "flatten") out += flattenAtRules(css.slice(bodyStart, j), conditional);
       i = j + 1;
       continue;
     }
@@ -285,26 +289,41 @@ export function flattenAtRules(css) {
   return out;
 }
 
+/** The individual selectors in one rule's comma-separated prelude. */
+function preludeSelectors(prelude) {
+  return prelude
+    .split(",")
+    .map((raw) => raw.trim().replace(/\s+/g, " "))
+    .filter(Boolean);
+}
+
 /**
- * Selectors that set `display` unconditionally, and selectors that set
- * `display: none` behind `[hidden]` — the two halves a card's hiding rule
- * needs, both read from the stylesheet's own rules rather than assumed.
+ * Selectors that set `display`, and selectors that set `display: none` behind
+ * `[hidden]` — the two halves a card's hiding rule needs, both read from the
+ * stylesheet's own rules rather than assumed.
+ *
+ * The halves are read from different views of the stylesheet. A `display` rule
+ * counts wherever it appears, breakpoints included, because it defeats
+ * `[hidden]` in every environment it applies to. Its `[hidden]` override counts
+ * only when unconditional: an override confined to a media query leaves the
+ * element visible everywhere that query does not match, which is the same bug
+ * with a narrower reproduction.
  */
 function cssDisplayRules(css) {
+  const clean = stripComments(css);
+  const rules = (source) => source.matchAll(/([^{}]+)\{([^{}]*)\}/g);
   const unconditional = new Set();
   const hiddenNone = new Set();
-  for (const m of flattenAtRules(stripComments(css)).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const body = m[2];
-    if (!/display\s*:/.test(body)) continue;
-    const setsNone = /display\s*:\s*none\b/.test(body);
-    for (const raw of m[1].split(",")) {
-      const sel = raw.trim().replace(/\s+/g, " ");
-      if (!sel) continue;
-      if (sel.includes("[hidden]")) {
-        if (setsNone) hiddenNone.add(sel.replace("[hidden]", "").trim());
-      } else {
-        unconditional.add(sel);
-      }
+  for (const m of rules(flattenAtRules(clean))) {
+    if (!/display\s*:/.test(m[2])) continue;
+    for (const sel of preludeSelectors(m[1])) {
+      if (!sel.includes("[hidden]")) unconditional.add(sel);
+    }
+  }
+  for (const m of rules(flattenAtRules(clean, "drop"))) {
+    if (!/display\s*:\s*none\b/.test(m[2])) continue;
+    for (const sel of preludeSelectors(m[1])) {
+      if (sel.includes("[hidden]")) hiddenNone.add(sel.replace("[hidden]", "").trim());
     }
   }
   return { unconditional, hiddenNone };

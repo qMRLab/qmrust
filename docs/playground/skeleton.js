@@ -87,7 +87,11 @@ export function cellRampIndex(row, col, steps = RAMP_STEPS) {
  * panel instead.
  */
 export function cycleMs(cols, rows, stepMs = STEP_MS, plateauShare = PLATEAU_SHARE) {
-  const traverseMs = cellDelayMs(rows - 1, cols - 1, stepMs);
+  // A single-cell grid — what a panel measured before layout falls back to —
+  // has a zero-length traverse, and a zero-duration animation does not run at
+  // all, leaving the cell transparent forever. One step is the floor, so every
+  // grid gets a cycle that is a real duration.
+  const traverseMs = Math.max(stepMs, cellDelayMs(rows - 1, cols - 1, stepMs));
   return Math.round((traverseMs / plateauShare) * PLATEAU_MARGIN);
 }
 

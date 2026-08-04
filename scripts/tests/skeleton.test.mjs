@@ -73,6 +73,9 @@ for (const [label, cols, rows] of [
 ]) {
   test(`${label} fills completely before any cell clears`, () => {
     const cycle = cycleMs(cols, rows);
+    // Guarded before the comparison below, which a zero cycle would satisfy
+    // vacuously (0 >= 0) while describing an animation that never runs.
+    assert.ok(cycle > 0, "every grid gets a cycle of real duration");
     const traverse = cellDelayMs(rows - 1, cols - 1);
     const lastLitAt = traverse + LIT_AT * cycle;
     const firstClearsAt = CLEARS_AT * cycle;
