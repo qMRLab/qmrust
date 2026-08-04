@@ -33,6 +33,14 @@ const BY_PATH = new Map([
   ["t1_range.start", ["T1 Range Start", "seconds (s)"]],
   ["t1_range.stop", ["T1 Range Stop", "seconds (s)"]],
   ["t1_range.step", ["T1 Range Step", "seconds (s)"]],
+  ["sim.noise.type", ["Noise Type", null]],
+  // The sweep's range carries the swept parameter's own unit, which changes
+  // with the parameter chosen, so no unit is stated: a fixed "seconds (s)"
+  // would be a lie the moment the sweep moves off a relaxation time.
+  ["sim.sweep.param", ["Swept Parameter", null]],
+  ["sim.sweep.start", ["Sweep Start", null]],
+  ["sim.sweep.stop", ["Sweep Stop", null]],
+  ["sim.sweep.steps", ["Sweep Steps", null]],
 ]);
 
 const BY_KEY = new Map([
@@ -54,15 +62,28 @@ const BY_KEY = new Map([
   ["fit_type", ["Fit Type", null]],
   ["drop_first_echo", ["Drop First Echo", null]],
   ["offset_term", ["Offset Term", null]],
+  // An acronym, not a word: title case would render it `Snr`. Dimensionless,
+  // being a ratio of a signal to a standard deviation in the same units.
+  ["snr", ["SNR", null]],
+  // Spelled out, since `Std` is an abbreviation a reader has to expand. Both
+  // carry the distributed parameter's own unit, which differs per parameter,
+  // so neither states one.
+  ["mean", ["Mean", null]],
+  ["std", ["Standard Deviation", null]],
 ]);
 
 // What an option does, for the hover beside its label.
 //
 // Only options carry one. An acquisition field does not: `Echo Times` is the
 // echo times, and a note saying so is noise on every protocol row. An option is
-// a choice about *how* to fit, and nothing on screen says what choosing it
-// costs, so each entry answers that in a sentence: what it changes, and when a
-// reader would want it.
+// a choice about *how* to fit or *how* to simulate, and nothing on screen says
+// what choosing it costs, so each entry answers that in a sentence: what it
+// changes, and when a reader would want it.
+//
+// A simulated ground-truth value is not an option either. `T1` under Ground
+// Truth is the T1 being simulated, so it is named by the quantity like any
+// acquisition field; the settings around it (how much noise, how many trials,
+// what to sweep) are the choices.
 //
 // Keyed the same way as the labels, exact path before leaf name, so a nested
 // option (`zoom.points`) is described without colliding with a bare `points`
@@ -126,6 +147,27 @@ const HELP = new Map([
     + "rate, removing one poorly-determined parameter."],
   ["qmt_spgr.fitting.use_r1map_to_constrain_r1f", "Take R1f from a supplied "
     + "R1 map rather than fitting it, when the dataset provides one."],
+  ["sim.noise.type", "Rician matches magnitude images, where noise no longer "
+    + "averages out at low signal. Gaussian suits complex data; none simulates "
+    + "a noise-free acquisition."],
+  ["snr", "Peak clean signal over the noise standard deviation. Lower values "
+    + "widen the fitted spread in every mode."],
+  ["seed", "Fixes the random draw, so a run repeats exactly. Change it to see "
+    + "another noise realisation of the same truth."],
+  ["trials", "How many noisy repetitions to simulate and fit. More tightens "
+    + "the reported statistics, at one fit each."],
+  ["sim.sweep.param", "Which parameter Sensitivity varies. The others stay at "
+    + "their ground truth."],
+  ["sim.sweep.start", "Low end of the swept range, in the swept parameter's "
+    + "own units."],
+  ["sim.sweep.stop", "High end of that range. Widening it past what the "
+    + "protocol can resolve is where bias appears."],
+  ["sim.sweep.steps", "How many values across the range. Each one costs a full "
+    + "set of trials."],
+  ["mean", "Centre of the Gaussian each Multi-Voxel trial draws this parameter "
+    + "from."],
+  ["std", "Spread of that draw. Zero pins every trial to the mean, collapsing "
+    + "this parameter's scatter to a line."],
 ]);
 
 function titleCase(key) {
@@ -204,6 +246,13 @@ const GROUP_TITLES = new Map([
   ["zoom", "Zoom"],
   ["protocol", "Protocol"],
   ["pulse", "Saturation Pulse"],
+  // `Sim` is an abbreviation and `Params` is jargon that does not say these
+  // values are the truth being simulated. `sweep` is named for the mode that
+  // reads it, so the heading and the mode picker agree. `noise` and
+  // `distributions` title-case correctly and need no entry.
+  ["sim", "Simulation"],
+  ["params", "Ground Truth"],
+  ["sweep", "Sensitivity Sweep"],
 ]);
 
 export function groupLabel(key) {
