@@ -159,6 +159,41 @@ qmrust fit --data data.nii.gz --mask mask.nii.gz \
 See [Fitting without BIDS](../../guide/non-bids.md).
 :::
 
+:::{tab-item} Simulation
+:sync: sim
+
+```yaml
+model: b1_dam
+
+# Simulation: the acquisition comes from this file. Nominal flip angles in
+# degrees (BIDS-MRI convention), in acquisition order. The double-angle
+# identity only holds when the second angle is twice the first.
+flip_angles:
+- 60
+- 120
+
+# Ground truth: B1 is a normalized scaling of the nominal flip angle, so 1.0 is
+# a perfectly delivered pulse. A is the signal amplitude.
+sim:
+  params: { B1: 1.0, A: 1000.0 }
+  noise: { type: rician, snr: 100.0 }
+  seed: 0
+  trials: 100
+  sweep: { param: B1, start: 0.6, stop: 1.4, steps: 10 }
+  distributions:
+    B1: { mean: 1.0, std: 0.1 }
+```
+
+```bash
+qmrust sim signal       --config recipes/sim/b1_dam_sim.yaml --output signal.json
+qmrust sim single-voxel --config recipes/sim/b1_dam_sim.yaml --output sv.json
+qmrust sim sensitivity  --config recipes/sim/b1_dam_sim.yaml --output sens.json
+qmrust sim montecarlo   --config recipes/sim/b1_dam_sim.yaml --output mc.json
+```
+
+See [Simulation](../../guide/simulation.md).
+:::
+
 :::{tab-item} Browser
 :sync: wasm
 

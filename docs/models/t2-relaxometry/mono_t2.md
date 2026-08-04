@@ -203,6 +203,71 @@ qmrust fit --data data.nii.gz --mask mask.nii.gz \
 See [Fitting without BIDS](../../guide/non-bids.md).
 :::
 
+:::{tab-item} Simulation
+:sync: sim
+
+```yaml
+model: mono_t2
+
+# Simulation: the acquisition comes from this file. All times are in seconds
+# (BIDS/SI). qMRLab mono_t2 default protocol: 30 spin echoes, 12.8 ms spacing.
+echo_times:
+- 0.0128
+- 0.0256
+- 0.0384
+- 0.0512
+- 0.064
+- 0.0768
+- 0.0896
+- 0.1024
+- 0.1152
+- 0.128
+- 0.1408
+- 0.1536
+- 0.1664
+- 0.1792
+- 0.192
+- 0.2048
+- 0.2176
+- 0.2304
+- 0.2432
+- 0.256
+- 0.2688
+- 0.2816
+- 0.2944
+- 0.3072
+- 0.32
+- 0.3328
+- 0.3456
+- 0.3584
+- 0.3712
+- 0.384
+
+fit_type: exponential
+drop_first_echo: false
+offset_term: false
+
+# Ground truth: white matter at 3 T, T2 near 50 ms.
+sim:
+  params: { T2: 0.05, M0: 1000.0 }
+  noise: { type: rician, snr: 100.0 }
+  seed: 0
+  trials: 100
+  sweep: { param: T2, start: 0.01, stop: 0.2, steps: 10 }
+  distributions:
+    T2: { mean: 0.05, std: 0.01 }
+```
+
+```bash
+qmrust sim signal       --config recipes/sim/mono_t2_sim.yaml --output signal.json
+qmrust sim single-voxel --config recipes/sim/mono_t2_sim.yaml --output sv.json
+qmrust sim sensitivity  --config recipes/sim/mono_t2_sim.yaml --output sens.json
+qmrust sim montecarlo   --config recipes/sim/mono_t2_sim.yaml --output mc.json
+```
+
+See [Simulation](../../guide/simulation.md).
+:::
+
 :::{tab-item} Browser
 :sync: wasm
 

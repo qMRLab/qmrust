@@ -138,6 +138,37 @@ qmrust fit --data data.nii.gz --mask mask.nii.gz \
 See [Fitting without BIDS](../../guide/non-bids.md).
 :::
 
+:::{tab-item} Simulation
+:sync: sim
+
+```yaml
+model: mt_ratio
+
+# Simulation: MTR = 100 * (MToff - MTon) / MToff. There is no acquisition
+# protocol and no fit options, so the model name and the sim block are the
+# whole recipe.
+#
+# Ground truth: white matter at 3 T, MTR in percent.
+sim:
+  params: { MTR: 40.0 }
+  noise: { type: rician, snr: 100.0 }
+  seed: 0
+  trials: 100
+  sweep: { param: MTR, start: 5.0, stop: 60.0, steps: 10 }
+  distributions:
+    MTR: { mean: 40.0, std: 5.0 }
+```
+
+```bash
+qmrust sim signal       --config recipes/sim/mt_ratio_sim.yaml --output signal.json
+qmrust sim single-voxel --config recipes/sim/mt_ratio_sim.yaml --output sv.json
+qmrust sim sensitivity  --config recipes/sim/mt_ratio_sim.yaml --output sens.json
+qmrust sim montecarlo   --config recipes/sim/mt_ratio_sim.yaml --output mc.json
+```
+
+See [Simulation](../../guide/simulation.md).
+:::
+
 :::{tab-item} Browser
 :sync: wasm
 
