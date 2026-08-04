@@ -304,7 +304,12 @@ or NIfTI dataset into a byte-identical BIDS input for this path. See [`DATA-PIPE
 
 `sim::{run_signal, run_single_voxel, run_sensitivity, run_montecarlo}` build a model
 via the registry and call `model.forward` / `model.fit` directly with an `Aux` derived
-from the `sim:` config block. Reports serialize to JSON.
+from the `sim:` config block. Reports serialize to JSON. `MonteCarloReport` carries
+`per_trial_input` and `per_trial_fitted`, one row per trial and one column per reported
+parameter, columns aligned to `stats`; a trial's error is `per_trial_fitted[t][i] -
+per_trial_input[t][i]`, derived rather than stored, so the pair and its difference cannot
+disagree. `SensitivityReport.points` is one `SweepPoint` per swept value, each carrying
+the full per-parameter `stats` (truth, mean, std) at that point.
 
 ### Browser (wasm)
 

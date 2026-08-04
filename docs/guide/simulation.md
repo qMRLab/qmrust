@@ -42,7 +42,9 @@ its registry entry. `qmrust catalog --json` reports the path for each model.
 
 ## `signal` — what does the model predict?
 
-Noise-free forward signal for one parameter set.
+Noise-free forward signal for one parameter set. qMRLab has no equivalent method: every
+other mode below wraps one of its `Sim_*` methods, but a plain forward signal is not
+among them.
 
 ```bash
 qmrust sim signal --config recipes/sim/qmt_sim_ramani.yaml \
@@ -55,7 +57,7 @@ offsets produce nearly the same signal, they are not buying you information.
 ## `single-voxel` — can the fit recover the truth?
 
 Simulates one voxel, optionally `trials` times with noise, and fits each
-trial back.
+trial back. Corresponds to qMRLab's `Sim_Single_Voxel_Curve`.
 
 ```bash
 qmrust sim single-voxel --config recipes/sim/qmt_sim_ramani.yaml \
@@ -70,7 +72,7 @@ protocol or the config, not the data.
 ## `sensitivity` — where does it break down?
 
 Sweeps one parameter across a range and reports bias and standard deviation
-at each point.
+at each point. Corresponds to qMRLab's `Sim_Sensitivity_Analysis`.
 
 ```bash
 qmrust sim sensitivity --config recipes/sim/qmt_sim_ramani.yaml \
@@ -83,7 +85,7 @@ is actually identifiable.
 ## `montecarlo` — how does it behave over a population?
 
 Draws parameters from the `distributions:` block and reports error statistics
-over the draws.
+over the draws. Corresponds to qMRLab's `Sim_Multi_Voxel_Distribution`.
 
 ```bash
 qmrust sim montecarlo --config recipes/sim/qmt_sim_ramani.yaml \
