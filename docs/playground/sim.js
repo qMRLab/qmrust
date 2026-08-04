@@ -220,6 +220,14 @@ function palette() {
   };
 }
 
+// Four significant figures, with the trailing zeros a fixed-precision string
+// would carry stripped back off. The one place a report's raw numbers (which
+// range from a fraction near 1e-5 to a rate near 30) become the compact text
+// a table cell or an axis tick label shows.
+function formatTick(v) {
+  return String(Number(v.toPrecision(4)));
+}
+
 // The font every axis name renders in. The one place this is stated, read by
 // both the style ECharts is told to use and the offscreen measurement below,
 // so the two can never disagree.
@@ -416,20 +424,41 @@ function sensitivityOption(p, s) {
         nameGap: 26,
         nameTextStyle: axisText,
         axisLine: { lineStyle: { color: p.line } },
-        axisLabel: axisText,
+        axisLabel: { ...axisText, hideOverlap: true, formatter: formatTick },
         axisTick: { lineStyle: { color: p.line } },
+        // A category-dense sweep (many points, or many narrow columns) packs its
+        // tick labels tighter than the panel can legibly show; capping the tick
+        // count keeps every remaining label readable rather than relying on
+        // hideOverlap alone to drop whichever ones collide.
+        splitNumber: cols > 2 ? 4 : 6,
+        splitLine: { show: false },
       };
     }),
-    yAxis: s.params.map((param, i) => ({
-      gridIndex: i,
-      type: "value",
-      scale: true,
-      name: `Fitted ${param.name}`,
-      nameTextStyle: { ...axisText, align: "left" },
-      axisLine: { lineStyle: { color: p.line } },
-      axisLabel: axisText,
-      splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
-    })),
+    yAxis: s.params.map((param, i) => {
+      // A gap point (a parameter missing at that sweep step) carries `null` in
+      // both arrays; excluding it up front keeps the arithmetic below from
+      // reading `null` as `0` and folding a phantom bound into the range.
+      const bars = param.mean
+        .map((m, k) => [m, param.std[k]])
+        .filter(([m, sd]) => m != null && sd != null);
+      const lo = bars.length ? Math.min(...bars.map(([m, sd]) => m - sd)) : 0;
+      const hi = bars.length ? Math.max(...bars.map(([m, sd]) => m + sd)) : 1;
+      // A fixed parameter's std is exactly zero at every point, so lo === hi: an
+      // errorbar-free flat line still needs headroom to sit inside its axis
+      // rather than pinned to a degenerate zero-height range.
+      const pad = hi > lo ? (hi - lo) / 10 : Math.abs(hi || 1) / 10;
+      return {
+        gridIndex: i,
+        type: "value",
+        min: lo - pad,
+        max: hi + pad,
+        name: `Fitted ${param.name}`,
+        nameTextStyle: { ...axisText, align: "left" },
+        axisLine: { lineStyle: { color: p.line } },
+        axisLabel: { ...axisText, formatter: formatTick },
+        splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
+      };
+    }),
     series: s.params.flatMap((param, i) => {
       const colour = hues[i % hues.length];
       const lo = Math.min(...param.x);
@@ -587,7 +616,7 @@ function renderStatsTable(report) {
     const tr = document.createElement("tr");
     for (const v of [r.name, r.truth, r.mean, r.bias, r.std, r.rmse]) {
       const td = document.createElement("td");
-      td.textContent = typeof v === "number" ? String(Number(v.toPrecision(4))) : v;
+      td.textContent = typeof v === "number" ? formatTick(v) : v;
       tr.append(td);
     }
     table.append(tr);
