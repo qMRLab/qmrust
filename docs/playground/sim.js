@@ -352,6 +352,123 @@ function montecarloOption(p, boxes) {
   };
 }
 
+// A vertical whisker from mean - std to mean + std, with short caps, drawn as
+// a custom series: ECharts has no built-in error-bar series, and this is the
+// qMRLab `errorbar(X, mean, std)` convention the mode is named for. Each datum
+// is [x, mean, std]; the two thin-line alternative was passed over because a
+// cap-and-whisker reads at a glance as "this is the spread", where two lines
+// in the same hue as the mean line could be mistaken for two more series.
+function errorBarRenderItem(colour) {
+  return (_params, api) => {
+    const x = api.value(0);
+    const mean = api.value(1);
+    const std = api.value(2);
+    const top = api.coord([x, mean + std]);
+    const bottom = api.coord([x, mean - std]);
+    const halfCap = 5;
+    const style = { stroke: colour, lineWidth: 1.4 };
+    const line = (x1, y1, x2, y2) => ({ type: "line", shape: { x1, y1, x2, y2 }, style });
+    return {
+      type: "group",
+      children: [
+        line(top[0], top[1], bottom[0], bottom[1]),
+        line(top[0] - halfCap, top[1], top[0] + halfCap, top[1]),
+        line(bottom[0] - halfCap, bottom[1], bottom[0] + halfCap, bottom[1]),
+      ],
+    };
+  };
+}
+
+// One panel per reported parameter, x and y both in the parameter's own
+// physical units so no normalisation is needed to keep a fraction near 0.15
+// legible beside a rate near 25. Follows `montecarloOption`'s layout: one
+// grid/xAxis/yAxis triple per parameter, laid out across the width as
+// percentages.
+function sensitivityOption(p, s) {
+  const cols = s.params.length || 1;
+  const hues = LABELS.map((l) => l.color);
+  const axisText = { color: p.muted, fontSize: 10 };
+  return {
+    animation: false,
+    tooltip: {
+      trigger: "item",
+      backgroundColor: p.panel,
+      borderColor: p.line,
+      textStyle: { color: p.ink, fontSize: 11 },
+    },
+    grid: s.params.map((_, i) => ({
+      left: `${4 + (i * 96) / cols}%`,
+      width: `${96 / cols - 6}%`,
+      top: 30,
+      bottom: 44,
+    })),
+    xAxis: s.params.map((param, i) => {
+      const lo = Math.min(...param.x);
+      const hi = Math.max(...param.x);
+      const pad = (hi - lo) / 50;
+      return {
+        gridIndex: i,
+        type: "value",
+        min: lo - pad,
+        max: hi + pad,
+        name: `Input ${s.swept}`,
+        nameLocation: "middle",
+        nameGap: 26,
+        nameTextStyle: axisText,
+        axisLine: { lineStyle: { color: p.line } },
+        axisLabel: axisText,
+        axisTick: { lineStyle: { color: p.line } },
+      };
+    }),
+    yAxis: s.params.map((param, i) => ({
+      gridIndex: i,
+      type: "value",
+      scale: true,
+      name: `Fitted ${param.name}`,
+      nameTextStyle: { ...axisText, align: "left" },
+      axisLine: { lineStyle: { color: p.line } },
+      axisLabel: axisText,
+      splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
+    })),
+    series: s.params.flatMap((param, i) => {
+      const colour = hues[i % hues.length];
+      const lo = Math.min(...param.x);
+      const hi = Math.max(...param.x);
+      const reference = param.isSwept
+        ? { data: [[{ coord: [lo, lo] }, { coord: [hi, hi] }]] }
+        : { data: [{ yAxis: param.truth.find((t) => t != null) }] };
+      return [
+        {
+          type: "custom",
+          xAxisIndex: i,
+          yAxisIndex: i,
+          silent: true,
+          renderItem: errorBarRenderItem(colour),
+          data: param.x.map((x, k) => [x, param.mean[k], param.std[k]]),
+        },
+        {
+          name: param.name,
+          type: "line",
+          xAxisIndex: i,
+          yAxisIndex: i,
+          showSymbol: true,
+          symbolSize: 6,
+          lineStyle: { color: colour, width: 2 },
+          itemStyle: { color: colour },
+          data: param.x.map((x, k) => [x, param.mean[k]]),
+          markLine: {
+            silent: true,
+            symbol: "none",
+            label: { show: false },
+            lineStyle: { color: p.line, type: "dashed" },
+            ...reference,
+          },
+        },
+      ];
+    }),
+  };
+}
+
 function drawSim(report) {
   drawn = report;
   const p = palette();
@@ -421,81 +538,12 @@ function drawSim(report) {
   }
   if (report.mode === "sensitivity") {
     const s = sensitivitySeries(report);
-    // One hue per parameter, from the app's own categorical set (the same one
-    // draw.js and measure.js use for a fixed set of named items), so a sweep
-    // reporting all six of qmt_spgr's parameters keeps every line distinct.
-    // Cycles if a model ever reports more than the palette has.
-    const hues = LABELS.map((l) => l.color);
-    const series = [];
-    for (const [i, param] of s.params.entries()) {
-      const colour = hues[i % hues.length];
-      // The band is two stacked series: an invisible lower edge, then its
-      // height drawn as a faded area sitting on top. A point's lower edge is
-      // routinely negative (bias minus a std larger than the bias), and
-      // ECharts' default stacking keeps positive and negative stacks separate
-      // rather than adding a positive height onto a negative base, which would
-      // misplace the band above zero instead of straddling the line.
-      // stackStrategy "all" makes the stack ignore sign so the two combine.
-      series.push({
-        name: `${param.name} band`,
-        type: "line",
-        stack: `band-${param.name}`,
-        stackStrategy: "all",
-        symbol: "none",
-        lineStyle: { opacity: 0 },
-        itemStyle: { opacity: 0 },
-        tooltip: { show: false },
-        silent: true,
-        data: param.lower,
-      });
-      series.push({
-        name: `${param.name} spread`,
-        type: "line",
-        stack: `band-${param.name}`,
-        stackStrategy: "all",
-        symbol: "none",
-        lineStyle: { opacity: 0 },
-        areaStyle: { color: colour, opacity: 0.14 },
-        tooltip: { show: false },
-        silent: true,
-        data: param.band,
-      });
-      series.push({
-        name: param.name,
-        type: "line",
-        showSymbol: true,
-        symbolSize: 5,
-        lineStyle: { color: colour, width: 2 },
-        itemStyle: { color: colour },
-        data: param.bias,
-      });
-    }
-    // Zero bias is the line every parameter is being judged against, so it is
-    // drawn rather than left to be inferred from the axis labels.
-    if (series.length) {
-      series[series.length - 1].markLine = {
-        silent: true,
-        symbol: "none",
-        label: { show: false },
-        lineStyle: { color: p.line, type: "dashed" },
-        data: [{ yAxis: 0 }],
-      };
-    }
-    ensureChart().setOption(
-      {
-        ...baseOption(p, {
-          xName: report.swept_param,
-          yName: "bias [% of truth]",
-          xData: s.xLabels,
-          legend: s.params.map((param) => param.name),
-        }),
-        series,
-      },
-      { notMerge: true },
-    );
+    ensureChart().setOption(sensitivityOption(p, s), { notMerge: true });
     $("sim-note").textContent =
-      `Bias against ${report.swept_param}, as a percentage of the truth at each `
-      + "point. The band is plus and minus one standard deviation over the trials.";
+      "Fitted value against the input that produced it, one panel per reported "
+      + "parameter, each in its own units. A point on the diagonal is perfect "
+      + "recovery; other parameters carry a horizontal line at their constant "
+      + "truth. Error bars span the mean plus or minus one standard deviation.";
     return;
   }
   if (report.mode === "montecarlo") {

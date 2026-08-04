@@ -15,7 +15,7 @@ export function recipeForMode(mode, { dataText, simText }) {
 export const SIM_MODES = [
   { id: "signal", label: "Signal" },
   { id: "single-voxel", label: "Voxel" },
-  { id: "sensitivity", label: "Sweep" },
+  { id: "sensitivity", label: "Sensitivity" },
   { id: "montecarlo", label: "Population" },
 ];
 
@@ -69,39 +69,33 @@ export function singleVoxelSeries(report) {
 }
 
 // A sweep's parameters have wildly different magnitudes (a fraction near 0.15
-// beside a rate near 25), so absolute bias on one axis flattens the smaller to
-// nothing. Everything here is therefore a percentage of the truth at that
-// point, which is comparable across parameters and is what "where does the fit
-// break down" actually asks.
-//
-// The band is returned as a lower edge plus a height, which is what a stacked
-// area chart needs: the lower series is drawn invisibly and the height sits on
-// top of it.
+// beside a rate near 25), so plotted against each other in the same physical
+// units, one flattens the other. Reporting each in its own units instead, one
+// panel per parameter, is qMRLab's own SimVaryPlot convention and is what
+// removes the shared-axis problem: no normalisation is needed once each
+// parameter draws on its own axis.
 export function sensitivitySeries(report) {
   const points = report?.points ?? [];
+  const swept = report?.swept_param;
   const names = (points[0]?.stats ?? []).map((s) => s.name);
   return {
-    xLabels: points.map((p) => String(Number(p.value.toPrecision(4)))),
+    swept,
     params: names.map((name) => {
-      const bias = [];
-      const lower = [];
-      const band = [];
+      const x = [];
+      const mean = [];
+      const std = [];
+      const truth = [];
       for (const point of points) {
         const s = point.stats.find((entry) => entry.name === name);
-        // A zero truth has no percentage. Reporting Infinity would draw a
-        // measurement that does not exist, so the point is a gap instead.
-        if (!s || s.truth === 0) {
-          bias.push(null);
-          lower.push(null);
-          band.push(null);
-          continue;
-        }
-        const scale = 100 / Math.abs(s.truth);
-        bias.push(s.bias * scale);
-        lower.push((s.bias - s.std) * scale);
-        band.push(2 * s.std * scale);
+        x.push(point.value);
+        // A gap here is a missing measurement, not a missing point, so the
+        // input value is kept and only this parameter's series stops: a
+        // gap must never shift a later point's x.
+        mean.push(s ? s.mean : null);
+        std.push(s ? s.std : null);
+        truth.push(s ? s.truth : null);
       }
-      return { name, bias, lower, band };
+      return { name, isSwept: name === swept, x, mean, std, truth };
     }),
   };
 }

@@ -118,70 +118,44 @@ const sweep = {
   mode: "sensitivity",
   swept_param: "T1",
   points: [
-    { value: 0.5, stats: [{ name: "T1", truth: 0.5, mean: 0.55, std: 0.05, bias: 0.05, rmse: 0.07 }] },
-    { value: 1.0, stats: [{ name: "T1", truth: 1.0, mean: 0.9, std: 0.10, bias: -0.10, rmse: 0.14 }] },
+    { value: 0.5, stats: [
+      { name: "T1", truth: 0.5, mean: 0.55, std: 0.05, bias: 0.05, rmse: 0.07 },
+      { name: "a", truth: 500, mean: 498, std: 12, bias: -2, rmse: 12 },
+    ] },
+    { value: 1.0, stats: [
+      { name: "T1", truth: 1.0, mean: 0.90, std: 0.10, bias: -0.10, rmse: 0.14 },
+      { name: "a", truth: 500, mean: 502, std: 11, bias: 2, rmse: 11 },
+    ] },
   ],
 };
 
-test("a sweep is plotted against the swept value", () => {
-  assert.deepEqual(sensitivitySeries(sweep).xLabels, ["0.5", "1"]);
+test("a sweep is plotted as fitted against the input that produced it", () => {
+  const s = sensitivitySeries(sweep);
+  assert.equal(s.swept, "T1");
+  const t1 = s.params.find((p) => p.name === "T1");
+  assert.deepEqual(t1.x, [0.5, 1.0]);
+  assert.deepEqual(t1.mean, [0.55, 0.90]);
+  assert.deepEqual(t1.std, [0.05, 0.10]);
 });
 
-test("bias is relative to the truth at each point, so every parameter shares one axis", () => {
-  const [t1] = sensitivitySeries(sweep).params;
-  assert.equal(t1.name, "T1");
-  assert.deepEqual(t1.bias, [10, -10]);
+test("the swept parameter is marked so its panel can carry the identity line", () => {
+  const s = sensitivitySeries(sweep);
+  assert.equal(s.params.find((p) => p.name === "T1").isSwept, true);
+  assert.equal(s.params.find((p) => p.name === "a").isSwept, false);
 });
 
-test("the band spans plus and minus one std, also relative", () => {
-  const [t1] = sensitivitySeries(sweep).params;
-  assert.deepEqual(t1.lower, [0, -20]);
-  assert.deepEqual(t1.band, [20, 20]);
+test("a parameter that is not swept carries its constant truth for a reference line", () => {
+  const a = sensitivitySeries(sweep).params.find((p) => p.name === "a");
+  assert.deepEqual(a.truth, [500, 500]);
+  assert.deepEqual(a.mean, [498, 502]);
 });
 
-test("a point whose truth is zero has no relative bias and leaves a gap", () => {
-  // Dividing by a zero truth would report Infinity as if it were a measurement.
-  const zero = {
-    mode: "sensitivity",
-    swept_param: "b",
-    points: [{ value: 0, stats: [{ name: "b", truth: 0, mean: 0.1, std: 0.1, bias: 0.1, rmse: 0.1 }] }],
-  };
-  const [b] = sensitivitySeries(zero).params;
-  assert.deepEqual(b.bias, [null]);
-  assert.deepEqual(b.lower, [null]);
-  assert.deepEqual(b.band, [null]);
+test("every reported parameter gets a panel, in the report's own order", () => {
+  assert.deepEqual(sensitivitySeries(sweep).params.map((p) => p.name), ["T1", "a"]);
 });
 
-test("every parameter the report carries gets its own line", () => {
-  const two = {
-    mode: "sensitivity",
-    swept_param: "F",
-    points: [{
-      value: 0.1,
-      stats: [
-        { name: "F", truth: 0.1, mean: 0.1, std: 0.01, bias: 0, rmse: 0.01 },
-        { name: "kr", truth: 25, mean: 26, std: 2, bias: 1, rmse: 2 },
-      ],
-    }],
-  };
-  assert.deepEqual(sensitivitySeries(two).params.map((p) => p.name), ["F", "kr"]);
-});
-
-test("the band straddles the bias line whenever the std exceeds the bias", () => {
-  // A stacked-area band is drawn as a lower edge plus a height on top of it,
-  // so the two must recombine to the upper edge exactly, and the lower edge
-  // must be free to go negative: a rendering that cannot place a negative
-  // lower edge cannot show a band straddling zero.
-  const wide = {
-    mode: "sensitivity",
-    swept_param: "MTR",
-    points: [{ value: 5, stats: [{ name: "MTR", truth: 5, mean: 4.9, std: 1.311, bias: -0.09838, rmse: 1.3 }] }],
-  };
-  const [mtr] = sensitivitySeries(wide).params;
-  const scale = 100 / 5;
-  const upper = (-0.09838 + 1.311) * scale;
-  assert.ok(mtr.lower[0] < 0, "the lower edge is negative when bias - std is negative");
-  assert.equal(mtr.lower[0] + mtr.band[0], upper);
+test("a report with no points yields no panels rather than throwing", () => {
+  assert.deepEqual(sensitivitySeries({ mode: "sensitivity", points: [] }).params, []);
 });
 
 test("a montecarlo report becomes one box per reported parameter", () => {
