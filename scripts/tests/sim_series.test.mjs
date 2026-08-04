@@ -11,6 +11,9 @@ import {
   multiVoxelScatter,
   multiVoxelErrors,
   errorHistogram,
+  histogramXRange,
+  sensitivityFinitePoints,
+  sensitivityYExtent,
 } from "../../docs/playground/sim-series.js";
 
 test("each page mode edits its own recipe", () => {
@@ -192,13 +195,92 @@ test("a histogram bins values and reports a centre per bin", () => {
   assert.equal(h.counts.reduce((a, b) => a + b, 0), 4);
 });
 
-test("a histogram of identical values does not divide by a zero range", () => {
+test("a histogram of identical values collapses to a single bin centred on that value", () => {
   const h = errorHistogram([3, 3, 3], 4);
-  assert.equal(h.counts.reduce((a, b) => a + b, 0), 3);
-  assert.ok(h.centers.every(Number.isFinite));
+  assert.deepEqual(h.centers, [3]);
+  assert.deepEqual(h.counts, [3]);
 });
 
 test("an absent per-trial matrix yields nothing rather than throwing", () => {
   assert.deepEqual(multiVoxelScatter({ mode: "montecarlo", stats: [] }), []);
   assert.deepEqual(multiVoxelErrors({ mode: "montecarlo", stats: [] }), []);
+});
+
+// A diverged fit crosses `sim-worker.js`'s JSON boundary as `null`, and
+// `null` arithmetics as 0: `null - input` is the finite number `-input`, so a
+// check applied to the difference instead of to the fitted value would still
+// accept it. These pin the fix to the operand, not the result.
+const withDivergedTrial = {
+  mode: "montecarlo",
+  trials: 3,
+  stats: [{ name: "M0", truth: 1000, mean: 1000, bias: 0, std: 1, rmse: 1 }],
+  per_trial_input: [[1000], [1000], [1000]],
+  per_trial_fitted: [[1001], [null], [999]],
+};
+
+test("a diverged trial (fitted null) is excluded from the scatter entirely", () => {
+  const s = multiVoxelScatter(withDivergedTrial);
+  assert.deepEqual(s[0].points, [[1000, 1001], [1000, 999]]);
+});
+
+test("a diverged trial (fitted null) is excluded from the error list, not turned into minus the input", () => {
+  const e = multiVoxelErrors(withDivergedTrial).find((p) => p.name === "M0");
+  assert.deepEqual(e.errors, [1, -1]);
+  assert.ok(!e.errors.includes(-1000));
+  assert.equal(e.dropped, 1);
+});
+
+test("a diverged trial's mean error is computed only from the usable trials", () => {
+  const e = multiVoxelErrors(withDivergedTrial).find((p) => p.name === "M0");
+  assert.equal(e.meanError, 0);
+});
+
+test("the histogram's x range is padded from the bin span", () => {
+  const h = errorHistogram([1, 2, 3], 3);
+  const [lo, hi] = histogramXRange(h, 2);
+  assert.ok(lo < h.centers[0]);
+  assert.ok(hi > h.centers[h.centers.length - 1]);
+});
+
+test("the histogram's x range widens to include zero even when every error shares a sign", () => {
+  const h = errorHistogram([100, 110, 120], 3);
+  const [lo] = histogramXRange(h, 110);
+  assert.ok(lo <= 0);
+});
+
+test("the histogram's x range widens to include the mean error even when it falls outside the bins", () => {
+  const h = errorHistogram([1, 2, 3], 3);
+  const [, hi] = histogramXRange(h, 50);
+  assert.ok(hi >= 50);
+});
+
+test("a sensitivity point with a non-finite mean or std is dropped rather than drawn with a fabricated zero spread", () => {
+  const param = { name: "b", isSwept: false, x: [1, 2, 3], mean: [5, null, 7], std: [1, null, 1], truth: [6, 6, 6] };
+  const finite = sensitivityFinitePoints(param);
+  assert.deepEqual(finite.x, [1, 3]);
+  assert.deepEqual(finite.mean, [5, 7]);
+  assert.deepEqual(finite.std, [1, 1]);
+});
+
+test("a swept panel's y extent includes the identity diagonal's own span", () => {
+  const param = { name: "T2", isSwept: true, x: [0.01, 0.2], mean: [0.05, 0.08], std: [0.01, 0.01], truth: [] };
+  const finite = sensitivityFinitePoints(param);
+  const [lo, hi] = sensitivityYExtent(param, finite);
+  assert.ok(lo <= 0.01);
+  assert.ok(hi >= 0.2);
+});
+
+test("a non-swept panel's y extent includes its constant truth", () => {
+  const param = { name: "T2f", isSwept: false, x: [1, 2], mean: [0.5, 0.52], std: [0.01, 0.01], truth: [0.028, 0.028] };
+  const finite = sensitivityFinitePoints(param);
+  const [lo] = sensitivityYExtent(param, finite);
+  assert.ok(lo <= 0.028);
+});
+
+test("a diverged sweep point does not drag the y extent to its own fabricated scale", () => {
+  const param = { name: "b", isSwept: false, x: [1, 2, 3], mean: [5, -6.7e152, 7], std: [1, null, 1], truth: [6, 6, 6] };
+  const finite = sensitivityFinitePoints(param);
+  const [lo, hi] = sensitivityYExtent(param, finite);
+  assert.ok(lo > -1e10);
+  assert.ok(hi < 1e10);
 });

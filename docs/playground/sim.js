@@ -15,6 +15,9 @@ import {
   multiVoxelScatter,
   multiVoxelErrors,
   errorHistogram,
+  histogramXRange,
+  sensitivityFinitePoints,
+  sensitivityYExtent,
 } from "./sim-series.js";
 import { showNotice } from "./modal.js";
 import { LABELS } from "./draw.js";
@@ -352,14 +355,12 @@ function montecarloOption(p, scatter, errors) {
         splitLine: { show: false },
       })),
       ...hists.map((h, i) => {
-        const halfW = h.centers.length > 1
-          ? (h.centers[1] - h.centers[0]) / 2
-          : Math.abs(h.centers[0] || 1) * 0.05 + 0.01;
+        const [min, max] = histogramXRange(h, errors[i].meanError);
         return {
           gridIndex: cols + i,
           type: "value",
-          min: (h.centers[0] ?? 0) - halfW,
-          max: (h.centers[h.centers.length - 1] ?? 0) + halfW,
+          min,
+          max,
           name: `Error ${scatter[i].name}`,
           nameLocation: "middle",
           nameGap: 18,
@@ -413,7 +414,7 @@ function montecarloOption(p, scatter, errors) {
             silent: true,
             symbol: "none",
             label: { show: false },
-            lineStyle: { color: p.line, type: "dashed" },
+            lineStyle: { color: p.ink, type: "dashed" },
             data: [[{ coord: [ranges[i][0], ranges[i][0]] }, { coord: [ranges[i][1], ranges[i][1]] }]],
           },
         };
@@ -425,14 +426,28 @@ function montecarloOption(p, scatter, errors) {
           type: "bar",
           xAxisIndex: cols + i,
           yAxisIndex: cols + i,
+          barWidth: "100%",
           itemStyle: { color: colour, opacity: 0.6 },
           data: h.centers.map((c, k) => [c, h.counts[k]]),
+          // Zero and the mean error need to read apart at a glance, since a
+          // reader who cannot tell them apart cannot map the note's sentence
+          // onto the picture: zero stays the family's dashed reference, the
+          // mean gets the accent's own solid line and a label of its own.
           markLine: {
             silent: true,
             symbol: "none",
-            label: { show: false },
-            lineStyle: { color: p.line, type: "dashed" },
-            data: [{ xAxis: 0 }, { xAxis: errors[i].meanError }],
+            data: [
+              {
+                xAxis: 0,
+                label: { show: true, formatter: "zero", color: p.muted, fontSize: 9 },
+                lineStyle: { color: p.ink, type: "dashed" },
+              },
+              {
+                xAxis: errors[i].meanError,
+                label: { show: true, formatter: "mean", color: p.rust, fontSize: 9 },
+                lineStyle: { color: p.rust, type: "solid" },
+              },
+            ],
           },
         };
       }),
@@ -476,6 +491,22 @@ function sensitivityOption(p, s) {
   const cols = s.params.length || 1;
   const hues = LABELS.map((l) => l.color);
   const axisText = { color: p.muted, fontSize: 10 };
+  const finites = s.params.map(sensitivityFinitePoints);
+  const xRanges = s.params.map((param) => {
+    const lo = Math.min(...param.x);
+    const hi = Math.max(...param.x);
+    const pad = (hi - lo) / 50;
+    return [lo - pad, hi + pad];
+  });
+  const yRanges = s.params.map((param, i) => {
+    const [lo, hi] = sensitivityYExtent(param, finites[i]);
+    // A fixed parameter's std is exactly zero at every point and carries no
+    // other reference, so lo === hi: an errorbar-free flat line still needs
+    // headroom to sit inside its axis rather than pinned to a degenerate
+    // zero-height range.
+    const pad = hi > lo ? (hi - lo) / 10 : Math.abs(hi || 1) / 10;
+    return [lo - pad, hi + pad];
+  });
   return {
     animation: false,
     tooltip: {
@@ -490,62 +521,47 @@ function sensitivityOption(p, s) {
       top: 30,
       bottom: 44,
     })),
-    xAxis: s.params.map((param, i) => {
-      const lo = Math.min(...param.x);
-      const hi = Math.max(...param.x);
-      const pad = (hi - lo) / 50;
-      return {
-        gridIndex: i,
-        type: "value",
-        min: lo - pad,
-        max: hi + pad,
-        name: `Input ${s.swept}`,
-        nameLocation: "middle",
-        nameGap: 26,
-        nameTextStyle: axisText,
-        axisLine: { lineStyle: { color: p.line } },
-        axisLabel: { ...axisText, hideOverlap: true, formatter: formatTick },
-        axisTick: { lineStyle: { color: p.line } },
-        // A category-dense sweep (many points, or many narrow columns) packs its
-        // tick labels tighter than the panel can legibly show; capping the tick
-        // count keeps every remaining label readable rather than relying on
-        // hideOverlap alone to drop whichever ones collide.
-        splitNumber: cols > 2 ? 4 : 6,
-        splitLine: { show: false },
-      };
-    }),
-    yAxis: s.params.map((param, i) => {
-      // A gap point (a parameter missing at that sweep step) carries `null` in
-      // both arrays; excluding it up front keeps the arithmetic below from
-      // reading `null` as `0` and folding a phantom bound into the range.
-      const bars = param.mean
-        .map((m, k) => [m, param.std[k]])
-        .filter(([m, sd]) => m != null && sd != null);
-      const lo = bars.length ? Math.min(...bars.map(([m, sd]) => m - sd)) : 0;
-      const hi = bars.length ? Math.max(...bars.map(([m, sd]) => m + sd)) : 1;
-      // A fixed parameter's std is exactly zero at every point, so lo === hi: an
-      // errorbar-free flat line still needs headroom to sit inside its axis
-      // rather than pinned to a degenerate zero-height range.
-      const pad = hi > lo ? (hi - lo) / 10 : Math.abs(hi || 1) / 10;
-      return {
-        gridIndex: i,
-        type: "value",
-        min: lo - pad,
-        max: hi + pad,
-        name: `Fitted ${param.name}`,
-        nameTextStyle: { ...axisText, align: "left" },
-        axisLine: { lineStyle: { color: p.line } },
-        axisLabel: { ...axisText, formatter: formatTick },
-        splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
-      };
-    }),
+    xAxis: s.params.map((param, i) => ({
+      gridIndex: i,
+      type: "value",
+      min: xRanges[i][0],
+      max: xRanges[i][1],
+      name: `Input ${s.swept}`,
+      nameLocation: "middle",
+      nameGap: 26,
+      nameTextStyle: axisText,
+      axisLine: { lineStyle: { color: p.line } },
+      axisLabel: { ...axisText, hideOverlap: true, formatter: formatTick },
+      axisTick: { lineStyle: { color: p.line } },
+      // A category-dense sweep (many points, or many narrow columns) packs its
+      // tick labels tighter than the panel can legibly show; capping the tick
+      // count keeps every remaining label readable rather than relying on
+      // hideOverlap alone to drop whichever ones collide.
+      splitNumber: cols > 2 ? 4 : 6,
+      splitLine: { show: false },
+    })),
+    yAxis: s.params.map((param, i) => ({
+      gridIndex: i,
+      type: "value",
+      min: yRanges[i][0],
+      max: yRanges[i][1],
+      name: `Fitted ${param.name}`,
+      nameTextStyle: { ...axisText, align: "left" },
+      axisLine: { lineStyle: { color: p.line } },
+      axisLabel: { ...axisText, formatter: formatTick },
+      splitLine: { lineStyle: { color: p.line, opacity: 0.45 } },
+    })),
     series: s.params.flatMap((param, i) => {
       const colour = hues[i % hues.length];
-      const lo = Math.min(...param.x);
-      const hi = Math.max(...param.x);
+      const finite = finites[i];
+      // The reference the panel promises: the identity diagonal spanning the
+      // padded axis range for the swept parameter, the constant truth line for
+      // every other one. Drawn ink-solid-dashed rather than the gridlines'
+      // `--line` at reduced opacity, so it reads apart from the six-panel
+      // splitLines rather than disappearing among them.
       const reference = param.isSwept
-        ? { data: [[{ coord: [lo, lo] }, { coord: [hi, hi] }]] }
-        : { data: [{ yAxis: param.truth.find((t) => t != null) }] };
+        ? { data: [[{ coord: [xRanges[i][0], xRanges[i][0]] }, { coord: [xRanges[i][1], xRanges[i][1]] }]] }
+        : { data: [{ yAxis: param.truth.find((t) => Number.isFinite(t)) }] };
       return [
         {
           type: "custom",
@@ -553,7 +569,7 @@ function sensitivityOption(p, s) {
           yAxisIndex: i,
           silent: true,
           renderItem: errorBarRenderItem(colour),
-          data: param.x.map((x, k) => [x, param.mean[k], param.std[k]]),
+          data: finite.x.map((x, k) => [x, finite.mean[k], finite.std[k]]),
         },
         {
           name: param.name,
@@ -568,8 +584,8 @@ function sensitivityOption(p, s) {
           markLine: {
             silent: true,
             symbol: "none",
-            label: { show: false },
-            lineStyle: { color: p.line, type: "dashed" },
+            label: { show: true, formatter: param.isSwept ? "identity" : "truth", color: p.muted, fontSize: 9 },
+            lineStyle: { color: p.ink, type: "dashed" },
             ...reference,
           },
         },
@@ -659,10 +675,12 @@ function drawSim(report) {
     const scatter = multiVoxelScatter(report);
     const errors = multiVoxelErrors(report);
     ensureChart().setOption(montecarloOption(p, scatter, errors), { notMerge: true });
+    const dropped = Math.max(0, ...errors.map((e) => e.dropped));
     $("sim-note").textContent =
       `Input against fit over ${report.trials} voxels, per parameter, with each `
       + "parameter's error below it. The scatter's diagonal is perfect recovery; "
-      + "the histogram's two lines are zero error and the mean error actually observed.";
+      + "the histogram's two lines are zero error and the mean error actually observed."
+      + (dropped ? ` ${dropped} voxel${dropped === 1 ? "" : "s"} whose fit diverged are excluded.` : "");
     return;
   }
   $("sim-note").textContent = "";

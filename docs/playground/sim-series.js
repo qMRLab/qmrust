@@ -100,9 +100,20 @@ export function sensitivitySeries(report) {
   };
 }
 
+// A pair is usable only if both its input and what the fit recovered from it
+// are finite numbers. `sim-worker.js` carries the report through `JSON.parse`,
+// and serde writes a non-finite fit as JSON `null`; `null` arithmetics as 0,
+// so an unfiltered subtraction or comparison turns a diverged fit into a
+// fabricated, finite-looking value instead of dropping it.
+function isUsablePair(input, fit) {
+  return Number.isFinite(input) && Number.isFinite(fit);
+}
+
 // One series per reported parameter, pairing each trial's input with what the
 // fit recovered from it. This is qMRLab's `Input vs. Fit` view: a scatter
-// close to the diagonal is a fit that recovers what it was given.
+// close to the diagonal is a fit that recovers what it was given. A trial
+// whose fit diverged is dropped from its parameter's scatter entirely, rather
+// than plotted from a fabricated value.
 export function multiVoxelScatter(report) {
   const inputs = report?.per_trial_input ?? [];
   const fitted = report?.per_trial_fitted ?? [];
@@ -110,48 +121,97 @@ export function multiVoxelScatter(report) {
   if (!inputs.length || !fitted.length || !stats.length) return [];
   return stats.map((s, j) => ({
     name: s.name,
-    points: inputs.map((row, t) => [row[j], fitted[t][j]]),
+    points: inputs
+      .map((row, t) => [row[j], fitted[t][j]])
+      .filter(([input, fit]) => isUsablePair(input, fit)),
   }));
 }
 
 // One series per reported parameter, the trial-by-trial error the fit made
 // (fitted minus input, never stored beside the pair it is derived from) plus
-// the two references the histogram's markLines need: zero error and the mean
-// error actually observed. A trial whose fit diverged reports a non-finite
-// error; it is dropped from the histogram, and counted rather than silently
-// discarded, since a fit that failed is information rather than noise.
+// the mean error actually observed. A trial whose fit diverged is dropped
+// before the subtraction, not after: testing the difference for finiteness
+// would still accept it, since a diverged fit crosses the JSON boundary as
+// `null`, and `null - input` is the finite number `-input`.
 export function multiVoxelErrors(report) {
   const inputs = report?.per_trial_input ?? [];
   const fitted = report?.per_trial_fitted ?? [];
   const stats = report?.stats ?? [];
   if (!inputs.length || !fitted.length || !stats.length) return [];
   return stats.map((s, j) => {
-    const all = inputs.map((row, t) => fitted[t][j] - row[j]);
-    const errors = all.filter(Number.isFinite);
+    const pairs = inputs.map((row, t) => [row[j], fitted[t][j]]);
+    const errors = pairs.filter(([input, fit]) => isUsablePair(input, fit)).map(([input, fit]) => fit - input);
     const meanError = errors.length
       ? errors.reduce((a, b) => a + b, 0) / errors.length
       : 0;
-    return { name: s.name, errors, dropped: all.length - errors.length, truthMean: 0, meanError };
+    return { name: s.name, errors, dropped: pairs.length - errors.length, meanError };
   });
 }
 
 // A fixed bin count over a value's own range, matching qMRLab's `hist(x, 30)`.
-// A degenerate (zero-width) range is padded rather than divided by, so a
-// parameter whose every trial lands on the same value still gets a chart
-// instead of a division by zero.
+// A degenerate (zero-width) range collapses to a single bin centred exactly on
+// that value, rather than a padded range whose bin centres land near but not
+// on it, so a parameter whose every trial lands on the same value gets a
+// chart with its one bar where the value actually is.
 export function errorHistogram(values, bins = 30) {
   const finite = values.filter(Number.isFinite);
   if (!finite.length) return { centers: [], counts: [] };
   const lo = Math.min(...finite);
   const hi = Math.max(...finite);
-  const span = hi > lo ? hi - lo : Math.abs(hi || 1) * 0.1 || 1;
-  const min = hi > lo ? lo : lo - span / 2;
-  const width = span / bins;
+  if (hi === lo) return { centers: [lo], counts: [finite.length] };
+  const width = (hi - lo) / bins;
   const counts = new Array(bins).fill(0);
   for (const v of finite) {
-    const idx = Math.min(bins - 1, Math.max(0, Math.floor((v - min) / width)));
+    const idx = Math.min(bins - 1, Math.max(0, Math.floor((v - lo) / width)));
     counts[idx]++;
   }
-  const centers = Array.from({ length: bins }, (_, k) => min + width * (k + 0.5));
+  const centers = Array.from({ length: bins }, (_, k) => lo + width * (k + 0.5));
   return { centers, counts };
+}
+
+// The histogram's x extent, padded from the bin span the same way
+// `sharedRange` pads a scatter, then widened to include both markLines the
+// chart draws: zero error and the mean error actually observed. Without this
+// a distribution that never crosses zero (every trial biased the same way)
+// draws only one of the two promised reference lines.
+export function histogramXRange(hist, meanError) {
+  const centers = hist.centers;
+  const refs = [0, meanError].filter(Number.isFinite);
+  if (!centers.length) return refs.length ? [Math.min(...refs), Math.max(...refs)] : [-1, 1];
+  const halfW = centers.length > 1
+    ? (centers[1] - centers[0]) / 2
+    : Math.abs(centers[0] || 1) * 0.05 + 0.01;
+  const values = [centers[0] - halfW, centers[centers.length - 1] + halfW, ...refs];
+  return [Math.min(...values), Math.max(...values)];
+}
+
+// A sweep panel's y extent before padding: the errorbar spread of every point
+// whose mean and standard deviation are both finite, widened to include the
+// reference geometry the panel draws — the identity diagonal's own [lo, hi]
+// span for the swept parameter, the constant truth for every other one.
+// Without this the reference can sit outside a range built from the fit
+// alone, which is exactly the regime (the fit breaking down) this mode exists
+// to show. A point whose mean or std is not finite (a sweep step where the
+// fit diverged) is left out of the extent and out of what is drawn: a
+// diverged fit contributes nothing rather than a fabricated "zero spread".
+export function sensitivityFinitePoints(param) {
+  const keep = param.x
+    .map((_, k) => k)
+    .filter((k) => Number.isFinite(param.mean[k]) && Number.isFinite(param.std[k]));
+  return {
+    x: keep.map((k) => param.x[k]),
+    mean: keep.map((k) => param.mean[k]),
+    std: keep.map((k) => param.std[k]),
+  };
+}
+
+export function sensitivityYExtent(param, finite) {
+  const points = finite.mean.flatMap((m, k) => [m - finite.std[k], m + finite.std[k]]);
+  if (param.isSwept) {
+    if (param.x.length) points.push(Math.min(...param.x), Math.max(...param.x));
+  } else {
+    const truth = param.truth.find((t) => Number.isFinite(t));
+    if (truth !== undefined) points.push(truth);
+  }
+  return points.length ? [Math.min(...points), Math.max(...points)] : [0, 1];
 }
