@@ -16,10 +16,16 @@
 
 import { iconPaths } from "./vendor/icons.js";
 
-// A cell this size reads as a voxel without needing per-panel tuning: large
-// enough to be a distinct block rather than grain, small enough that a panel
-// holds a grid rather than a handful of tiles.
-const TARGET_CELL_PX = 22;
+// A cell this size reads as a voxel: large enough to be a distinct block rather
+// than grain, small enough that a panel holds a grid rather than a handful of
+// tiles. What a panel waiting on a dataset download gets.
+export const VOXEL_CELL_PX = 22;
+
+// Coarser blocks, for a panel waiting on the volume fit. The fit runs on the
+// main thread a block of rows at a time, so the page is unresponsive in bursts
+// while it works; a quarter as many cells is a quarter as much layout and
+// compositing to schedule around it, and the sweep stays legible at this size.
+export const BLOCK_CELL_PX = 44;
 
 // Caps the DOM node count a very large panel would otherwise ask for: a 4K
 // panel at the target size would be tens of thousands of divs. Rather than
@@ -47,6 +53,13 @@ const GLYPH_VIEWBOX = 24;
 // when the shape is sampled at one point per cell.
 const VOID_PEN = 3.4;
 
+// How many cells the void must span before it is cut at all. Sampling a glyph at
+// one point per cell needs cells to spare: a void only three or four across is
+// not a recognisable shape, it is a few missing squares, which reads as a
+// rendering fault rather than as decoration. A grid too coarse to carry the
+// glyph therefore gets no void instead of a bad one.
+const VOID_MIN_CELLS = 5;
+
 // The share of one cycle a cell stays lit, matching the plateau between the
 // `ripple` keyframes' fill and wipe edges in app.css. The two must agree: this
 // is the number `cycleMs` sizes the cycle against, and the keyframes are where
@@ -64,7 +77,7 @@ const PLATEAU_MARGIN = 1.15;
  * exceed `maxCells`. Always at least one column and one row, so a
  * not-yet-laid-out panel (zero measured size) still yields a usable grid.
  */
-export function computeGrid(width, height, targetCellPx = TARGET_CELL_PX, maxCells = MAX_CELLS) {
+export function computeGrid(width, height, targetCellPx = VOXEL_CELL_PX, maxCells = MAX_CELLS) {
   let size = Math.max(1, targetCellPx);
   let cols = Math.max(1, Math.round(width / size));
   let rows = Math.max(1, Math.round(height / size));
@@ -104,6 +117,9 @@ export function cellRampFraction(row, col, cols, rows) {
  * Where a cell's centre falls in the glyph's own 24-unit space, or `null` when
  * the cell lies outside the glyph's box altogether.
  *
+ * Returns `null` for every cell when the grid is too coarse to carry the glyph,
+ * which is how a panel gets no void rather than a blocky one.
+ *
  * Only the mapping lives here, not the hit test: the shape's own geometry needs
  * `Path2D`, which a test environment has no reason to provide, while whether the
  * box is centred and square is exactly what can go wrong silently.
@@ -111,6 +127,7 @@ export function cellRampFraction(row, col, cols, rows) {
 export function cellCentreInGlyph(row, col, cols, rows, width, height) {
   const side = Math.min(width, height) * VOID_SHARE;
   if (!(side > 0)) return null;
+  if (side < VOID_MIN_CELLS * Math.max(width / cols, height / rows)) return null;
   const x = ((col + 0.5) / cols) * width - (width - side) / 2;
   const y = ((row + 0.5) / rows) * height - (height - side) / 2;
   if (x < 0 || y < 0 || x > side || y > side) return null;
@@ -165,11 +182,15 @@ export function cycleMs(cols, rows, stepMs = STEP_MS, plateauShare = PLATEAU_SHA
  * measured area, each coloured and delayed by its position on the diagonal.
  * Call this after the skeleton's `hidden` attribute is cleared (so its size
  * is real) but before the caller yields, so nothing paints an empty grid.
+ *
+ * `cellPx` is how coarse this panel's grid should be: the caller knows what its
+ * panel is waiting for, and a wait that occupies the main thread wants fewer
+ * cells than one that does not.
  */
-export function fillSkeleton(skel) {
+export function fillSkeleton(skel, { cellPx = VOXEL_CELL_PX } = {}) {
   const loader = skel.querySelector(".loader");
   const { width, height } = skel.getBoundingClientRect();
-  const { cols, rows } = computeGrid(width || TARGET_CELL_PX, height || TARGET_CELL_PX);
+  const { cols, rows } = computeGrid(width || cellPx, height || cellPx, cellPx);
   loader.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
   loader.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
   // One duration for every cell in this panel: the cells differ only by delay,

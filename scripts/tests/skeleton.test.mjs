@@ -5,7 +5,7 @@
 // one hits, rather than restating the formulas verbatim.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeGrid, cellDelayMs, cellRampFraction, cellCentreInGlyph, cycleMs } from "../../docs/playground/skeleton.js";
+import { computeGrid, cellDelayMs, cellRampFraction, cellCentreInGlyph, cycleMs, VOXEL_CELL_PX, BLOCK_CELL_PX } from "../../docs/playground/skeleton.js";
 
 test("a wide panel tiles exactly: cols * cell width covers the full width with no gap", () => {
   const { cols, rows } = computeGrid(1200, 200, 16, 10000);
@@ -83,13 +83,34 @@ test("the umbrella's box is centred on the panel and square on any aspect", () =
 });
 
 test("the umbrella's box stays square when the panel is tall rather than wide", () => {
-  const inside = cellCentreInGlyph(30, 5, 10, 60, 300, 1800);
+  // Sized off the narrow side, so a tall panel's void is as wide as it is high
+  // rather than stretched down the column. The grid is fine enough to carry the
+  // glyph; a coarser one is covered below.
+  const inside = cellCentreInGlyph(60, 10, 20, 120, 300, 1800);
   assert.ok(inside, "the middle of a tall panel is inside the glyph box");
   assert.ok(inside.x >= 0 && inside.x <= 24 && inside.y >= 0 && inside.y <= 24);
 });
 
 test("a panel with no measured size has no void rather than a degenerate one", () => {
   assert.equal(cellCentreInGlyph(0, 0, 1, 1, 0, 0), null);
+});
+
+test("a grid too coarse to carry the glyph gets no void at all", () => {
+  // The fitted-map panel uses coarse blocks while the fit holds the main
+  // thread, and a void only a few cells across is not a shape. Same panel, two
+  // cell sizes: the fine grid cuts a void, the coarse one does not.
+  const w = 340, h = 340;
+  const fine = computeGrid(w, h, VOXEL_CELL_PX);
+  const coarse = computeGrid(w, h, BLOCK_CELL_PX);
+  assert.ok(
+    cellCentreInGlyph(Math.floor(fine.rows / 2), Math.floor(fine.cols / 2), fine.cols, fine.rows, w, h),
+    "the voxel-sized grid still carries the glyph",
+  );
+  assert.equal(
+    cellCentreInGlyph(Math.floor(coarse.rows / 2), Math.floor(coarse.cols / 2), coarse.cols, coarse.rows, w, h),
+    null,
+    "the coarse grid cuts no void",
+  );
 });
 
 // The grid must fill whole before any of it clears. A cell lights `LIT_AT` into

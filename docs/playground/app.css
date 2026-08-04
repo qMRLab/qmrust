@@ -1062,7 +1062,15 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
      produce in srgb. Every theme guarantees both endpoints, so the gradient
      resolves on-brand per family with no per-family list to maintain. */
   --cell-color: color-mix(in oklab, var(--rust) var(--mix, 50%), var(--accent));
-  background-color: transparent; border-radius: 2px;
+  /* The colour is painted once and the ripple animates `opacity`, never
+     `background-color`. A colour animation repaints every cell on the main
+     thread each frame, and the volume fit that this panel's skeleton stands in
+     for holds that thread for a block at a time — so the wave froze and jumped
+     precisely while the work it was reporting was happening. Opacity is
+     composited off the main thread, so the wave keeps its own time no matter how
+     busy the fit is. Over the viewer's black, a colour at 52% opacity and that
+     colour mixed 52% with transparent are the same pixel. */
+  background-color: var(--cell-color); opacity: 0; border-radius: 2px;
   /* `--cycle` is set per panel by `fillSkeleton`, because the plateau below has
      to outlast the wave's traverse and the traverse depends on the panel's size.
      The fallback covers a cell somehow rendered outside that path. */
@@ -1079,16 +1087,16 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    rather than as tissue-sized blocks filling in, and a placeholder should not
    out-shout the image it stands in for. */
 @keyframes ripple {
-  0%   { background-color: transparent; }
-  8%   { background-color: color-mix(in srgb, var(--cell-color) 52%, transparent); }
-  53%  { background-color: color-mix(in srgb, var(--cell-color) 52%, transparent); }
-  61%  { background-color: transparent; }
-  100% { background-color: transparent; }
+  0%   { opacity: 0; }
+  8%   { opacity: 0.52; }
+  53%  { opacity: 0.52; }
+  61%  { opacity: 0; }
+  100% { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cell {
     animation: none;
-    background-color: color-mix(in srgb, var(--cell-color) 25%, transparent);
+    opacity: 0.25;
   }
 }
 
