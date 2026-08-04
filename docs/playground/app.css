@@ -456,24 +456,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    is what makes the two black boxes match. Sizing the viewers directly does
    not work: a fixed height cannot shrink, and overflows the card. */
 :root { --foot-h: 68px; }
-/* The ripple skeleton's colour ramp: nine steps from `--accent` to `--rust`,
-   the brand's primary contrast pair, interpolated in oklab rather than srgb
-   so the midpoint stays a clean hue instead of passing through the muddy
-   desaturated grey two saturated colours produce in srgb. Every theme
-   guarantees both endpoints, so the ramp resolves on-brand per family with
-   no per-family list to maintain. One property per step, in document order,
-   keeps the ramp retargetable from this one block. */
-:root {
-  --ripple-1: color-mix(in oklab, var(--accent) 100%, var(--rust) 0%);
-  --ripple-2: color-mix(in oklab, var(--accent) 87.5%, var(--rust) 12.5%);
-  --ripple-3: color-mix(in oklab, var(--accent) 75%, var(--rust) 25%);
-  --ripple-4: color-mix(in oklab, var(--accent) 62.5%, var(--rust) 37.5%);
-  --ripple-5: color-mix(in oklab, var(--accent) 50%, var(--rust) 50%);
-  --ripple-6: color-mix(in oklab, var(--accent) 37.5%, var(--rust) 62.5%);
-  --ripple-7: color-mix(in oklab, var(--accent) 25%, var(--rust) 75%);
-  --ripple-8: color-mix(in oklab, var(--accent) 12.5%, var(--rust) 87.5%);
-  --ripple-9: color-mix(in oklab, var(--accent) 0%, var(--rust) 100%);
-}
 /* A fixed box, not a minimum: the two feet carry different controls, and a foot
    that sized itself to its own would put the two viewers at different heights.
    `syncFootHeight` sets the value to the taller foot's content, so the box holds
@@ -1070,6 +1052,16 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   display: grid; gap: 2px;
 }
 .cell {
+  /* One gradient across the whole panel rather than a ramp that repeats: the
+     cell's own `--mix`, set by `fillSkeleton` from how far along the diagonal it
+     sits, is 0% in the corner the wave starts from and 100% in the corner it
+     ends at, so the sweep crosses from `--accent` to `--rust` exactly once.
+
+     Interpolated in oklab rather than srgb so the midpoint keeps a clean hue
+     instead of passing through the muddy desaturated grey two saturated colours
+     produce in srgb. Every theme guarantees both endpoints, so the gradient
+     resolves on-brand per family with no per-family list to maintain. */
+  --cell-color: color-mix(in oklab, var(--rust) var(--mix, 50%), var(--accent));
   background-color: transparent; border-radius: 2px;
   /* `--cycle` is set per panel by `fillSkeleton`, because the plateau below has
      to outlast the wave's traverse and the traverse depends on the panel's size.

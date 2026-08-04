@@ -65,7 +65,7 @@
       "version": "1.27.0",
       "source": "https://lucide.dev",
       "license": "ISC",
-      "sha256": "877eb47e380e98bf08314c061e3a8414ff07f00fcf85d8d0b1b061a6c14f0c88"
+      "sha256": "72b330ac2353d91e24ca12c51188c47963e088f39828fdb6f1c4453f339f5336"
     },
     {
       "file": "js-yaml.js",

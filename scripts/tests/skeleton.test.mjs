@@ -5,7 +5,7 @@
 // one hits, rather than restating the formulas verbatim.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeGrid, cellDelayMs, cellRampIndex, cycleMs } from "../../docs/playground/skeleton.js";
+import { computeGrid, cellDelayMs, cellRampFraction, cellCentreInGlyph, cycleMs } from "../../docs/playground/skeleton.js";
 
 test("a wide panel tiles exactly: cols * cell width covers the full width with no gap", () => {
   const { cols, rows } = computeGrid(1200, 200, 16, 10000);
@@ -43,16 +43,53 @@ test("delay increases moving right along a row and moving down a column", () => 
 
 test("two cells on the same diagonal (row + col equal) share a delay and a colour", () => {
   assert.equal(cellDelayMs(1, 2), cellDelayMs(2, 1));
-  assert.equal(cellRampIndex(1, 2), cellRampIndex(2, 1));
+  assert.equal(cellRampFraction(1, 2, 8, 8), cellRampFraction(2, 1, 8, 8));
 });
 
-test("the ramp index cycles rather than running off the nine-step ramp", () => {
-  for (let row = 0; row < 5; row++) {
-    for (let col = 0; col < 5; col++) {
-      const idx = cellRampIndex(row, col);
-      assert.ok(idx >= 0 && idx < 9, "always a valid --ripple-N index");
+test("the gradient spans the grid once, corner to corner, rather than repeating", () => {
+  // The whole point of the fraction: the far corner is the end of the gradient
+  // whatever the grid's size, so no colour recurs on the way there.
+  for (const [cols, rows] of [[8, 8], [40, 6], [3, 27], [2, 2]]) {
+    assert.equal(cellRampFraction(0, 0, cols, rows), 0, "starts at the near corner");
+    assert.equal(cellRampFraction(rows - 1, cols - 1, cols, rows), 1, "ends at the far one");
+    // Strictly increasing along the diagonal is what makes it one gradient; a
+    // repeating ramp would come back down.
+    let prev = -1;
+    for (let d = 0; d <= (rows - 1) + (cols - 1); d++) {
+      const row = Math.min(d, rows - 1);
+      const f = cellRampFraction(row, d - row, cols, rows);
+      assert.ok(f > prev, `fraction fell back from ${prev} to ${f}`);
+      prev = f;
     }
   }
+});
+
+test("a single-cell grid has no diagonal to be partway along", () => {
+  assert.equal(cellRampFraction(0, 0, 1, 1), 0);
+});
+
+test("the umbrella's box is centred on the panel and square on any aspect", () => {
+  // A wide panel: the void must sit in the middle of the width, not at the left.
+  const cols = 60, rows = 20, w = 1200, h = 400;
+  const centre = cellCentreInGlyph(Math.floor(rows / 2), Math.floor(cols / 2), cols, rows, w, h);
+  assert.ok(centre, "the middle cell is inside the glyph box");
+  // The glyph is 24 units across, so its own centre is (12, 12).
+  assert.ok(Math.abs(centre.x - 12) < 2, `x was ${centre.x}`);
+  assert.ok(Math.abs(centre.y - 12) < 2, `y was ${centre.y}`);
+  // Every corner is outside it, so the void never touches the panel's edge.
+  for (const [r, c] of [[0, 0], [0, cols - 1], [rows - 1, 0], [rows - 1, cols - 1]]) {
+    assert.equal(cellCentreInGlyph(r, c, cols, rows, w, h), null, `corner ${r},${c} is inside`);
+  }
+});
+
+test("the umbrella's box stays square when the panel is tall rather than wide", () => {
+  const inside = cellCentreInGlyph(30, 5, 10, 60, 300, 1800);
+  assert.ok(inside, "the middle of a tall panel is inside the glyph box");
+  assert.ok(inside.x >= 0 && inside.x <= 24 && inside.y >= 0 && inside.y <= 24);
+});
+
+test("a panel with no measured size has no void rather than a degenerate one", () => {
+  assert.equal(cellCentreInGlyph(0, 0, 1, 1, 0, 0), null);
 });
 
 // The grid must fill whole before any of it clears. A cell lights `LIT_AT` into

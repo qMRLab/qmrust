@@ -106,6 +106,8 @@ const SHAPES = {
     '<circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" />',
   "table-2":
     '<path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" />',
+  "umbrella":
+    '<path d="M12 13v7a2 2 0 0 0 4 0" /><path d="M12 2v2" /><path d="M20.992 13a1 1 0 0 0 .97-1.274 10.284 10.284 0 0 0-19.923 0A1 1 0 0 0 3 13z" />',
   "undo-2":
     '<path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />',
   "triangle-alert":
@@ -118,6 +120,21 @@ const SHAPES = {
 // stroke thins as the icon shrinks.
 function strokeFor(size) {
   return size >= 20 ? 2 : size >= 16 ? 1.75 : 1.5;
+}
+
+/**
+ * A glyph's path data, one `d` string per `<path>` it is drawn from, in the
+ * 24-unit space Lucide authors in.
+ *
+ * For a caller that needs the geometry rather than the markup — hit-testing a
+ * glyph against a `Path2D`, say. Elements with no `d` (a `<circle>`, a `<rect>`)
+ * are not path data and are left out, so a glyph built from those yields
+ * nothing rather than a partial shape.
+ */
+export function iconPaths(name) {
+  const shapes = SHAPES[name];
+  if (!shapes) throw new Error(`no such icon: ${name}`);
+  return [...shapes.matchAll(/\sd="([^"]+)"/g)].map((m) => m[1]);
 }
 
 // One icon as markup. `size` is in CSS pixels.
