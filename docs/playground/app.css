@@ -318,12 +318,12 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
 /* A menu anchored to the control that opens it. Fixed rather than absolute, so it
    escapes the card's `overflow: hidden` the way the drawing palette does — its
-   position is computed from the button's own rect. */
+   position is computed from the button's own rect. Glass recipe: see the
+   shared rule below. */
 .menu {
   position: fixed; z-index: 60;
   display: flex; flex-direction: column; gap: 2px; padding: 4px;
-  background-color: var(--panel); background-image: var(--grad-soft);
-  border: var(--border-w) solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+  border-radius: 10px;
 }
 .menu[hidden] { display: none; }
 .menu-item {
@@ -544,8 +544,61 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    specificity, so a single class would keep their word-sized padding. */
 .seg.seg-icon { padding: 2px; }
 .seg.seg-icon button { padding: 4px 8px; }
-.mode-seg { margin-inline: auto; }
-.mode-seg button[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* The data/simulate switch: a single checkbox behind two label spans, laid
+   out as a two-column grid so each span owns a half. `isolation: isolate`
+   gives the label its own stacking context, so the pill and track (`z-index:
+   -1`/`-2`) sit below the spans without reaching past the switch itself.
+   The input is real and focusable, just visually reduced to a point — a
+   native <label> forwards a click or a Space on the focused control to it
+   regardless, which is what makes either half, or the label's own padding,
+   toggle it. */
+.mode-switch {
+  position: relative; isolation: isolate; cursor: pointer;
+  display: grid; grid-template-columns: 1fr 1fr;
+}
+.mode-switch input {
+  position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0;
+  pointer-events: none;
+}
+.mode-switch span {
+  position: relative; z-index: 1; text-align: center;
+  padding: 5px 12px; font: 600 12px var(--font-ui);
+  color: var(--muted); opacity: .75;
+  transition: opacity .3s ease .15s, color .3s ease .15s;
+}
+.mode-switch span:hover { opacity: 1; transition-duration: 0s; }
+.mode-switch input:not(:checked) ~ span:first-of-type,
+.mode-switch input:checked ~ span:last-of-type {
+  color: var(--ink); opacity: 1;
+}
+/* Track, one layer behind the pill. Focus expands it outward rather than
+   drawing a separate ring, since the pill already occupies the inside. */
+.mode-switch::after {
+  content: ""; position: absolute; z-index: -2; inset: 0;
+  border-radius: 999px; background: var(--panel-2);
+  border: 1px solid var(--line);
+  transition: inset .15s ease;
+}
+.mode-switch:focus-within::after { inset: -0.25rem; }
+/* The pill: sized to one column and slid a full pill-width to cross to the
+   other half, so the motion is the same distance in either direction without
+   depending on the switch's own width. The spring overshoots on the way in,
+   which is what tells a reader the action landed rather than merely moved. */
+.mode-switch::before {
+  content: ""; position: absolute; z-index: -1; top: 3px; bottom: 3px; left: 3px;
+  width: calc(50% - 5px); border-radius: 999px;
+  background-color: var(--panel); background-image: var(--grad-soft);
+  box-shadow: var(--shadow);
+  transition: transform .5s cubic-bezier(0.47, 1.64, 0.41, 0.8);
+}
+.mode-switch:has(input:checked)::before { transform: translateX(100%); }
+.mode-switch:hover:not(:has(input:checked))::before { transform: translateX(5%); }
+.mode-switch:hover:has(input:checked)::before { transform: translateX(calc(100% - 5%)); }
+/* Disabled means the payload has nothing to switch to: the whole control
+   dims and refuses the pointer, and the reason stays reachable as the
+   label's own tooltip since a disabled input does not reliably show one. */
+.mode-switch:has(input:disabled) { opacity: .45; cursor: not-allowed; }
 
 .model-line { margin: 12px 0; color: var(--ink-2); }
 .model-line select { margin-left: 4px; }
@@ -912,8 +965,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   position: fixed; top: 96px; left: 12px; z-index: 60;
   display: flex; flex-direction: column; gap: 6px; width: 88px;
   padding: 7px; border-radius: var(--radius);
-  background: color-mix(in srgb, var(--panel) 90%, transparent);
-  border: var(--border-w) solid var(--line); box-shadow: var(--shadow);
 }
 .draw-palette[hidden] { display: none; }
 .draw-head {
@@ -1107,14 +1158,18 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .notice-card button { min-width: 84px; }
 
 /* Single-file viewer, so inspecting a path costs neither a tab round-trip
-   nor the tree's scroll position. */
+   nor the tree's scroll position. Dimmed rather than blacked out: a blur
+   over near-black backdrop reads as flat grey, not glass, so the dim has to
+   be light enough that the page still reads through it as shape and colour
+   while the card in front still clearly outranks it. */
 .modal {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35);
   display: flex; align-items: center; justify-content: center; z-index: 50;
 }
 .modal[hidden] { display: none; }
+/* Glass recipe: see the shared rule below. */
 .modal-card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  border-radius: 10px;
   width: min(92vw, 940px); height: min(86vh, 720px);
   display: flex; flex-direction: column; padding: 10px; gap: 8px;
 }
@@ -1130,6 +1185,25 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .modal-card.compact .modal-body { flex: 0 1 auto; }
 .modal-card.notice-card { max-width: 46ch; }
+/* Every floating surface (this dialog card, the ROI toolbox, the
+   segmentation menu) wears the tooltip's glass: the panel surface under
+   half opacity over a heavy blur, an accent-tinted edge, and a shadow that
+   combines outer depth, an accent halo and an inset top highlight — see
+   `.tip` for why a tinted fill cannot do this instead. A dialog carries far
+   more body text than a tooltip, so the fill runs richer than `.tip`'s 62%;
+   72% is still comfortably inside the contrast `--ink` keeps over
+   `--panel-2` at any usable alpha, and is what keeps a paragraph legible
+   over a moving backdrop where 62% was only ever measured for a few words. */
+.modal-card, .draw-palette, .menu {
+  background: color-mix(in srgb, var(--panel-2) 72%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  backdrop-filter: blur(16px) saturate(1.8);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, .28),
+    0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 14%, transparent);
+}
 
 .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .modal-head .files-name {

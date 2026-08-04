@@ -46,15 +46,15 @@ export function seedSimRecipe(meta) {
     app.enumFields.set("sim.sweep.param", meta.params);
     if (app.noiseKinds?.length) app.enumFields.set("sim.noise.type", app.noiseKinds);
   }
-  $("page-sim").disabled = !canSim;
-  $("page-sim").title = canSim
+  $("page-mode").disabled = !canSim;
+  $("mode-switch").title = canSim
     ? ""
     : "This model's payload carries no sim recipe, so it cannot be simulated";
 }
 
 function setPageMode(mode) {
   const next = mode === "sim" ? "sim" : "data";
-  if (next === "sim" && $("page-sim").disabled) return;
+  if (next === "sim" && $("page-mode").disabled) return;
   // Leaving Simulate mode ends any run in flight: its result would otherwise
   // land under whatever the Data page goes on to show.
   if (app.pageMode === "sim" && next !== "sim") cancelSim({ announce: false });
@@ -63,8 +63,7 @@ function setPageMode(mode) {
   else app.dataEditorText = editor.text;
 
   app.pageMode = next;
-  $("page-data").classList.toggle("active", next === "data");
-  $("page-sim").classList.toggle("active", next === "sim");
+  $("page-mode").checked = next === "sim";
   for (const [id, hidden] of [
     ["viewer-in-wrap", next === "sim"],
     ["viewer-out-wrap", next === "sim"],
@@ -84,9 +83,7 @@ function setPageMode(mode) {
 }
 
 export function wireSimControls() {
-  const flip = () => setPageMode(isSimMode() ? "data" : "sim");
-  $("page-data").onclick = flip;
-  $("page-sim").onclick = flip;
+  $("page-mode").onchange = () => setPageMode($("page-mode").checked ? "sim" : "data");
   buildModeTabs();
   setSimMode(simMode);
 }
