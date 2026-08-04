@@ -456,12 +456,23 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    is what makes the two black boxes match. Sizing the viewers directly does
    not work: a fixed height cannot shrink, and overflows the card. */
 :root { --foot-h: 68px; }
-/* The ripple skeleton's colour ramp, one property per cell in document order,
-   so a future palette swap is one block instead of nine buried literals. */
+/* The ripple skeleton's colour ramp: nine steps from `--accent` to `--rust`,
+   the brand's primary contrast pair, interpolated in oklab rather than srgb
+   so the midpoint stays a clean hue instead of passing through the muddy
+   desaturated grey two saturated colours produce in srgb. Every theme
+   guarantees both endpoints, so the ramp resolves on-brand per family with
+   no per-family list to maintain. One property per step, in document order,
+   keeps the ramp retargetable from this one block. */
 :root {
-  --ripple-1:#00FF87; --ripple-2:#0CFD95; --ripple-3:#17FBA2;
-  --ripple-4:#23F9B2; --ripple-5:#30F7C3; --ripple-6:#3DF5D4;
-  --ripple-7:#45F4DE; --ripple-8:#53F1F0; --ripple-9:#60EFFF;
+  --ripple-1: color-mix(in oklab, var(--accent) 100%, var(--rust) 0%);
+  --ripple-2: color-mix(in oklab, var(--accent) 87.5%, var(--rust) 12.5%);
+  --ripple-3: color-mix(in oklab, var(--accent) 75%, var(--rust) 25%);
+  --ripple-4: color-mix(in oklab, var(--accent) 62.5%, var(--rust) 37.5%);
+  --ripple-5: color-mix(in oklab, var(--accent) 50%, var(--rust) 50%);
+  --ripple-6: color-mix(in oklab, var(--accent) 37.5%, var(--rust) 62.5%);
+  --ripple-7: color-mix(in oklab, var(--accent) 25%, var(--rust) 75%);
+  --ripple-8: color-mix(in oklab, var(--accent) 12.5%, var(--rust) 87.5%);
+  --ripple-9: color-mix(in oklab, var(--accent) 0%, var(--rust) 100%);
 }
 /* A fixed box, not a minimum: the two feet carry different controls, and a foot
    that sized itself to its own would put the two viewers at different heights.
@@ -1049,38 +1060,19 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   display: flex; align-items: center; justify-content: center;
 }
 .viewer-skel[hidden] { display: none; }
-/* A 3x3 grid whose cells ripple in a diagonal sweep, standing in for the image
-   that is coming. `--cell-size` is a clamp rather than a fixed size because the
-   grid sits inside viewers of different sizes, and must read well in the
-   smallest without overflowing it. */
+/* Fills the skeleton edge to edge with voxel-sized cells that ripple in a
+   diagonal sweep, standing in for the image that is coming. `fillSkeleton`
+   (skeleton.js) measures the panel and builds the grid: `1fr` tracks are
+   what let a JS-computed column and row count tile the panel exactly at any
+   size, rather than a fixed cell width that leaves a gap on one edge. */
 .loader {
-  --cell-size: clamp(16px, 8vw, 30px);
-  --cell-spacing: 2px;
-  --cells: 3;
-  --total-size: calc(var(--cells) * (var(--cell-size) + 2 * var(--cell-spacing)));
-  display: flex; flex-wrap: wrap;
-  width: var(--total-size); height: var(--total-size);
-  max-width: 70%; max-height: 70%;
+  position: absolute; inset: 0;
+  display: grid; gap: 2px;
 }
 .cell {
-  flex: 0 0 var(--cell-size); margin: var(--cell-spacing);
-  background-color: transparent; box-sizing: border-box; border-radius: 4px;
+  background-color: transparent; border-radius: 2px;
   animation: 1.5s ripple ease infinite;
 }
-.cell.d-0 { animation-delay: 0ms; }
-.cell.d-1 { animation-delay: 100ms; }
-.cell.d-2 { animation-delay: 200ms; }
-.cell.d-3 { animation-delay: 300ms; }
-.cell.d-4 { animation-delay: 400ms; }
-.cell:nth-child(1) { --cell-color: var(--ripple-1); }
-.cell:nth-child(2) { --cell-color: var(--ripple-2); }
-.cell:nth-child(3) { --cell-color: var(--ripple-3); }
-.cell:nth-child(4) { --cell-color: var(--ripple-4); }
-.cell:nth-child(5) { --cell-color: var(--ripple-5); }
-.cell:nth-child(6) { --cell-color: var(--ripple-6); }
-.cell:nth-child(7) { --cell-color: var(--ripple-7); }
-.cell:nth-child(8) { --cell-color: var(--ripple-8); }
-.cell:nth-child(9) { --cell-color: var(--ripple-9); }
 @keyframes ripple {
   0%   { background-color: transparent; }
   30%  { background-color: var(--cell-color); }

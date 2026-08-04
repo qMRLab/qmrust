@@ -8,6 +8,7 @@ import { clearVolumes, linkViewers, showOutput, syncMapViewControls } from "./vi
 import { plotVoxel } from "./curve.js";
 import { reresolveInputs } from "./model.js";
 import { showNotice } from "./modal.js";
+import { fillSkeleton } from "./skeleton.js";
 
 // `fit_volume` is one synchronous call with no progress callback across the
 // wasm boundary, so real (not simulated) progress requires splitting the work
@@ -79,7 +80,9 @@ export async function fitSlice() {
   showProgress();
   // The fit is about to fill the fitted-map panel, so its skeleton is the one
   // that shows now; the inputs panel already has its dataset and stays put.
-  $("skel-out").hidden = false;
+  const skelOut = $("skel-out");
+  skelOut.hidden = false;
+  fillSkeleton(skelOut);
   $("fit").disabled = true;
   const t0 = performance.now();
   const data = readVolumeSeries(volume, nx, ny, nz, nt);

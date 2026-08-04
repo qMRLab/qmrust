@@ -12,6 +12,7 @@ import { app, nvIn } from "./state.js";
 import { hideDownloadProgress } from "./dataset.js";
 import { openFileModal, openJsonModal } from "./modal.js";
 import { sizeViewers } from "./viewers.js";
+import { fillSkeleton } from "./skeleton.js";
 
 // The track's coloured portion, as a percentage. A single-volume series has no
 // range to travel, so it reads as full rather than empty.
@@ -71,7 +72,9 @@ export function showLoading(note, expect = 12) {
   // A dataset load only fills the Inputs panel, so only its skeleton appears;
   // the fitted map gets its own skeleton from `fitSlice`, while a fit runs.
   // The overlay sits inside its viewer, so the card does not change size.
-  $("skel-in").hidden = false;
+  const skel = $("skel-in");
+  skel.hidden = false;
+  fillSkeleton(skel);
   const tree = $("files-tree");
   tree.replaceChildren();
   $("files-summary").textContent = note;
