@@ -86,7 +86,7 @@ function setPageMode(mode) {
 export function wireSimControls() {
   $("page-mode").onchange = () => setPageMode($("page-mode").checked ? "sim" : "data");
   buildModeTabs();
-  setSimMode(simMode);
+  setSimMode(app.simMode);
 }
 
 // One worker, created on first use. A cancel terminates it, since a wasm call
@@ -138,7 +138,7 @@ export async function runSim() {
   }
   const id = ++pending;
   const yaml = editor.text;
-  const mode = simMode;
+  const mode = app.simMode;
   status(`Simulating ${mode}…`, "busy");
   // No progress is available inside one wasm call, so the bar runs full with
   // its stripes moving: a busy indicator rather than a false measurement.
@@ -171,12 +171,8 @@ export async function runSim() {
   status(`Simulated in ${((performance.now() - t0) / 1000).toFixed(1)} s`, "ok");
 }
 
-// Which simulation a run performs: one of the four modes the core implements.
-// Touched only by this module, so it stays a local rather than shared state.
-let simMode = "single-voxel";
-
 function setSimMode(id) {
-  simMode = id;
+  app.simMode = id;
   for (const b of $("sim-modes").querySelectorAll("button")) {
     const on = b.dataset.mode === id;
     b.classList.toggle("active", on);

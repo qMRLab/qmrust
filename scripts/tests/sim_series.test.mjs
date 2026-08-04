@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   recipeForMode,
   SIM_MODES,
+  simReads,
   statsRows,
   signalSeries,
   singleVoxelSeries,
@@ -32,6 +33,38 @@ test("the four modes the core implements are offered, in the order they answer q
     SIM_MODES.map((m) => m.id),
     ["signal", "single-voxel", "sensitivity", "montecarlo"],
   );
+});
+
+// A mode's form shows the settings its run reads and hides the rest, so these
+// sets must match what the core's `run_*` actually consumes. Asserted as the
+// distinguishing pairs rather than by restating all four lists, which would
+// make the test a second copy of the table it is checking.
+test("each mode reads its own settings and not another mode's", () => {
+  // Every mode forwards from the ground truth, Multi-Voxel included, where it
+  // supplies any parameter that has no distribution.
+  for (const m of SIM_MODES) {
+    assert.ok(simReads(m.id, "params"), `${m.id}: does not read the ground truth`);
+  }
+  // The two mode-specific blocks belong to exactly one mode each.
+  assert.ok(simReads("sensitivity", "sweep"));
+  assert.ok(simReads("montecarlo", "distributions"));
+  for (const id of ["signal", "single-voxel", "montecarlo"]) {
+    assert.ok(!simReads(id, "sweep"), `${id}: offers a sweep it does not read`);
+  }
+  for (const id of ["signal", "single-voxel", "sensitivity"]) {
+    assert.ok(!simReads(id, "distributions"), `${id}: offers distributions it does not read`);
+  }
+  // Signal is the noise-free forward signal, so noise settings would do nothing.
+  for (const key of ["noise", "seed", "trials"]) {
+    assert.ok(!simReads("signal", key), `signal: offers ${key} it does not read`);
+    assert.ok(simReads("single-voxel", key), `single-voxel: does not read ${key}`);
+  }
+});
+
+test("an unknown mode is shown everything rather than an empty form", () => {
+  // Hiding rows for a mode nobody declared would hide the mistake with them.
+  assert.ok(simReads("not-a-mode", "sweep"));
+  assert.ok(simReads("not-a-mode", "distributions"));
 });
 
 test("stats rows come straight from the report's own stats", () => {

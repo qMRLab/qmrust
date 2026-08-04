@@ -109,6 +109,10 @@ export const app = {
   // Which activity the page is showing: "data" fits acquired volumes, "sim"
   // simulates from ground-truth parameters and reads no image data at all.
   pageMode: "data",
+  // Which of the four simulations a run performs. Lives here rather than in
+  // `sim.js` because the recipe form reads it too: a mode shows only the
+  // settings its run consumes, per `SIM_MODES`.
+  simMode: "single-voxel",
   // The recipe text for each page mode, held apart so a reader's edits to one
   // survive switching to the other and back. The live text is always
   // `editor.text`; these are the two parked copies.
@@ -118,11 +122,14 @@ export const app = {
   // for the `sim.noise.type` dropdown. One list, read from the index alone.
   noiseKinds: [],
 
-  // The loaded model's own parameter names (its `param_names()`, from the
-  // bundle payload). A recipe key that matches one of these verbatim is a
-  // symbol the model itself defines, not an ordinary word, so the form must
-  // print it exactly rather than title-casing it into a different symbol.
-  modelParams: [],
+  // The loaded model's own parameters, each mapped to the unit the model
+  // declares for it. A recipe key matching one of these is a symbol the model
+  // itself defines, not an ordinary word, so the form prints it exactly rather
+  // than title-casing it into a different symbol; the unit is the model's to
+  // state, since the same-looking parameter carries different ones across
+  // models. A parameter the model declares without a symbol entry maps to
+  // `null`, and shows no unit rather than a guessed one.
+  modelParams: new Map(),
 };
 
 // A misspelled field must not silently become a new one, leaving the real field

@@ -34,6 +34,7 @@ B_1^{+} = \frac{\left|\arccos\left(\frac{S_{2\alpha}}{2 S_{\alpha}}\right)\right
 | Symbol | Quantity | Unit |
 |---|---|---|
 | `B1` | Relative transmit field | — |
+| `A` | Signal amplitude | — |
 
 ## What the model reads
 

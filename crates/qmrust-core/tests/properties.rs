@@ -151,6 +151,30 @@ fn every_series_model() -> Vec<(&'static str, Box<dyn Model>)> {
         .collect()
 }
 
+/// Every parameter a model fits is documented with a meaning and a unit.
+///
+/// `symbols` is the only place a parameter's unit is stated, and the playground
+/// reads it to label a simulated ground-truth value. A parameter missing from it
+/// is a form row with no unit and a docs page that does not mention a quantity
+/// the model fits. Derived from each model's own `param_names`, so a model added
+/// later is covered without being listed here.
+#[test]
+fn every_fitted_parameter_declares_a_meaning_and_a_unit() {
+    for (name, model) in every_model() {
+        let entry = qmrust_core::registry::all()
+            .iter()
+            .find(|e| e.name == name)
+            .expect("a built model is a registered one");
+        for param in model.param_names() {
+            assert!(
+                entry.doc.symbols.iter().any(|(sym, _, _)| *sym == param),
+                "{name}: fits '{param}' but declares no symbol entry for it, \
+                 so it has no unit to show"
+            );
+        }
+    }
+}
+
 /// Every name a model exports as a BIDS map must be one it actually produces.
 ///
 /// The writer looks each up in the fit result by name; one that is not there is

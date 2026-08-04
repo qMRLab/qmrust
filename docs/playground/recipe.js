@@ -19,6 +19,7 @@ import { mergeSurface, withProtocolComments, stripProtocolComments, readNumbers,
 import { debounce } from "./debounce.js";
 import { inlineCodeHtml } from "./inline-code.js";
 import { fieldHelp, fieldLabel, fieldUnit, groupLabel } from "./labels.js";
+import { simReads } from "./sim-series.js";
 
 // Knob diameter in px, mirrored in `.override-knob`; the pointer guard and the
 // knob's travel both need it as a number.
@@ -140,6 +141,23 @@ const scheduleSurfaceRefresh = debounce(() => {
 // The dotted config path is deliberately not shown: it is the serialization's
 // business, the YAML view already spells it out verbatim, and a reader of the
 // form wants the quantity, not the key that stores it.
+// The hover mark for whatever `path` names, or `null` where nothing explains
+// it. Built as the same `.info` button the panel headings use, which `wireTips`
+// picks up by delegation, so a mark created after startup is covered without
+// wiring. Shared by rows and group titles: a group is a setting a reader can be
+// as unsure about as a field, and the mark has to behave identically on both.
+function infoMark(path) {
+  const help = fieldHelp(path);
+  if (!help) return null;
+  const info = document.createElement("button");
+  info.type = "button";
+  info.className = "info";
+  info.setAttribute("aria-label", help);
+  info.dataset.tip = help;
+  info.innerHTML = icon("info", 12);
+  return info;
+}
+
 function fieldRow(path, widget) {
   const row = document.createElement("div");
   row.className = "field-row";
@@ -158,16 +176,8 @@ function fieldRow(path, widget) {
   // marks aligned down one edge, which reads as "these are the explainable
   // ones" at a glance, and the label text is not pushed around by whether a
   // mark follows it.
-  const help = fieldHelp(path);
-  if (help) {
-    const info = document.createElement("button");
-    info.type = "button";
-    info.className = "info";
-    info.setAttribute("aria-label", help);
-    info.dataset.tip = help;
-    info.innerHTML = icon("info", 12);
-    labelSpan.prepend(info);
-  }
+  const info = infoMark(path);
+  if (info) labelSpan.prepend(info);
   // The symbol and unit sit under the quantity rather than trailing it in
   // parentheses: the name is what a reader scans for, and a row that also
   // carries the BIDS mark was running to three pieces on one line. The second
@@ -365,14 +375,33 @@ function buildWidget(value, path) {
 // every descendant of a locked group as protocol-sourced too (ingest_protocol
 // replaces the whole object), so without this a reader would see the same
 // note once on the group and again on every one of its children.
+// Whether the selected simulation mode reads the block this path names.
+//
+// Only the blocks directly under `sim:` are mode-dependent, and a mode's run
+// consumes just some of them: a sweep range means nothing to Multi-Voxel, and
+// offering one invites an edit that changes nothing about the result. Their
+// children need no test of their own, since a hidden group never builds them.
+// Everything outside `sim:` is unaffected.
+function simModeReads(path) {
+  if (path.length !== 2 || path[0] !== "sim") return true;
+  return simReads(app.simMode, path[1]);
+}
+
 function buildRows(container, rows, parentLocked = false) {
   for (const row of rows) {
+    // Filtered out of the tree rather than hidden with a class: there is no
+    // `display` rule left to defeat the hiding, and a control that is absent
+    // cannot be focused, tabbed to, or read by a screen reader.
+    if (!simModeReads(row.path)) continue;
     if (row.children) {
       const group = document.createElement("div");
       group.className = "group";
       const title = document.createElement("div");
       title.className = "group-title";
-      title.textContent = groupLabel(row.key);
+      title.textContent = groupLabel(row.key, app.modelParams);
+      // Ahead of the heading text, where a row's mark also sits.
+      const groupInfo = infoMark(row.path);
+      if (groupInfo) title.prepend(groupInfo);
       const fields = document.createElement("div");
       fields.className = "form-fields";
       group.append(title, fields);

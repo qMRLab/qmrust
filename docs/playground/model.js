@@ -224,7 +224,13 @@ export async function loadModel(name) {
   $("curve-note").textContent = "";
   clearCurve();
   app.enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
-  app.modelParams = meta.params ?? [];
+  // The model's own parameters against the unit it declares for each. `params`
+  // says which parameters exist; `symbols` says what they mean and in what
+  // unit, so the two are joined here once rather than at every label.
+  const declaredUnits = new Map((meta.symbols ?? []).map((s) => [s.name, s.unit]));
+  app.modelParams = new Map(
+    (meta.params ?? []).map((p) => [p.name, declaredUnits.get(p.name) ?? null]),
+  );
   seedSimRecipe(meta);
   app.wheelAccum = 0;
   app.dataset = null;

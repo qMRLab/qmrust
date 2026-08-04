@@ -227,7 +227,10 @@ pub fn all() -> &'static [ModelEntry] {
                     fraction of the nominal one — and feeds the B1 correction \
                     of models such as MTsat and VFA.",
                 equation: r"B_1^{+} = \frac{\left|\arccos\left(\frac{S_{2\alpha}}{2 S_{\alpha}}\right)\right|}{\alpha}",
-                symbols: &[("B1", "Relative transmit field", "")],
+                symbols: &[
+                    ("B1", "Relative transmit field", ""),
+                    ("A", "Signal amplitude", ""),
+                ],
                 citations: &["insko1993"],
                 source_dir: "crates/qmrust-core/src/models/b1_dam",
                 recipes: Recipes {

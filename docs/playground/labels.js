@@ -147,6 +147,8 @@ const HELP = new Map([
     + "rate, removing one poorly-determined parameter."],
   ["qmt_spgr.fitting.use_r1map_to_constrain_r1f", "Take R1f from a supplied "
     + "R1 map rather than fitting it, when the dataset provides one."],
+  ["sim.params", "The parameter values being simulated. Every mode forwards a "
+    + "signal from these, fits it back, and reports how close it got."],
   ["sim.noise.type", "Rician matches magnitude images, where noise no longer "
     + "averages out at low signal. Gaussian suits complex data; none simulates "
     + "a noise-free acquisition."],
@@ -170,6 +172,35 @@ const HELP = new Map([
     + "this parameter's scatter to a line."],
 ]);
 
+// A parameter's unit is the model's to declare, not this table's: the same
+// symbol carries different units across models. What belongs here is only how a
+// declared unit is written for a reader, following the same rule as the rest of
+// the table: the word, then its abbreviation, so the line reads on its own.
+//
+// An empty declared unit is information, not a gap. An amplitude that scales
+// with receiver gain has no physical unit, and `a.u.` says exactly that rather
+// than leaving the row looking unfinished. A unit with no entry here still
+// shows, bare in parentheses, so a newly declared one is never silently
+// dropped from the form.
+const PARAM_UNITS = new Map([
+  ["", "arbitrary units (a.u.)"],
+  ["s", "seconds (s)"],
+  ["%", "percent (%)"],
+  ["1/s", "per second (1/s)"],
+  ["Hz", "hertz (Hz)"],
+  ["deg", "degrees (°)"],
+  ["T", "tesla (T)"],
+]);
+
+// The statistics that describe a distributed parameter rather than a quantity
+// of their own, so their unit is the parameter's.
+const DISTRIBUTION_STATS = new Set(["mean", "std"]);
+
+function paramUnit(declared) {
+  if (declared === null || declared === undefined) return null;
+  return PARAM_UNITS.get(declared) ?? `(${declared})`;
+}
+
 function titleCase(key) {
   return key
     .split("_")
@@ -181,36 +212,46 @@ function titleCase(key) {
 /**
  * The `[quantity, symbol]` pair for a field, or a title-cased fallback.
  *
- * `paramNames` is the loaded model's own parameter list (`param_names()`): a
- * key that matches one of them verbatim is a symbol, not a word, so it must
- * print exactly as the model spells it. `a` and `A`, or `kr`, are meaningless
- * once title-cased, and two models can give the same-looking key different
- * casing for different quantities (`mt_sat`'s `A` is not `inversion_recovery`'s
- * `a`).
+ * `params` maps the loaded model's own parameters to the unit it declares for
+ * each. A key matching one of them is a symbol, not a word, so it must print
+ * exactly as the model spells it: `a` and `A`, or `kr`, are meaningless once
+ * title-cased, and two models can give the same-looking key different casing
+ * for different quantities (`mt_sat`'s `A` is not `inversion_recovery`'s `a`).
+ * Its unit comes from that same declaration rather than from the tables here,
+ * which know nothing of which model is loaded.
  */
-function entry(path, paramNames = []) {
+function entry(path, params = new Map()) {
   const dotted = path.join(".");
   const key = path.at(-1) ?? "";
-  if (paramNames.includes(key)) return [key, BY_PATH.get(dotted)?.[1] ?? BY_KEY.get(key)?.[1] ?? null];
+  if (params.has(key)) return [key, paramUnit(params.get(key))];
+  // A distribution's statistics describe the parameter their group names, so
+  // they carry that parameter's unit rather than one of their own: the mean of a
+  // T1 is a time, and its standard deviation is a spread of times.
+  const parent = path.at(-2) ?? "";
+  if (DISTRIBUTION_STATS.has(key) && params.has(parent)) {
+    return [BY_KEY.get(key)[0], paramUnit(params.get(parent))];
+  }
   return BY_PATH.get(dotted) ?? BY_KEY.get(key) ?? [titleCase(key), null];
 }
 
 /**
  * The quantity a config field names, given its dotted path segments.
- * `["mtw", "flip_angle"]` → `"Flip Angle"`. `paramNames` is the loaded model's
- * own parameter list, so a leaf that names one of them prints as that exact
- * symbol.
+ * `["mtw", "flip_angle"]` → `"Flip Angle"`. `params` maps the loaded model's
+ * parameters to their declared units, so a leaf that names one of them prints
+ * as that exact symbol.
  */
-export function fieldLabel(path, paramNames) {
-  return entry(path, paramNames)[0];
+export function fieldLabel(path, params) {
+  return entry(path, params)[0];
 }
 
 /**
- * Its symbol and unit as a methods section would write them, or `null` for an
- * option with no physical dimension. `["inversion_times"]` → `"TI (s)"`.
+ * Its symbol and unit as a methods section would write them, or `null` where
+ * there is no unit to state. `["inversion_times"]` → `"TI (s)"`; a model
+ * parameter gets the unit that model declares, `["sim", "params", "T1"]` →
+ * `"seconds (s)"`.
  */
-export function fieldUnit(path, paramNames) {
-  return entry(path, paramNames)[1];
+export function fieldUnit(path, params) {
+  return entry(path, params)[1];
 }
 
 /**
@@ -255,6 +296,13 @@ const GROUP_TITLES = new Map([
   ["sweep", "Sensitivity Sweep"],
 ]);
 
-export function groupLabel(key) {
+/**
+ * A group can also be named after a model parameter, as each entry under
+ * `sim.distributions` is. Those keep the model's own casing for the same reason
+ * a field does: `a` title-cased is `A`, which another model uses for a
+ * different quantity.
+ */
+export function groupLabel(key, params = new Map()) {
+  if (params.has(key)) return key;
   return GROUP_TITLES.get(key) ?? titleCase(key);
 }

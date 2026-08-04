@@ -12,12 +12,33 @@ export function recipeForMode(mode, { dataText, simText }) {
 // The four modes, in the order they answer questions about a model: what does
 // it predict, can the fit recover it, where does it break down, how does it
 // behave over a population.
+// `reads` is the set of blocks under `sim:` the mode's run actually consumes,
+// taken from what the core's matching `run_*` reaches for. The form shows those
+// and hides the rest, so a reader is never offered a setting the run will
+// ignore: a sweep range means nothing to Multi-Voxel, and editing one there
+// looks like it should change the result.
+//
+// `params` is in every list because every mode starts from the ground truth,
+// Multi-Voxel included, where it supplies any parameter that has no
+// distribution. `signal` is the noise-free forward signal, so it reads nothing
+// else.
 export const SIM_MODES = [
-  { id: "signal", label: "Signal" },
-  { id: "single-voxel", label: "Voxel" },
-  { id: "sensitivity", label: "Sensitivity" },
-  { id: "montecarlo", label: "Multi-Voxel" },
+  { id: "signal", label: "Signal", reads: ["params"] },
+  { id: "single-voxel", label: "Voxel", reads: ["params", "noise", "seed", "trials"] },
+  { id: "sensitivity", label: "Sensitivity", reads: ["params", "noise", "seed", "trials", "sweep"] },
+  { id: "montecarlo", label: "Multi-Voxel", reads: ["params", "noise", "seed", "trials", "distributions"] },
 ];
+
+/**
+ * Whether the block `key` under `sim:` is read by `mode`.
+ *
+ * An unrecognised mode reads everything: hiding rows on behalf of a mode
+ * nobody declared would hide the evidence of the mistake along with them.
+ */
+export function simReads(mode, key) {
+  const declared = SIM_MODES.find((m) => m.id === mode);
+  return declared ? declared.reads.includes(key) : true;
+}
 
 // The stats table's rows. The core reports one entry per parameter its fitter
 // actually estimates, so a parameter the model declares but does not report
