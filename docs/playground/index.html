@@ -29,16 +29,27 @@
   </span>
   <span id="status" class="navbar-status busy">Starting…</span>
   <div class="navbar-right">
-    <a class="navbar-link" href="https://qmrlab.org/qmrust" target="_blank" rel="noopener"
-       title="Documentation"><span data-icon="book-text" data-icon-size="25"></span></a>
-    <a class="navbar-link" href="https://github.com/qmrlab/qmrust" target="_blank" rel="noopener"
-       title="Source on GitHub"><span data-icon="git-compare-arrows" data-icon-size="25"></span></a>
-    <a class="navbar-link" href="https://qmrlab.org/mooc" target="_blank" rel="noopener"
-       title="qMRI course (MOOC)"><span data-icon="graduation-cap" data-icon-size="25"></span></a>
-    <span class="navbar-rule" aria-hidden="true"></span>
-    <button class="navbar-link" id="cite-open" type="button"
-            title="Cite this work"><span data-icon="quote" data-icon-size="25"></span></button>
-    <span class="navbar-rule" aria-hidden="true"></span>
+    <!-- Where to go, and how to credit it: the items a phone folds behind the
+         hamburger. One home each — `display: contents` leaves them inline navbar
+         items on a wide screen, and the narrow rule turns this same wrapper into
+         the dropdown, so nothing is restated for mobile. Each carries its name
+         as text for that panel, hidden while it is a glyph in the bar. -->
+    <div class="navbar-more" id="navbar-more">
+      <a class="navbar-link" href="https://qmrlab.org/qmrust" target="_blank" rel="noopener"
+         title="Documentation"><span data-icon="book-text" data-icon-size="25"></span><span
+         class="navbar-word">Documentation</span></a>
+      <a class="navbar-link" href="https://github.com/qmrlab/qmrust" target="_blank" rel="noopener"
+         title="Source on GitHub"><span data-icon="git-compare-arrows" data-icon-size="25"></span><span
+         class="navbar-word">Source on GitHub</span></a>
+      <a class="navbar-link" href="https://qmrlab.org/mooc" target="_blank" rel="noopener"
+         title="qMRI course (MOOC)"><span data-icon="graduation-cap" data-icon-size="25"></span><span
+         class="navbar-word">qMRI course (MOOC)</span></a>
+      <span class="navbar-rule" aria-hidden="true"></span>
+      <button class="navbar-link" id="cite-open" type="button"
+              title="Cite this work"><span data-icon="quote" data-icon-size="25"></span><span
+              class="navbar-word">Cite this work</span></button>
+      <span class="navbar-rule" aria-hidden="true"></span>
+    </div>
     <!-- The select stays a real select — native keyboard, native mobile picker —
          and only its appearance is replaced: it sits transparent over the glyph,
          which is the only way an icon-sized control can also be a <select>,
@@ -53,6 +64,11 @@
       <button id="mode-light" type="button" data-icon="sun" data-icon-size="14"></button>
       <button id="mode-dark" type="button" data-icon="moon" data-icon-size="14"></button>
     </div>
+    <!-- Opens the panel above. Present only on a narrow screen, where the row
+         would otherwise run off the side of the page. -->
+    <button class="navbar-link navbar-burger" id="navbar-burger" type="button"
+            aria-expanded="false" aria-controls="navbar-more" aria-label="More"
+            title="More"><span data-icon="menu" data-icon-size="22"></span></button>
   </div>
 </div>
 <div id="fallback" hidden>

@@ -140,6 +140,30 @@ function wireRecipeCollapse() {
   narrow?.addEventListener?.("change", (e) => setRecipeCollapsed(e.matches));
 }
 
+// The hamburger panel. Only reachable on a narrow screen — where the CSS gives
+// the group a box of its own — so nothing here checks the width: on a wide one
+// the button is not rendered and the class it toggles has no effect.
+function wireNavbarMenu() {
+  const panel = $("navbar-more");
+  const btn = $("navbar-burger");
+  const setOpen = (open) => {
+    panel.classList.toggle("open", open);
+    btn.setAttribute("aria-expanded", String(open));
+  };
+  btn.onclick = () => setOpen(!panel.classList.contains("open"));
+  // Picking an item is the end of the errand, and a menu that cannot be
+  // dismissed is a trap.
+  panel.addEventListener("click", (e) => {
+    if (e.target.closest(".navbar-link")) setOpen(false);
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#navbar-more, #navbar-burger")) setOpen(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") setOpen(false);
+  });
+}
+
 // The two always-present viewers, and the state they share.
 function setUpViewers() {
   // Otherwise the canvas backing store renders at 1x and is upscaled by CSS to
@@ -440,6 +464,7 @@ async function main() {
   wireDataDrop();
   wireMeasurements();
   wireModals();
+  wireNavbarMenu();
 
   app.wasm = await loadWasm();
   if (await populateModels()) await loadModel($("model").value);
