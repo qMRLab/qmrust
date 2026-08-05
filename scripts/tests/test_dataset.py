@@ -221,5 +221,45 @@ class TestAuxDiscovery(unittest.TestCase):
             self.assertIn("B1map", coll.aux)
 
 
+class TestCommittedBundlesMatchTheirRecipes(unittest.TestCase):
+    """A committed payload's embedded recipes must still be the recipes on disk.
+
+    Each payload carries its model's three recipes as text, and the playground
+    seeds its editor from them, but the payloads are regenerated only by a
+    figure run that needs the BIDS datasets. So editing a recipe without that run
+    leaves the browser serving a recipe no test ever validated, while the CLI and
+    every Rust property test go on reading the current file. Matching against the
+    recipe directories rather than a name map keeps this independent of how a
+    model's recipe is named.
+    """
+
+    RECIPE_DIRS = {
+        "config": "recipes/non-bids",
+        "config_bids": "recipes/bids",
+        "config_sim": "recipes/sim",
+    }
+
+    def test_every_embedded_recipe_is_a_current_recipe_file(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        payloads = [
+            p for p in sorted((root / "docs/playground/data").glob("*.json"))
+            if "model" in json.loads(p.read_text())
+        ]
+        self.assertTrue(payloads, "no model payloads found, so this proves nothing")
+        for payload in payloads:
+            meta = json.loads(payload.read_text())
+            for key, recipe_dir in self.RECIPE_DIRS.items():
+                on_disk = {f.read_text() for f in (root / recipe_dir).glob("*.yaml")}
+                # `assertTrue`, not `assertIn`: the latter reports the failure by
+                # dumping every recipe in the directory beside the payload's copy,
+                # which buries the one line that says what to do about it.
+                self.assertTrue(
+                    meta[key] in on_disk,
+                    f"{payload.name}: {key} matches no file in {recipe_dir}/ — "
+                    "a recipe changed without the payloads being regenerated "
+                    "(scripts/make_docs_figures.py --bids-dir ...)",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

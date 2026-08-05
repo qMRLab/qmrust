@@ -66,7 +66,12 @@ async function loadModelFromBids(name, meta) {
   // The recipe for BIDS input carries options only; the acquisition comes from
   // the sidecars, via `resolved.protocol_json`.
   app.dataEditorText = meta.config_bids;
-  setEditorText(isSimMode() ? app.simEditorText : meta.config_bids);
+  // Only the data recipe is installed here, and only now, because its protocol
+  // comes from the sidecars resolved just above. Simulate mode was seeded before
+  // the fetch began, and `app.simEditorText` does not track typing — it is
+  // written at seed and at a mode switch — so re-setting the editor here would
+  // discard whatever the reader edited while the dataset was loading.
+  if (!isSimMode()) setEditorText(meta.config_bids);
 
   stage(`Loading ${resolved.data_files.length} volumes…`);
   const parts = resolved.data_files.map((path) => {
@@ -274,7 +279,9 @@ export async function loadModel(name) {
   }
 
   app.dataEditorText = meta.config;
-  setEditorText(isSimMode() ? app.simEditorText : meta.config);
+  // As above: the sim recipe is already in the editor, and only the data recipe
+  // is this path's to install.
+  if (!isSimMode()) setEditorText(meta.config);
   const [nx, ny, nz, nt] = meta.dims;
   let volume, maskVolume;
   try {
