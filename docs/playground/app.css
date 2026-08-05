@@ -281,6 +281,14 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   color: var(--muted); text-decoration: none;
 }
 .navbar-link:hover { color: var(--ink); background: var(--field); }
+/* The foldable group and the control that unfolds it. Wide screens have room for
+   the whole row, so the group is dissolved into it and the hamburger is absent;
+   the narrow rule below is the only place either changes. A name spelled out
+   belongs to the dropdown alone — in the bar the glyph and its tooltip are the
+   label. */
+.navbar-more { display: contents; }
+.navbar-burger { display: none; }
+.navbar-word { display: none; }
 /* At 25px the pack's default 2px stroke reads as heavy beside 14px chrome. */
 .navbar-link .icon { stroke-width: 1; }
 .navbar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -543,6 +551,19 @@ body.sim-mode .seg button.active { color: var(--brass); }
      the model's own data in view first. */
   .drop-wrap { order: 99; grid-column: 1; }
   .collapse-btn { display: inline-flex; }
+  /* Show/Hide joins this row only here, and the logo's width was chosen against
+     a row without it — three rigid items then measure wider than a phone's
+     column, which widens the single grid track and hands the whole page a
+     sideways scroll. A smaller mark buys the room at any usual width, and
+     wrapping is the guarantee: the row can never demand more than its widest
+     item, however narrow the screen. */
+  .recipe-head { flex-wrap: wrap; }
+  .panel-logo { height: 44px; }
+  /* Same guarantee for the frame scrub: a slider with a floor, a label holding
+     8em for its value, and the Segment button together measure wider than the
+     narrowest phones, and the foot is sized by `syncFootHeight` to hold a second
+     row when one appears. */
+  .frame-row { flex-wrap: wrap; }
 }
 
 /* recipe editor */
@@ -630,6 +651,50 @@ body.sim-mode .seg button.active { color: var(--brass); }
    dims and refuses the pointer, and the reason stays reachable as the
    label's own tooltip since a disabled input does not reliably show one. */
 .mode-switch:has(input:disabled) { opacity: .45; cursor: not-allowed; }
+
+/* The navbar on a phone, where the full row runs off the side of the page.
+   Only the two controls that change what the page shows and how it looks keep
+   their place in the bar, each reduced to the single button its two halves were
+   already agreeing on; the links and the citation fold into the hamburger's
+   panel. Declared after the switch and the toggle because it overrides them. */
+@media (max-width: 700px) {
+  .navbar { gap: 8px; padding: 8px 12px; }
+  /* Transient text beside permanent controls: it is the one item that gives up
+     width, so the switch and the right-hand cluster keep theirs whole instead of
+     every item shrinking in proportion and each clipping a little. */
+  .navbar-status {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mode-switch, .navbar-right { flex: none; }
+  .navbar-burger { display: inline-flex; width: 28px; height: 26px; }
+  .navbar-burger[aria-expanded="true"] { color: var(--ink); background: var(--field); }
+  /* The same wrapper, now a panel under the bar's right edge. Glass recipe: see
+     the shared rule with `.menu`. */
+  .navbar-more {
+    display: none; position: absolute; z-index: 60;
+    top: calc(100% + 6px); right: 10px;
+    flex-direction: column; gap: 2px; padding: 4px; border-radius: 10px;
+  }
+  .navbar-more.open { display: flex; }
+  /* Named rows with a tap-sized footprint, rather than the bar's bare glyphs. */
+  .navbar-more .navbar-link {
+    width: auto; height: auto; justify-content: flex-start; gap: 8px;
+    padding: 8px 10px; color: var(--ink-2);
+    font: 500 12px var(--font-ui); white-space: nowrap;
+  }
+  .navbar-more .icon { width: 18px; height: 18px; color: var(--accent); }
+  .navbar-word { display: inline; }
+  /* A rule divided a row; a column is divided already. */
+  .navbar-more .navbar-rule { display: none; }
+  .mode-switch { grid-template-columns: 1fr; }
+  .mode-switch input:not(:checked) ~ span:last-of-type,
+  .mode-switch input:checked ~ span:first-of-type { display: none; }
+  .mode-switch::before { width: calc(100% - 6px); }
+  .mode-switch:has(input:checked)::before,
+  .mode-switch:hover:not(:has(input:checked))::before,
+  .mode-switch:hover:has(input:checked)::before { transform: none; }
+  .seg.seg-icon button:not(.active) { display: none; }
+}
 
 .model-line { margin: 12px 0; color: var(--ink-2); }
 .model-line select { margin-left: 4px; }
@@ -1292,7 +1357,7 @@ body.sim-mode .seg button.active { color: var(--brass); }
 .modal-card.compact .modal-body { flex: 0 1 auto; }
 .modal-card.notice-card { max-width: 46ch; }
 /* Every floating surface (this dialog card, the ROI toolbox, the
-   segmentation menu) wears the tooltip's glass: the panel surface under
+   segmentation menu, the navbar's narrow-screen panel) wears the tooltip's glass: the panel surface under
    half opacity over a heavy blur, an accent-tinted edge, and a shadow that
    combines outer depth, an accent halo and an inset top highlight — see
    `.tip` for why a tinted fill cannot do this instead. A dialog carries far
@@ -1300,7 +1365,7 @@ body.sim-mode .seg button.active { color: var(--brass); }
    72% is still comfortably inside the contrast `--ink` keeps over
    `--panel-2` at any usable alpha, and is what keeps a paragraph legible
    over a moving backdrop where 62% was only ever measured for a few words. */
-.modal-card, .draw-palette, .menu {
+.modal-card, .draw-palette, .menu, .navbar-more {
   background: color-mix(in srgb, var(--panel-2) 72%, transparent);
   -webkit-backdrop-filter: blur(16px) saturate(1.8);
   backdrop-filter: blur(16px) saturate(1.8);

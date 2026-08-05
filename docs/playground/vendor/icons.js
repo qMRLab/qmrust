@@ -70,6 +70,8 @@ const SHAPES = {
     '<circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />',
   "list-collapse":
     '<path d="M10 5h11" /><path d="M10 12h11" /><path d="M10 19h11" /><path d="m3 10 3-3-3-3" /><path d="m3 20 3-3-3-3" />',
+  "menu":
+    '<path d="M4 5h16" /><path d="M4 12h16" /><path d="M4 19h16" />',
   "moon":
     '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />',
   "palette":
