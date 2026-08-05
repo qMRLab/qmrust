@@ -78,14 +78,14 @@ pub use crate::models::qmt_spgr::config::QmtSpgrConfig;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NoiseConfig {
-    /// gaussian | rician | none
+    /// One of the names `sim::noise::NoiseKind` accepts.
     #[serde(rename = "type", default = "def_noise_kind")]
     pub kind: String,
     #[serde(default = "def_snr")]
     pub snr: f64,
 }
 fn def_noise_kind() -> String {
-    "none".to_string()
+    crate::sim::noise::NoiseKind::None.name().to_string()
 }
 fn def_snr() -> f64 {
     100.0
@@ -146,15 +146,24 @@ impl SimConfig {
     /// sim-input requirements are enforced separately, via each model's
     /// `Model::sim_required_aux` (see `sim::model::validate_sim_inputs`).
     pub fn validate(&self) -> Result<()> {
-        match self.noise.kind.as_str() {
-            "none" | "gaussian" | "rician" => {}
-            other => bail!(
-                "sim.noise.type must be none|gaussian|rician, got '{}'",
-                other
-            ),
-        }
-        if self.noise.kind != "none" && self.noise.snr <= 0.0 {
-            bail!("sim.noise.snr must be > 0 when noise is enabled");
+        // NoiseKind is the one home for these names; restating them here is how
+        // the two lists would drift.
+        let kind = crate::sim::noise::NoiseKind::from_str(&self.noise.kind).map_err(|_| {
+            anyhow::anyhow!(
+                "sim.noise.type must be one of {}, got '{}'",
+                crate::sim::noise::noise_kind_names().join("|"),
+                self.noise.kind
+            )
+        })?;
+        // Finite as well as positive: a comparison against zero admits both NaN
+        // (every ordering with NaN is false) and infinity, and neither survives
+        // downstream. `sigma_for` divides by the SNR, so NaN reaches
+        // `Normal::new` and panics the module, and infinity yields sigma zero,
+        // which is a silently noise-free run for a config that asked for noise.
+        if kind != crate::sim::noise::NoiseKind::None
+            && !(self.noise.snr.is_finite() && self.noise.snr > 0.0)
+        {
+            bail!("sim.noise.snr must be a finite value > 0 when noise is enabled");
         }
         if self.trials == 0 {
             bail!("sim.trials must be >= 1");

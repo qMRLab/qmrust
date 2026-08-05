@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import {
   deadCssClasses,
   exportedNames,
+  hiddenDisplayGaps,
   main,
   proseEmDashes,
   readableRuns,
@@ -26,6 +27,53 @@ test("a rule for an element nobody builds is dead", () => {
   const css = ".field-key { display: none; }\n.field-label { opacity: 1; }";
   const sources = ['el.className = "field-label";'];
   assert.deepEqual(deadCssClasses(css, sources), ["field-key"]);
+});
+
+test("a card hidden via a mode-switch loop stays visible if its display rule has no [hidden] override", () => {
+  const html = ['index.html', '<div class="sim-wrap card" id="sim-wrap" hidden></div>'];
+  const script = [
+    "sim.js",
+    `function setPageMode(mode) {
+       const next = mode;
+       for (const [id, hidden] of [
+         ["sim-wrap", next !== "sim"],
+       ]) {
+         $(id).hidden = hidden;
+       }
+     }`,
+  ];
+  const cssWithoutOverride = ".sim-wrap { display: flex; }";
+  assert.equal(
+    hiddenDisplayGaps(cssWithoutOverride, [html], [script]).length,
+    1,
+  );
+  const cssWithOverride = `${cssWithoutOverride}\n.sim-wrap[hidden] { display: none; }`;
+  assert.deepEqual(hiddenDisplayGaps(cssWithOverride, [html], [script]), []);
+
+  // An override inside a breakpoint hides the card only while that breakpoint
+  // matches, so the card is still unhideable at every other width. Only an
+  // unconditional override closes the gap.
+  const cssWithConditionalOverride = `${cssWithoutOverride}
+    @media (max-width: 600px) { .sim-wrap[hidden] { display: none; } }`;
+  assert.equal(
+    hiddenDisplayGaps(cssWithConditionalOverride, [html], [script]).length,
+    1,
+  );
+});
+
+test("a plain $(id).hidden assignment is traced the same way", () => {
+  const html = ['index.html', '<div class="drop-wrap card" id="drop-wrap"></div>'];
+  const script = ["app.js", '$("drop-wrap").hidden = true;'];
+  assert.equal(
+    hiddenDisplayGaps(".drop-wrap { display: flex; }", [html], [script]).length,
+    1,
+  );
+});
+
+test("a card with no display rule at all needs no [hidden] override", () => {
+  const html = ['index.html', '<div class="curve-wrap card" id="curve-wrap"></div>'];
+  const script = ["app.js", '$("curve-wrap").hidden = true;'];
+  assert.deepEqual(hiddenDisplayGaps(".curve-wrap { color: red; }", [html], [script]), []);
 });
 
 test("a class assembled from a template still counts as used", () => {

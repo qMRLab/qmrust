@@ -26,6 +26,27 @@ Live fitting in WebAssembly. Each model ships one downsampled slice from the
 qmrust example dataset.
 :::
 
+## Simulate
+
+Switch the navbar toggle from **Data** to **Simulate** and the recipe card
+holds the model's own sim recipe instead of a dataset's config. Simulation
+reads no image data, so it works whether or not a dataset is loaded. Pick one of
+the four modes (Signal, Voxel, Sensitivity, Multi-Voxel), press **Simulate**,
+and read the chart and stats table that mode produces; see
+[Simulation](guide/simulation.md) for what each mode answers. A sweep runs in
+a background worker so the page stays responsive and cancellable, and the
+numbers match `qmrust sim` exactly: same call, same seed.
+
+**Sensitivity** draws one panel per reported parameter, fitted value against
+the swept input in the parameter's own units, with mean plus or minus one
+standard deviation error bars: the swept parameter's own panel carries a
+diagonal identity line, so a point on it is perfect recovery, while every
+other parameter's panel carries a horizontal line at its constant truth.
+
+**Multi-Voxel** draws two rows per parameter: a per-voxel scatter of fitted
+against input value with a diagonal identity line, and beneath it a histogram
+of that parameter's error with lines at zero and at the mean error.
+
 ## What you are looking at
 
 The bundled slices are downsampled so each payload stays small; a full-volume

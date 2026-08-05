@@ -13,6 +13,10 @@ use qmrust_core::registry::{self, ModelEntry};
 #[derive(Serialize)]
 pub struct Catalog {
     pub models: Vec<ModelCard>,
+    /// Accepted `sim.noise.type` values, from `NoiseKind` itself. A global fact
+    /// rather than a per-model one, so it sits beside `models` rather than in
+    /// each entry.
+    pub noise_kinds: Vec<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -70,7 +74,7 @@ pub struct Symbol {
 pub struct RecipePaths {
     pub bids: String,
     pub non_bids: String,
-    pub sim: Option<String>,
+    pub sim: String,
 }
 
 /// A fit parameter. Bounds are `None` when the model reports a non-finite
@@ -287,7 +291,7 @@ fn card(entry: &ModelEntry, repo_root: &Path) -> Result<ModelCard> {
         recipes: RecipePaths {
             bids: doc.recipes.bids.to_string(),
             non_bids: doc.recipes.non_bids.to_string(),
-            sim: doc.recipes.sim.map(|s| s.to_string()),
+            sim: doc.recipes.sim.to_string(),
         },
         params,
         outputs,
@@ -319,7 +323,10 @@ pub fn build(repo_root: &Path) -> Result<Catalog> {
         .iter()
         .map(|e| card(e, repo_root))
         .collect::<Result<Vec<_>>>()?;
-    Ok(Catalog { models })
+    Ok(Catalog {
+        models,
+        noise_kinds: qmrust_core::sim::noise::noise_kind_names(),
+    })
 }
 
 /// Print the catalog as pretty JSON on stdout.
@@ -339,6 +346,17 @@ mod tests {
     }
 
     #[test]
+    fn catalog_carries_the_noise_kinds_so_the_playground_sees_them() {
+        // The playground offers these as a dropdown, and must not restate them.
+        let cat = build(&repo_root()).unwrap();
+        assert_eq!(
+            cat.noise_kinds,
+            qmrust_core::sim::noise::noise_kind_names(),
+            "the catalog's noise kinds must be NoiseKind's own",
+        );
+    }
+
+    #[test]
     fn catalog_has_one_entry_per_registered_model() {
         let cat = build(&repo_root()).unwrap();
         assert_eq!(cat.models.len(), qmrust_core::registry::all().len());
@@ -354,10 +372,11 @@ mod tests {
         // silent empty page.
         let root = repo_root();
         for e in qmrust_core::registry::all() {
-            for path in [e.doc.recipes.bids, e.doc.recipes.non_bids]
-                .into_iter()
-                .chain(e.doc.recipes.sim)
-            {
+            for path in [
+                e.doc.recipes.bids,
+                e.doc.recipes.non_bids,
+                e.doc.recipes.sim,
+            ] {
                 assert!(
                     root.join(path).exists(),
                     "{}: declared recipe '{}' does not exist",

@@ -304,7 +304,12 @@ or NIfTI dataset into a byte-identical BIDS input for this path. See [`DATA-PIPE
 
 `sim::{run_signal, run_single_voxel, run_sensitivity, run_montecarlo}` build a model
 via the registry and call `model.forward` / `model.fit` directly with an `Aux` derived
-from the `sim:` config block. Reports serialize to JSON.
+from the `sim:` config block. Reports serialize to JSON. `MonteCarloReport` carries
+`per_trial_input` and `per_trial_fitted`, one row per trial and one column per reported
+parameter, columns aligned to `stats`; a trial's error is `per_trial_fitted[t][i] -
+per_trial_input[t][i]`, derived rather than stored, so the pair and its difference cannot
+disagree. `SensitivityReport.points` is one `SweepPoint` per swept value, each carrying
+the full per-parameter `stats` (truth, mean, std) at that point.
 
 ### Browser (wasm)
 
@@ -317,6 +322,27 @@ Exposed API: `list_models`, `fit_voxel`, `forward`, `fit_volume`, `sim`, plus
 requires the threaded build (`wasm-bindgen-rayon`); `fit_voxel`/`forward`/`sim` run on
 the default single-threaded build. Acquisition parameters must be in the config YAML
 passed to the API — there is no `.mat`/BIDS protocol source in the browser.
+
+Every `ModelEntry`'s `Recipes.sim` is a compile-time obligation, not an `Option`: a
+model cannot be registered without a sim recipe, so the playground's Simulate mode and
+`crates/qmrust-core/tests/properties.rs` (which runs all four sim modes off each
+model's declared recipe) both cover a model the moment it is added, with no per-model
+line anywhere else. `NoiseKind` (`qmrust_core::sim::noise`) is the single home for the
+names a `sim.noise.type` field accepts; `SimConfig::validate` delegates to it,
+`qmrust catalog --json` emits the list top-level as `noise_kinds` (not per model), and
+the playground reads that field out of `docs/playground/data/index.json` to populate
+the noise-type dropdown rather than restating the list in JavaScript.
+
+The playground (`docs/playground/`) drives `sim` through three modules kept apart by
+what each owns: `sim.js` wires the Simulate page mode's controls and renders a report
+into the chart and stats table; `sim-worker.js` holds a second, independent wasm
+instance and runs the actual `sim(mode, yaml)` call off the main thread, because a
+sweep of a few thousand fits would otherwise freeze the page and the RNG stream is
+consumed sequentially across trials and sweep points, so the call cannot be chunked
+without drifting from a native run using the same seed; `sim-series.js` is the pure
+report-to-chart-series mapping (four modes in, `{ values, labels }`-shaped series out),
+with no DOM and no wasm, which is what makes it testable under `node --test` the same
+way `sim.js` and the worker cannot be.
 
 ---
 

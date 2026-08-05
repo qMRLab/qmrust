@@ -12,7 +12,7 @@ use anyhow::{bail, Result};
 use rand_distr::{Distribution, Normal};
 
 use crate::config::Config;
-use crate::core::model::{Measurement, MeasurementKind, Model, Sample};
+use crate::core::model::{Measurement, MeasurementKind, Model, Sample, VolumeId};
 use model::{build_model, param_vector, sim_aux, validate_sim_inputs};
 use noise::{add_noise, seeded_rng, sigma_for, NoiseKind};
 use rand::rngs::StdRng;
@@ -78,6 +78,24 @@ fn measurement_values(model: &dyn Model, m: &Measurement) -> Vec<f64> {
     }
 }
 
+/// Extract a measurement's per-sample identities in the same order
+/// `measurement_values` extracts its values, so a value and its identity can
+/// never come apart: `Series` → each sample's own `params`; `Named` → the
+/// model's declared role order (never the map's own, alphabetical, iteration
+/// order).
+fn measurement_ids(model: &dyn Model, m: &Measurement) -> Vec<VolumeId> {
+    match m {
+        Measurement::Named(_) => named_roles(model)
+            .iter()
+            .map(|r| VolumeId::Role(r))
+            .collect(),
+        Measurement::Series(s) => s
+            .iter()
+            .map(|s| VolumeId::Params(s.params.clone()))
+            .collect(),
+    }
+}
+
 /// Apply `add_noise` to a measurement's values, preserving its shape and
 /// identities. Noise is drawn in `measurement_values` order, so the RNG draw
 /// sequence is identical to noising the extracted value vector directly, and
@@ -113,15 +131,32 @@ fn clamp_to_bounds(val: f64, bound: (f64, f64)) -> f64 {
     val.max(lo).min(hi)
 }
 
-pub fn run_signal(cfg: &Config, raw: &serde_yaml::Value) -> Result<SignalReport> {
+/// Resolve the sim block and the model it configures, enforcing every
+/// precondition a simulation depends on: `SimConfig::validate` (noise, trial
+/// count) and the model's own sim-input requirements
+/// (`model::validate_sim_inputs`). Every `run_*` entry point calls this, so no
+/// caller — CLI, wasm, or test — can reach a simulation with an invalid config.
+fn resolve_sim<'a>(
+    cfg: &'a Config,
+    raw: &serde_yaml::Value,
+) -> Result<(&'a crate::config::SimConfig, Box<dyn Model>)> {
     let sim = cfg
         .sim
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no sim block"))?;
+    sim.validate()?;
     let model = build_model(cfg, raw)?;
+    validate_sim_inputs(model.as_ref(), sim)?;
+    Ok((sim, model))
+}
+
+pub fn run_signal(cfg: &Config, raw: &serde_yaml::Value) -> Result<SignalReport> {
+    let (sim, model) = resolve_sim(cfg, raw)?;
     let aux = sim_aux(sim);
     let truth = param_vector(model.as_ref(), sim)?;
-    let signal = measurement_values(model.as_ref(), &model.forward(&truth, &aux));
+    let meas = model.forward(&truth, &aux);
+    let signal = measurement_values(model.as_ref(), &meas);
+    let identities = measurement_ids(model.as_ref(), &meas);
     let names = model.param_names();
     Ok(SignalReport {
         mode: "signal".into(),
@@ -132,19 +167,17 @@ pub fn run_signal(cfg: &Config, raw: &serde_yaml::Value) -> Result<SignalReport>
             .zip(truth.iter().copied())
             .collect(),
         signal,
+        identities,
     })
 }
 
 pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleVoxelReport> {
-    let sim = cfg
-        .sim
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no sim block"))?;
-    let model = build_model(cfg, raw)?;
+    let (sim, model) = resolve_sim(cfg, raw)?;
     let aux = sim_aux(sim);
     let truth = param_vector(model.as_ref(), sim)?;
     let clean_meas = model.forward(&truth, &aux);
     let clean = measurement_values(model.as_ref(), &clean_meas);
+    let identities = measurement_ids(model.as_ref(), &clean_meas);
     let kind = NoiseKind::from_str(&sim.noise.kind)?;
     let sigma = sigma_for(&clean, sim.noise.snr);
     let mut rng = seeded_rng(sim.seed);
@@ -160,6 +193,8 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
     }
     let stats = compute_stats(model.as_ref(), &truth, &per_trial);
     let names = model.param_names();
+    let fitted_params = fitted_to_param_vec(model.as_ref(), &per_trial[0], &truth);
+    let fitted_signal = measurement_values(model.as_ref(), &model.forward(&fitted_params, &aux));
     Ok(SingleVoxelReport {
         mode: "single-voxel".into(),
         model: cfg.model.clone(),
@@ -169,6 +204,9 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
             .zip(truth.iter().copied())
             .collect(),
         noisy_signal: first_noisy,
+        clean_signal: clean,
+        fitted_signal,
+        identities,
         trials: sim.trials,
         fitted_names: model.output_names(),
         stats,
@@ -177,15 +215,11 @@ pub fn run_single_voxel(cfg: &Config, raw: &serde_yaml::Value) -> Result<SingleV
 }
 
 pub fn run_sensitivity(cfg: &Config, raw: &serde_yaml::Value) -> Result<SensitivityReport> {
-    let sim = cfg
-        .sim
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no sim block"))?;
+    let (sim, model) = resolve_sim(cfg, raw)?;
     let sweep = sim
         .sweep
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("sensitivity requires sim.sweep"))?;
-    let model = build_model(cfg, raw)?;
     let aux = sim_aux(sim);
     let base = param_vector(model.as_ref(), sim)?;
     let names = model.param_names();
@@ -241,15 +275,11 @@ pub fn run_sensitivity(cfg: &Config, raw: &serde_yaml::Value) -> Result<Sensitiv
 }
 
 pub fn run_montecarlo(cfg: &Config, raw: &serde_yaml::Value) -> Result<MonteCarloReport> {
-    let sim = cfg
-        .sim
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no sim block"))?;
+    let (sim, model) = resolve_sim(cfg, raw)?;
     let dists = sim
         .distributions
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("montecarlo requires sim.distributions"))?;
-    let model = build_model(cfg, raw)?;
     let aux = sim_aux(sim);
     let base = param_vector(model.as_ref(), sim)?;
     let names = model.param_names();
@@ -300,18 +330,19 @@ pub fn run_montecarlo(cfg: &Config, raw: &serde_yaml::Value) -> Result<MonteCarl
 
     // Stats: bias/rmse against each voxel's own drawn truth (averaged).
     let mut stats = Vec::new();
+    let mut input_columns: Vec<Vec<f64>> = Vec::new();
+    let mut fitted_columns: Vec<Vec<f64>> = Vec::new();
     for (pi, name) in names.iter().enumerate() {
         let Some(fi) = model.output_names().iter().position(|n| n == name) else {
             continue;
         };
-        let errs: Vec<f64> = (0..sim.trials)
-            .map(|t| per_trial_fit[t][fi] - per_trial_truth[t][pi])
-            .collect();
-        let ests: Vec<f64> = per_trial_fit.iter().map(|t| t[fi]).collect();
-        let (mean, std) = mean_std(&ests);
+        let inputs: Vec<f64> = per_trial_truth.iter().map(|t| t[pi]).collect();
+        let fitted: Vec<f64> = per_trial_fit.iter().map(|t| t[fi]).collect();
+        let errs: Vec<f64> = (0..sim.trials).map(|t| fitted[t] - inputs[t]).collect();
+        let (mean, std) = mean_std(&fitted);
         let (bias, _) = mean_std(&errs);
         let rmse = (errs.iter().map(|e| e * e).sum::<f64>() / errs.len().max(1) as f64).sqrt();
-        let truth_mean = mean_std(&per_trial_truth.iter().map(|t| t[pi]).collect::<Vec<_>>()).0;
+        let truth_mean = mean_std(&inputs).0;
         stats.push(ParamStat {
             name: name.to_string(),
             truth: truth_mean,
@@ -320,12 +351,23 @@ pub fn run_montecarlo(cfg: &Config, raw: &serde_yaml::Value) -> Result<MonteCarl
             bias,
             rmse,
         });
+        input_columns.push(inputs);
+        fitted_columns.push(fitted);
     }
+    // stats is one row per reported parameter; the report is one row per trial.
+    let per_trial_input: Vec<Vec<f64>> = (0..sim.trials)
+        .map(|t| input_columns.iter().map(|col| col[t]).collect())
+        .collect();
+    let per_trial_fitted: Vec<Vec<f64>> = (0..sim.trials)
+        .map(|t| fitted_columns.iter().map(|col| col[t]).collect())
+        .collect();
     Ok(MonteCarloReport {
         mode: "montecarlo".into(),
         model: cfg.model.clone(),
         trials: sim.trials,
         stats,
+        per_trial_input,
+        per_trial_fitted,
     })
 }
 
@@ -334,12 +376,9 @@ pub fn run_sim(mode: &str, config: PathBuf, output: PathBuf, plot: Option<PathBu
     let contents = std::fs::read_to_string(&config)
         .map_err(|e| anyhow::anyhow!("Failed to read {:?}: {}", config, e))?;
     let (cfg, raw) = crate::config::parse_config(&contents)?;
-    let sim = cfg
-        .sim
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("config has no 'sim:' block (required for sim)"))?;
-    sim.validate()?;
-    validate_sim_inputs(build_model(&cfg, &raw)?.as_ref(), sim)?;
+    if cfg.sim.is_none() {
+        bail!("config has no 'sim:' block (required for sim)");
+    }
 
     match mode {
         "signal" => {
@@ -355,16 +394,7 @@ pub fn run_sim(mode: &str, config: PathBuf, output: PathBuf, plot: Option<PathBu
             report::print_stats(&format!("single-voxel ({} trials)", r.trials), &r.stats);
             report::write_json(&r, &output)?;
             if let Some(p) = plot {
-                // Rebuild clean + fitted curves for the plot.
-                let model = build_model(&cfg, &raw)?;
-                let aux = sim_aux(sim);
-                let truth = param_vector(model.as_ref(), sim)?;
-                let clean = measurement_values(model.as_ref(), &model.forward(&truth, &aux));
-                // fitted-curve = forward of the first trial's fitted params, mapped by name.
-                let fitted_params = fitted_to_param_vec(model.as_ref(), &r.per_trial[0]);
-                let fitted_curve =
-                    measurement_values(model.as_ref(), &model.forward(&fitted_params, &aux));
-                plot::plot_single_voxel(&clean, &r.noisy_signal, &fitted_curve, &p)?;
+                plot::plot_single_voxel(&r.clean_signal, &r.noisy_signal, &r.fitted_signal, &p)?;
                 eprintln!("wrote plot {:?}", p);
             }
         }
@@ -398,17 +428,24 @@ pub fn run_sim(mode: &str, config: PathBuf, output: PathBuf, plot: Option<PathBu
 /// Map a fitter's output vector back to a param-order vector, filling any
 /// param the fitter doesn't estimate from... the fitted value if present,
 /// else leaving 0.0. Used only to draw the fitted curve.
-fn fitted_to_param_vec(model: &dyn Model, fitted: &[f64]) -> Vec<f64> {
+/// The fit's outputs as a full parameter vector, taking any parameter the model
+/// does not report from `base`. A model may hold a parameter fixed rather than
+/// fit it — `qmt_spgr` fixes `R1f` and `R1r` — and such a parameter is absent
+/// from `output_names` while still being required by `forward`. Filling it with
+/// a placeholder would forward a signal from a parameter set no fit ever
+/// claimed, so the configured value stands in instead.
+fn fitted_to_param_vec(model: &dyn Model, fitted: &[f64], base: &[f64]) -> Vec<f64> {
     let names = model.param_names();
     let fnames = model.output_names();
     names
         .iter()
-        .map(|name| {
+        .enumerate()
+        .map(|(k, name)| {
             fnames
                 .iter()
                 .position(|n| n == name)
                 .map(|i| fitted[i])
-                .unwrap_or(0.0)
+                .unwrap_or(base[k])
         })
         .collect()
 }
@@ -476,6 +513,46 @@ sim:
     }
 
     #[test]
+    fn single_voxel_rejects_zero_trials() {
+        let (cfg, raw) = qmt_cfg("  noise: { type: none }\n  trials: 0\n");
+        assert!(
+            run_single_voxel(&cfg, &raw).is_err(),
+            "zero trials must be rejected before the trial loop, not panic on an empty result",
+        );
+    }
+
+    #[test]
+    fn single_voxel_rejects_zero_snr() {
+        let (cfg, raw) = qmt_cfg("  noise: { type: gaussian, snr: 0.0 }\n  trials: 1\n");
+        assert!(
+            run_single_voxel(&cfg, &raw).is_err(),
+            "an SNR of zero drives sigma to infinity, which must be rejected rather than panic",
+        );
+    }
+
+    #[test]
+    fn single_voxel_carries_the_three_curves_a_recovery_plot_needs() {
+        // Whether the fit recovered the truth is a question about three curves,
+        // so the report carries all three rather than leaving two to be
+        // recomputed by every caller that wants to draw them.
+        let (cfg, raw) = qmt_cfg("  noise: { type: gaussian, snr: 100.0 }\n  trials: 3\n");
+        let r = run_single_voxel(&cfg, &raw).unwrap();
+        let n = r.noisy_signal.len();
+        assert_eq!(r.clean_signal.len(), n, "clean covers every volume");
+        assert_eq!(r.fitted_signal.len(), n, "fitted covers every volume");
+        assert!(
+            r.clean_signal.iter().all(|v| v.is_finite()),
+            "a noise-free forward signal must be finite",
+        );
+        // The clean curve is the forward signal at the truth, so it is not the
+        // noisy one it is plotted against.
+        assert!(
+            r.clean_signal != r.noisy_signal,
+            "noise was requested, so the clean curve must differ from the noisy one",
+        );
+    }
+
+    #[test]
     fn sensitivity_produces_points() {
         let (cfg, raw) =
             qmt_cfg("  trials: 2\n  sweep: { param: F, start: 0.1, stop: 0.2, steps: 3 }\n");
@@ -491,6 +568,51 @@ sim:
         let r = run_montecarlo(&cfg, &raw).unwrap();
         assert_eq!(r.trials, 5);
         assert!(!r.stats.is_empty());
+    }
+
+    #[test]
+    fn montecarlo_reports_each_trials_input_and_fitted_value() {
+        // The scatter of fitted against input is the question this mode answers,
+        // so the pairs it is drawn from travel with the summary rather than being
+        // recomputed by a second path.
+        let (cfg, raw) =
+            qmt_cfg("  trials: 7\n  distributions:\n    F: { mean: 0.15, std: 0.01 }\n");
+        let r = run_montecarlo(&cfg, &raw).unwrap();
+        assert_eq!(r.per_trial_input.len(), 7, "one input row per trial");
+        assert_eq!(r.per_trial_fitted.len(), 7, "one fitted row per trial");
+        for (inputs, fitted) in r.per_trial_input.iter().zip(&r.per_trial_fitted) {
+            assert_eq!(
+                inputs.len(),
+                r.stats.len(),
+                "one input per reported parameter"
+            );
+            assert_eq!(
+                fitted.len(),
+                r.stats.len(),
+                "one fit per reported parameter"
+            );
+        }
+        // The reported bias is the mean of fitted minus input, over the same trials.
+        for (i, s) in r.stats.iter().enumerate() {
+            let mean_err = (0..7)
+                .map(|t| r.per_trial_fitted[t][i] - r.per_trial_input[t][i])
+                .sum::<f64>()
+                / 7.0;
+            assert!(
+                (mean_err - s.bias).abs() < 1e-12,
+                "{}: bias {} is not the mean of fitted minus input {}",
+                s.name,
+                s.bias,
+                mean_err
+            );
+        }
+        // A drawn parameter varies across trials; a fixed one does not.
+        let f = r.stats.iter().position(|s| s.name == "F").unwrap();
+        let first = r.per_trial_input[0][f];
+        assert!(
+            r.per_trial_input.iter().any(|row| row[f] != first),
+            "F is drawn from a distribution, so its input must vary across trials",
+        );
     }
 
     #[test]
@@ -559,6 +681,27 @@ sim:
         // Alphabetical (BTreeMap) order would be [MTw, PDw, T1w] = [2.0, 1.0, 3.0].
         // Declared role order is [T1w, PDw, MTw] = [3.0, 1.0, 2.0].
         assert_eq!(measurement_values(&model, &meas), vec![3.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn measurement_ids_named_follows_declared_role_order_not_alphabetical() {
+        let model = NamedStub;
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("MTw", 2.0);
+        map.insert("PDw", 1.0);
+        map.insert("T1w", 3.0);
+        let meas = Measurement::Named(map);
+        let ids = measurement_ids(&model, &meas);
+        let roles: Vec<&str> = ids
+            .iter()
+            .map(|id| match id {
+                VolumeId::Role(r) => *r,
+                VolumeId::Params(_) => panic!("a Named measurement's ids must all be Role"),
+            })
+            .collect();
+        // Alphabetical (BTreeMap) order would be [MTw, PDw, T1w].
+        // Declared role order is [T1w, PDw, MTw], matching measurement_values.
+        assert_eq!(roles, vec!["T1w", "PDw", "MTw"]);
     }
 
     #[test]

@@ -164,6 +164,44 @@ qmrust fit --data data.nii.gz --mask mask.nii.gz \
 See [Fitting without BIDS](../../guide/non-bids.md).
 :::
 
+:::{tab-item} Simulation
+:sync: sim
+
+```yaml
+model: mt_sat
+
+# Simulation: the acquisition comes from this file. Per-weighting nominal flip
+# angle (deg) and repetition time (s), as the MTS sidecars carry them.
+mtw: { flip_angle: 6, repetition_time: 0.028 }
+pdw: { flip_angle: 6, repetition_time: 0.028 }
+t1w: { flip_angle: 20, repetition_time: 0.018 }
+
+b1_correction_factor: 0.4
+export_mtr: true
+
+# Ground truth: white matter at 3 T. A is the apparent signal amplitude; MTSAT
+# is in percent, near 5% in white matter and 2% in grey.
+sim:
+  params: { A: 1000.0, T1: 1.0, MTSAT: 3.0 }
+  noise: { type: rician, snr: 100.0 }
+  seed: 0
+  trials: 100
+  sweep: { param: MTSAT, start: 1.0, stop: 8.0, steps: 10 }
+  distributions:
+    T1: { mean: 1.0, std: 0.15 }
+    MTSAT: { mean: 3.0, std: 0.5 }
+```
+
+```bash
+qmrust sim signal       --config recipes/sim/mt_sat_sim.yaml --output signal.json
+qmrust sim single-voxel --config recipes/sim/mt_sat_sim.yaml --output sv.json
+qmrust sim sensitivity  --config recipes/sim/mt_sat_sim.yaml --output sens.json
+qmrust sim montecarlo   --config recipes/sim/mt_sat_sim.yaml --output mc.json
+```
+
+See [Simulation](../../guide/simulation.md).
+:::
+
 :::{tab-item} Browser
 :sync: wasm
 

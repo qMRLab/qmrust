@@ -29,6 +29,18 @@
   "B1",
   "A"
  ],
+ "symbols": [
+  {
+   "name": "B1",
+   "meaning": "Relative transmit field",
+   "unit": ""
+  },
+  {
+   "name": "A",
+   "meaning": "Signal amplitude",
+   "unit": ""
+  }
+ ],
  "outputs": [
   {
    "name": "B1",
@@ -105,5 +117,6 @@
     "B1": 0.9323702485199705
    }
   }
- ]
+ ],
+ "config_sim": "model: b1_dam\n\n# Simulation: the acquisition comes from this file. Nominal flip angles in\n# degrees (BIDS-MRI convention), in acquisition order. The double-angle\n# identity only holds when the second angle is twice the first.\nflip_angles:\n- 60\n- 120\n\n# Ground truth: B1 is a normalized scaling of the nominal flip angle, so 1.0 is\n# a perfectly delivered pulse. A is the signal amplitude.\nsim:\n  params: { B1: 1.0, A: 1000.0 }\n  noise: { type: rician, snr: 100.0 }\n  seed: 0\n  trials: 100\n  sweep: { param: B1, start: 0.6, stop: 1.4, steps: 10 }\n  distributions:\n    B1: { mean: 1.0, std: 0.1 }\n"
 }

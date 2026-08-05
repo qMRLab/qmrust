@@ -58,6 +58,23 @@
   "a",
   "b"
  ],
+ "symbols": [
+  {
+   "name": "T1",
+   "meaning": "Longitudinal relaxation time",
+   "unit": "s"
+  },
+  {
+   "name": "a",
+   "meaning": "Recovery amplitude (absorbs inversion efficiency)",
+   "unit": ""
+  },
+  {
+   "name": "b",
+   "meaning": "Signal offset",
+   "unit": ""
+  }
+ ],
  "outputs": [
   {
    "name": "T1",
@@ -142,5 +159,6 @@
     "T1": 5.0
    }
   }
- ]
+ ],
+ "config_sim": "model: inversion_recovery\n\n# Simulation: the acquisition comes from this file, as for every non-BIDS\n# recipe. All times are in seconds (BIDS/SI).\ninversion_times:\n- 0.350\n- 0.500\n- 0.650\n- 0.800\n- 0.950\n- 1.100\n- 1.250\n- 1.400\n- 1.700\nrepetition_time: 2.5\n\nmethod: magnitude\nt1_range:\n  start: 0.001\n  stop: 5.0\n  step: 0.001\nzoom:\n  iterations: 2\n  points: 21\n\n# Ground truth: white matter at 3 T. The IR signal is a + b*exp(-TI/T1), so a\n# is the recovered magnetization and b is close to -2a for a full inversion.\nsim:\n  params: { T1: 0.9, a: 500.0, b: -1000.0 }\n  noise: { type: rician, snr: 100.0 }\n  seed: 0\n  trials: 100\n  sweep: { param: T1, start: 0.3, stop: 2.5, steps: 10 }\n  distributions:\n    T1: { mean: 0.9, std: 0.15 }\n"
 }

@@ -232,6 +232,200 @@ export function unescapedHtmlSinks(files) {
   return problems;
 }
 
+/**
+ * `css` with its conditional at-rules resolved and every `@keyframes` block
+ * dropped whole (its `0% { ... }` steps are not selector rules, and would
+ * otherwise be misread as one).
+ *
+ * `conditional` says what to do with `@media`/`@supports`: `"flatten"` keeps
+ * their rules but removes the wrapper, so a rule inside a breakpoint is seen
+ * exactly like one outside it; `"drop"` discards them entirely, leaving only
+ * the rules that apply in every environment.
+ */
+export function flattenAtRules(css, conditional = "flatten") {
+  let out = "";
+  let i = 0;
+  while (i < css.length) {
+    const brace = css.indexOf("{", i);
+    if (brace === -1) {
+      out += css.slice(i);
+      break;
+    }
+    const prelude = css.slice(i, brace);
+    if (/@keyframes/.test(prelude)) {
+      let depth = 1;
+      let j = brace + 1;
+      while (j < css.length && depth > 0) {
+        if (css[j] === "{") depth++;
+        else if (css[j] === "}") depth--;
+        j++;
+      }
+      i = j;
+      continue;
+    }
+    if (/^\s*@(media|supports)/.test(prelude)) {
+      let depth = 1;
+      let j = brace + 1;
+      const bodyStart = j;
+      while (j < css.length && depth > 0) {
+        if (css[j] === "{") depth++;
+        else if (css[j] === "}") depth--;
+        if (depth > 0) j++;
+      }
+      if (conditional === "flatten") out += flattenAtRules(css.slice(bodyStart, j), conditional);
+      i = j + 1;
+      continue;
+    }
+    let depth = 1;
+    let j = brace + 1;
+    while (j < css.length && depth > 0) {
+      if (css[j] === "{") depth++;
+      else if (css[j] === "}") depth--;
+      j++;
+    }
+    out += css.slice(i, j);
+    i = j;
+  }
+  return out;
+}
+
+/** The individual selectors in one rule's comma-separated prelude. */
+function preludeSelectors(prelude) {
+  return prelude
+    .split(",")
+    .map((raw) => raw.trim().replace(/\s+/g, " "))
+    .filter(Boolean);
+}
+
+/**
+ * Selectors that set `display`, and selectors that set `display: none` behind
+ * `[hidden]` — the two halves a card's hiding rule needs, both read from the
+ * stylesheet's own rules rather than assumed.
+ *
+ * The halves are read from different views of the stylesheet. A `display` rule
+ * counts wherever it appears, breakpoints included, because it defeats
+ * `[hidden]` in every environment it applies to. Its `[hidden]` override counts
+ * only when unconditional: an override confined to a media query leaves the
+ * element visible everywhere that query does not match, which is the same bug
+ * with a narrower reproduction.
+ */
+function cssDisplayRules(css) {
+  const clean = stripComments(css);
+  const rules = (source) => source.matchAll(/([^{}]+)\{([^{}]*)\}/g);
+  const unconditional = new Set();
+  const hiddenNone = new Set();
+  for (const m of rules(flattenAtRules(clean))) {
+    if (!/display\s*:/.test(m[2])) continue;
+    for (const sel of preludeSelectors(m[1])) {
+      if (!sel.includes("[hidden]")) unconditional.add(sel);
+    }
+  }
+  for (const m of rules(flattenAtRules(clean, "drop"))) {
+    if (!/display\s*:\s*none\b/.test(m[2])) continue;
+    for (const sel of preludeSelectors(m[1])) {
+      if (sel.includes("[hidden]")) hiddenNone.add(sel.replace("[hidden]", "").trim());
+    }
+  }
+  return { unconditional, hiddenNone };
+}
+
+/** `id -> its class list`, read from every element the markup declares both on. */
+function idClassMap(htmlSources) {
+  const map = new Map();
+  for (const [, raw] of htmlSources) {
+    const text = stripComments(raw);
+    for (const tag of text.match(/<[a-zA-Z][^>]*>/g) ?? []) {
+      const idM = tag.match(/\sid="([\w-]+)"/);
+      if (!idM) continue;
+      const classM = tag.match(/\sclass="([^"]*)"/);
+      map.set(idM[1], classM ? classM[1].split(/\s+/).filter(Boolean) : []);
+    }
+  }
+  return map;
+}
+
+/**
+ * One group of CSS selectors per element the scripts toggle `.hidden` on:
+ * the id itself and every class the markup puts on that same id, so that a
+ * `[hidden]` override stated against any one of them still counts.
+ *
+ * Traced patterns: `$("id").hidden = `; a `const x = $("id")` binding
+ * followed by `x.hidden = ` in the same file; a `x.className = "a b"`
+ * literal followed by `x.hidden = `; and the `for (const [id, hidden] of
+ * [["a", ...], ["b", ...]]) { $(id).hidden = hidden; }` shape used to hide a
+ * whole set of cards together. An id assembled at runtime from a prefix
+ * (`` $(`${prefix}-readout`) ``) is out of reach: the prefix and the
+ * resulting element's class never appear together in any script, so nothing
+ * in the source connects them.
+ */
+function hiddenToggleGroups(scripts, idClasses) {
+  const groups = [];
+  const seen = new Set();
+  const addId = (id) => {
+    const key = `#${id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    groups.push([key, ...(idClasses.get(id) ?? []).map((c) => `.${c}`)]);
+  };
+  const addClasses = (classes) => {
+    const key = classes.join(".");
+    if (seen.has(key)) return;
+    seen.add(key);
+    groups.push(classes.map((c) => `.${c}`));
+  };
+  for (const [, raw] of scripts) {
+    const text = stripComments(raw);
+    for (const m of text.matchAll(/\$\(\s*"([\w-]+)"\s*\)\s*\.hidden\s*=/g)) addId(m[1]);
+
+    const idVars = new Map();
+    for (const m of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*\$\(\s*"([\w-]+)"\s*\)/g)) {
+      idVars.set(m[1], m[2]);
+    }
+    const classVars = new Map();
+    for (const m of text.matchAll(/(\w+)\.className\s*=\s*"([^"$]*)"/g)) {
+      classVars.set(m[1], m[2].split(/\s+/).filter(Boolean));
+    }
+    for (const m of text.matchAll(/\b(\w+)\.hidden\s*=/g)) {
+      if (idVars.has(m[1])) addId(idVars.get(m[1]));
+      else if (classVars.has(m[1])) addClasses(classVars.get(m[1]));
+    }
+
+    for (const m of text.matchAll(
+      /for\s*\(\s*const\s*\[\s*(\w+)\s*,\s*\w+\s*\]\s*of\s*\[([\s\S]*?)\]\s*\)\s*\{([\s\S]*?)\}/g,
+    )) {
+      const [, idVar, arrText, body] = m;
+      if (!new RegExp(`\\$\\(\\s*${idVar}\\s*\\)\\s*\\.hidden\\s*=`).test(body)) continue;
+      for (const im of arrText.matchAll(/\[\s*"([\w-]+)"/g)) addId(im[1]);
+    }
+  }
+  return groups;
+}
+
+/**
+ * A card the scripts hide with `.hidden = true` whose stylesheet rule still
+ * shows it.
+ *
+ * `[hidden]` is a UA rule at specificity 0,1,0: any class rule that sets
+ * `display` outranks it, so setting the attribute changes nothing unless the
+ * stylesheet states its own `[hidden]` case. Every element a script hides
+ * this way must carry that companion rule; this check is what verifies it
+ * rather than leaving it to be remembered by convention alone.
+ */
+export function hiddenDisplayGaps(css, htmlSources, scripts) {
+  const { unconditional, hiddenNone } = cssDisplayRules(css);
+  const groups = hiddenToggleGroups(scripts, idClassMap(htmlSources));
+  const problems = [];
+  for (const selectors of groups) {
+    const shown = selectors.find((s) => unconditional.has(s));
+    if (!shown) continue;
+    if (selectors.some((s) => hiddenNone.has(s))) continue;
+    problems.push(
+      `${APP}/app.css: \`${shown}\` sets display unconditionally but has no \`${shown}[hidden]\` rule, so hiding it does nothing`,
+    );
+  }
+  return problems;
+}
+
 // Phrasing that dates a comment to the moment it was written. A reader who did
 // not watch the change cannot use any of it, and it decays into a claim about
 // code that is no longer there.
@@ -291,6 +485,7 @@ export function main() {
       (c) => `${APP}/app.css: \`.${c}\` styles nothing any source builds`,
     ),
     ...unusedExports(scripts, [...scripts, ...markup, ...tests]),
+    ...hiddenDisplayGaps(css, markup, scripts),
     ...proseEmDashes([...scripts, ...markup]),
     ...unescapedHtmlSinks(scripts),
     // Comments are held to this everywhere, not just in the app: the rule is

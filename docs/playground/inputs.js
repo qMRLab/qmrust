@@ -7,11 +7,12 @@
 // chooses how to draw it, and branches on the verdict's shape alone — never on a
 // model, suffix, or parameter name.
 import { icon } from "./vendor/icons.js";
-import { $ } from "./dom.js";
+import { $, identityLabel } from "./dom.js";
 import { app, nvIn } from "./state.js";
-import { hideDownloadProgress, identityLabel } from "./dataset.js";
+import { hideDownloadProgress } from "./dataset.js";
 import { openFileModal, openJsonModal } from "./modal.js";
 import { sizeViewers } from "./viewers.js";
+import { fillSkeleton } from "./skeleton.js";
 
 // The track's coloured portion, as a percentage. A single-volume series has no
 // range to travel, so it reads as full rather than empty.
@@ -68,11 +69,12 @@ export function showInputsTab(tab) {
 // stale list or an empty black canvas. `expect` is the file count if known.
 export function showLoading(note, expect = 12) {
   app.loading = true;
-  // Both viewers shimmer: the fitted map has nothing to show until a fit runs,
-  // and during a load it has no dataset to run against either. The overlays sit
-  // inside their viewers, so neither card changes size.
-  $("skel-in").hidden = false;
-  $("skel-out").hidden = false;
+  // A dataset load only fills the Inputs panel, so only its skeleton appears;
+  // the fitted map gets its own skeleton from `fitSlice`, while a fit runs.
+  // The overlay sits inside its viewer, so the card does not change size.
+  const skel = $("skel-in");
+  skel.hidden = false;
+  fillSkeleton(skel);
   const tree = $("files-tree");
   tree.replaceChildren();
   $("files-summary").textContent = note;

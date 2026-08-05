@@ -29,6 +29,18 @@
   "B1",
   "T1"
  ],
+ "symbols": [
+  {
+   "name": "B1",
+   "meaning": "Relative transmit field",
+   "unit": ""
+  },
+  {
+   "name": "T1",
+   "meaning": "Longitudinal relaxation time",
+   "unit": "s"
+  }
+ ],
  "outputs": [
   {
    "name": "B1",
@@ -105,5 +117,6 @@
     "B1": 0.9942873505087643
    }
   }
- ]
+ ],
+ "config_sim": "model: b1_afi\n\n# Simulation: the acquisition comes from this file. Times in seconds (BIDS/SI),\n# flip angle in degrees (BIDS-MRI convention). Only the ratio of the two\n# repetition times enters the estimate.\nrepetition_times:\n- 0.02\n- 0.10\nflip_angle: 60\n\n# Ground truth: B1 is a normalized scaling of the nominal flip angle, so 1.0 is\n# a perfectly delivered pulse.\nsim:\n  params: { B1: 1.0, T1: 1.0 }\n  noise: { type: rician, snr: 100.0 }\n  seed: 0\n  trials: 100\n  sweep: { param: B1, start: 0.6, stop: 1.4, steps: 10 }\n  distributions:\n    B1: { mean: 1.0, std: 0.1 }\n"
 }

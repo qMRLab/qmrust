@@ -1,5 +1,6 @@
 //! JSON result structs and terminal summaries for simulation runs.
 
+use crate::core::model::VolumeId;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -14,20 +15,35 @@ pub struct ParamStat {
     pub rmse: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// `VolumeId::Role` borrows a `'static str`, which a `Deserialize` impl cannot
+// manufacture from arbitrary input, so a report carrying identities is
+// write-only from Rust's side; the browser reads the JSON directly.
+#[derive(Debug, Clone, Serialize)]
 pub struct SignalReport {
     pub mode: String,
     pub model: String,
     pub params: Vec<(String, f64)>,
     pub signal: Vec<f64>,
+    /// Each sample's identity along the acquisition axis, in the same order
+    /// as `signal`, so a chart can label a point by what it is rather than
+    /// where it sits.
+    pub identities: Vec<VolumeId>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SingleVoxelReport {
     pub mode: String,
     pub model: String,
     pub truth: Vec<(String, f64)>,
     pub noisy_signal: Vec<f64>,
+    /// The noise-free forward signal at the ground truth, and the forward
+    /// signal at the first trial's fitted parameters. The three curves a
+    /// recovery plot needs travel together, so no caller recomputes them.
+    pub clean_signal: Vec<f64>,
+    pub fitted_signal: Vec<f64>,
+    /// Each sample's identity along the acquisition axis, in the same order
+    /// as the three signal curves.
+    pub identities: Vec<VolumeId>,
     pub trials: usize,
     pub fitted_names: Vec<String>,
     pub stats: Vec<ParamStat>,
@@ -54,6 +70,12 @@ pub struct MonteCarloReport {
     pub model: String,
     pub trials: usize,
     pub stats: Vec<ParamStat>,
+    /// Each trial's drawn input and fitted value for each entry of `stats`, in
+    /// the same order: column `i` belongs to `stats[i]`. A summary cannot
+    /// describe the shape of a distribution, and the error is the difference of
+    /// these two, so only the pair travels.
+    pub per_trial_input: Vec<Vec<f64>>,
+    pub per_trial_fitted: Vec<Vec<f64>>,
 }
 
 /// Sample mean and (n-1) standard deviation. std=0 for n<2.
@@ -116,10 +138,22 @@ mod tests {
             model: "qmt_spgr".into(),
             params: vec![("F".into(), 0.16)],
             signal: vec![0.9, 0.8],
+            identities: vec![VolumeId::Role("T1w"), VolumeId::Role("PDw")],
         };
         let json = serde_json::to_string(&r).unwrap();
-        let back: SignalReport = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.signal, r.signal);
-        assert_eq!(back.mode, "signal");
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["signal"], serde_json::json!([0.9, 0.8]));
+        assert_eq!(back["mode"], "signal");
+        // A role identity serializes untagged, as the plain string it names.
+        assert_eq!(back["identities"], serde_json::json!(["T1w", "PDw"]));
+    }
+
+    #[test]
+    fn a_params_identity_serializes_as_a_json_object_not_a_tagged_variant() {
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("InversionTime".to_string(), 0.35);
+        let id = VolumeId::Params(params);
+        let json = serde_json::to_value(&id).unwrap();
+        assert_eq!(json, serde_json::json!({ "InversionTime": 0.35 }));
     }
 }

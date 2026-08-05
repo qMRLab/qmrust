@@ -314,7 +314,7 @@ sim:
   b0: 0.0
   noise: { type: rician, snr: 100.0 }
   seed: 0
-  trials: 200
+  trials: 100
   sweep: { param: F, start: 0.05, stop: 0.30, steps: 10 }
   distributions:
     F:  { mean: 0.15, std: 0.02 }

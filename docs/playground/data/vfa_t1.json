@@ -29,6 +29,18 @@
   "T1",
   "M0"
  ],
+ "symbols": [
+  {
+   "name": "M0",
+   "meaning": "Equilibrium magnetization",
+   "unit": ""
+  },
+  {
+   "name": "T1",
+   "meaning": "Longitudinal relaxation time",
+   "unit": "s"
+  }
+ ],
  "outputs": [
   {
    "name": "T1",
@@ -128,5 +140,6 @@
     "M0": 2194.8853412259723
    }
   }
- ]
+ ],
+ "config_sim": "model: vfa_t1\n\n# Simulation: the acquisition comes from this file. Flip angles in degrees\n# (BIDS-MRI convention), times in seconds (BIDS/SI).\nflip_angles:\n- 3\n- 20\nrepetition_time: 0.015\n\nfit_type: linear\n\n# Ground truth: white matter at 3 T, T1 near 1 s.\nsim:\n  params: { T1: 1.0, M0: 1000.0 }\n  noise: { type: rician, snr: 100.0 }\n  seed: 0\n  trials: 100\n  sweep: { param: T1, start: 0.4, stop: 3.0, steps: 10 }\n  distributions:\n    T1: { mean: 1.0, std: 0.2 }\n"
 }

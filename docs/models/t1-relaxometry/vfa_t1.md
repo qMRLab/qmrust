@@ -157,6 +157,42 @@ qmrust fit --data data.nii.gz --mask mask.nii.gz \
 See [Fitting without BIDS](../../guide/non-bids.md).
 :::
 
+:::{tab-item} Simulation
+:sync: sim
+
+```yaml
+model: vfa_t1
+
+# Simulation: the acquisition comes from this file. Flip angles in degrees
+# (BIDS-MRI convention), times in seconds (BIDS/SI).
+flip_angles:
+- 3
+- 20
+repetition_time: 0.015
+
+fit_type: linear
+
+# Ground truth: white matter at 3 T, T1 near 1 s.
+sim:
+  params: { T1: 1.0, M0: 1000.0 }
+  noise: { type: rician, snr: 100.0 }
+  seed: 0
+  trials: 100
+  sweep: { param: T1, start: 0.4, stop: 3.0, steps: 10 }
+  distributions:
+    T1: { mean: 1.0, std: 0.2 }
+```
+
+```bash
+qmrust sim signal       --config recipes/sim/vfa_t1_sim.yaml --output signal.json
+qmrust sim single-voxel --config recipes/sim/vfa_t1_sim.yaml --output sv.json
+qmrust sim sensitivity  --config recipes/sim/vfa_t1_sim.yaml --output sens.json
+qmrust sim montecarlo   --config recipes/sim/vfa_t1_sim.yaml --output mc.json
+```
+
+See [Simulation](../../guide/simulation.md).
+:::
+
 :::{tab-item} Browser
 :sync: wasm
 

@@ -235,6 +235,7 @@ button.primary {
   box-shadow: 0 0 14px var(--glow);
 }
 button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.primary.cancel { background: var(--rust); }
 #status { color: var(--muted); }
 
 #fallback {
@@ -255,11 +256,12 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .navbar-status { font-size: 13.5px; }
 /* Indeterminate loading, along the navbar's lower edge: a gradient segment
-   sweeping on a loop. It says "still working" without claiming progress, which
-   is the honest signal while a stage has no total to measure against — the ring
-   beside the status takes over whenever a percentage actually exists.
-   Animating `background-position` rather than a child's transform keeps it to
-   one pseudo-element with nothing to clip. */
+   sweeping on a loop. It says "still working" without claiming progress, and is
+   raised by every long stage — a download, a fit, a simulation, a segmentation —
+   because it is the only busy signal in view no matter which panel the reader is
+   watching. The determinate readouts each sit in one place and report the amount
+   alongside it. Animating `background-position` rather than a child's transform
+   keeps it to one pseudo-element with nothing to clip. */
 .navbar.loading::after {
   content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
   background-image: linear-gradient(90deg, transparent, var(--accent), transparent);
@@ -317,12 +319,12 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
 /* A menu anchored to the control that opens it. Fixed rather than absolute, so it
    escapes the card's `overflow: hidden` the way the drawing palette does — its
-   position is computed from the button's own rect. */
+   position is computed from the button's own rect. Glass recipe: see the
+   shared rule below. */
 .menu {
   position: fixed; z-index: 60;
   display: flex; flex-direction: column; gap: 2px; padding: 4px;
-  background-color: var(--panel); background-image: var(--grad-soft);
-  border: var(--border-w) solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+  border-radius: 10px;
 }
 .menu[hidden] { display: none; }
 .menu-item {
@@ -455,6 +457,19 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    is what makes the two black boxes match. Sizing the viewers directly does
    not work: a fixed height cannot shrink, and overflows the card. */
 :root { --foot-h: 68px; }
+/* The graph paper's ruling pitch. One square is about a line of the stats table
+   below the chart, which is what keeps the paper reading as a background rather
+   than as a texture. */
+:root { --paper-step: 22px; }
+/* Simulating is gold, fitting acquired data is not: the mode changes what the
+   numbers on screen *are* — ground truth the reader chose rather than a
+   measurement — and that deserves a cue outside the switch that set it. Gold is
+   `--brass`, which every theme already guarantees, so the cue retargets per
+   family with no per-theme list. Stated as one block, so the set of things that
+   turn gold is readable in one place. */
+body.sim-mode .recipe-card,
+body.sim-mode .sim-wrap { border-color: color-mix(in srgb, var(--brass) 55%, var(--line)); }
+body.sim-mode .seg button.active { color: var(--brass); }
 /* A fixed box, not a minimum: the two feet carry different controls, and a foot
    that sized itself to its own would put the two viewers at different heights.
    `syncFootHeight` sets the value to the taller foot's content, so the box holds
@@ -466,6 +481,39 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   grid-column: 2 / span 2; grid-row: 2;
   display: flex; flex-direction: column; min-height: 0;
 }
+/* Simulate mode replaces the whole right-hand region: there are no viewers to
+   show, and a sweep needs the room a single card can give it. */
+.sim-wrap {
+  grid-column: 2 / span 2; grid-row: 1 / span 2;
+  display: flex; flex-direction: column; min-height: 0;
+  /* Graph paper, because what this panel holds is plotted rather than imaged:
+     two hairline rulings over the card's own fill, in `--brass` at low mix so
+     they read as paper rather than as a chart's own gridlines. The charts draw
+     no background, so the ruling shows through behind the curves, which is the
+     point of it. `background-attachment: local` pins the ruling to the card, so
+     a scrolling stats table does not drag the paper with it. */
+  background-image:
+    repeating-linear-gradient(to right,
+      color-mix(in srgb, var(--brass) 12%, transparent) 0 1px, transparent 1px var(--paper-step)),
+    repeating-linear-gradient(to bottom,
+      color-mix(in srgb, var(--brass) 12%, transparent) 0 1px, transparent 1px var(--paper-step));
+  background-attachment: local;
+}
+.sim-chart { flex: 1 1 auto; min-height: 220px; }
+.sim-note { color: var(--muted); font-size: 11px; padding: 2px 4px 6px; }
+.sim-table { overflow: auto; max-height: 40%; }
+.sim-table table { border-collapse: collapse; width: 100%; font-size: 11px; }
+.sim-table th, .sim-table td {
+  text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.sim-table th { color: var(--muted); font-weight: 500; }
+.sim-table td:first-child, .sim-table th:first-child { text-align: left; }
+/* `[hidden]` is a UA rule at specificity 0,1,0, so any class that sets
+   `display` defeats it. Every card the page-mode switch toggles therefore
+   states its own hidden case. */
+.sim-wrap[hidden], .viewer-in-wrap[hidden], .viewer-out-wrap[hidden],
+.curve-wrap[hidden], .drop-wrap[hidden] { display: none; }
 .drop-wrap { flex: 0 0 auto; }
 @media (max-height: 620px) {
   body { height: auto; min-height: 100dvh; overflow: auto; }
@@ -480,7 +528,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
      the recipe: `flex: 1 1 0` with no height to distribute collapses to nothing
      while its content spills over the cards below. */
   .left-col { display: contents; }
-  .viewer-in-wrap, .viewer-out-wrap, .curve-wrap, .recipe-card, .fit-strip {
+  .viewer-in-wrap, .viewer-out-wrap, .curve-wrap, .recipe-card, .fit-strip, .sim-wrap {
     grid-column: 1; grid-row: auto;
   }
   /* Everything sizes to its content and the page scrolls, rather than dividing
@@ -522,6 +570,66 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    specificity, so a single class would keep their word-sized padding. */
 .seg.seg-icon { padding: 2px; }
 .seg.seg-icon button { padding: 4px 8px; }
+
+/* The data/simulate switch: a single checkbox behind two label spans, laid
+   out as a two-column grid so each span owns a half. `isolation: isolate`
+   gives the label its own stacking context, so the pill and track (`z-index:
+   -1`/`-2`) sit below the spans without reaching past the switch itself.
+   The input is real and focusable, just visually reduced to a point — a
+   native <label> forwards a click or a Space on the focused control to it
+   regardless, which is what makes either half, or the label's own padding,
+   toggle it. */
+.mode-switch {
+  position: relative; isolation: isolate; cursor: pointer;
+  display: grid; grid-template-columns: 1fr 1fr; padding: 3px;
+  /* Transparent: the visible track border is `::after`'s, drawn one layer
+     behind. This one only claims the same box-model space a real border
+     would, so the switch matches a `.seg` toggle's height pixel for pixel. */
+  border: 1px solid transparent;
+}
+.mode-switch input {
+  position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0;
+  pointer-events: none;
+}
+.mode-switch > span {
+  position: relative; z-index: 1; text-align: center;
+  padding: 5px 12px; font: 600 12px var(--font-ui);
+  color: var(--muted); opacity: .75;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  transition: opacity .3s ease .15s, color .3s ease .15s;
+}
+.mode-switch > span:hover { opacity: 1; transition-duration: 0s; }
+.mode-switch input:not(:checked) ~ span:first-of-type,
+.mode-switch input:checked ~ span:last-of-type {
+  color: var(--ink); opacity: 1;
+}
+/* Track, one layer behind the pill. Focus expands it outward rather than
+   drawing a separate ring, since the pill already occupies the inside. */
+.mode-switch::after {
+  content: ""; position: absolute; z-index: -2; inset: 0;
+  border-radius: 999px; background: var(--panel-2);
+  border: 1px solid var(--line);
+  transition: inset .15s ease;
+}
+.mode-switch:focus-within::after { inset: -0.25rem; }
+/* The pill: sized to one column and slid a full pill-width to cross to the
+   other half, so the motion is the same distance in either direction without
+   depending on the switch's own width. The spring overshoots on the way in,
+   which is what tells a reader the action landed rather than merely moved. */
+.mode-switch::before {
+  content: ""; position: absolute; z-index: -1; top: 3px; bottom: 3px; left: 3px;
+  width: calc(50% - 5px); border-radius: 999px;
+  background-color: var(--panel); background-image: var(--grad-soft);
+  box-shadow: var(--shadow);
+  transition: transform .5s cubic-bezier(0.47, 1.64, 0.41, 0.8);
+}
+.mode-switch:has(input:checked)::before { transform: translateX(100%); }
+.mode-switch:hover:not(:has(input:checked))::before { transform: translateX(5%); }
+.mode-switch:hover:has(input:checked)::before { transform: translateX(calc(100% - 5%)); }
+/* Disabled means the payload has nothing to switch to: the whole control
+   dims and refuses the pointer, and the reason stays reachable as the
+   label's own tooltip since a disabled input does not reliably show one. */
+.mode-switch:has(input:disabled) { opacity: .45; cursor: not-allowed; }
 
 .model-line { margin: 12px 0; color: var(--ink-2); }
 .model-line select { margin-left: 4px; }
@@ -667,6 +775,22 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   font: 700 11px var(--font-mono); text-transform: uppercase; letter-spacing: .07em;
   color: var(--muted); margin-bottom: 8px;
 }
+/* The simulation block is gold, like the panel it drives and the card around it:
+   what a reader sets under here is ground truth they chose, not a measurement
+   read off a dataset, and that difference is worth seeing without reading a
+   label. Keyed off the group's own name rather than the page mode, because the
+   block is gold for what it is — a recipe declaring a simulation anywhere would
+   be marked the same way.
+
+   The nested groups are included, so Ground Truth, Noise and the rest sit in the
+   same family instead of leaving neutral boxes patched into a tinted one. The
+   tint is weak enough that `--ink` on it stays above 10:1 in every theme, and
+   `--brass` clears the mark floor it is already held to. */
+.group[data-group="sim"], .group[data-group="sim"] .group {
+  border-color: color-mix(in srgb, var(--brass) 55%, var(--line));
+  background: color-mix(in srgb, var(--brass) 6%, var(--panel-2));
+}
+.group[data-group="sim"] .group-title { color: var(--brass); }
 .group .form-fields { gap: 8px; }
 .field-row {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
@@ -851,7 +975,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
    a placeholder wants either way; 26 % lands around 1.7–2.2:1 across the six
    themes: clearly present, still obviously not text. A band travelling across
    says "coming" in a way a pulse alone does not. */
-@keyframes shimmer { 0% { opacity: 0.35; } 50% { opacity: 0.75; } 100% { opacity: 0.35; } }
 @keyframes skel-sweep {
   from { background-position: -60% 0; }
   to { background-position: 160% 0; }
@@ -888,8 +1011,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   position: fixed; top: 96px; left: 12px; z-index: 60;
   display: flex; flex-direction: column; gap: 6px; width: 88px;
   padding: 7px; border-radius: var(--radius);
-  background: color-mix(in srgb, var(--panel) 90%, transparent);
-  border: var(--border-w) solid var(--line); box-shadow: var(--shadow);
 }
 .draw-palette[hidden] { display: none; }
 .draw-head {
@@ -963,14 +1084,62 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   display: flex; align-items: center; justify-content: center;
 }
 .viewer-skel[hidden] { display: none; }
-/* A slice-shaped block, standing in for the image that is coming. */
-.viewer-skel::before {
-  content: ""; width: 62%; aspect-ratio: 1; max-height: 76%;
-  border-radius: 12%; background: var(--panel-2);
-  animation: shimmer 1.4s ease-in-out infinite;
+/* Fills the skeleton edge to edge with voxel-sized cells that ripple in a
+   diagonal sweep, standing in for the image that is coming. `fillSkeleton`
+   (skeleton.js) measures the panel and builds the grid: `1fr` tracks are
+   what let a JS-computed column and row count tile the panel exactly at any
+   size, rather than a fixed cell width that leaves a gap on one edge. */
+.loader {
+  position: absolute; inset: 0;
+  display: grid; gap: 2px;
+}
+.cell {
+  /* One gradient across the whole panel rather than a ramp that repeats: the
+     cell's own `--mix`, set by `fillSkeleton` from how far along the diagonal it
+     sits, is 0% in the corner the wave starts from and 100% in the corner it
+     ends at, so the sweep crosses from `--accent` to `--rust` exactly once.
+
+     Interpolated in oklab rather than srgb so the midpoint keeps a clean hue
+     instead of passing through the muddy desaturated grey two saturated colours
+     produce in srgb. Every theme guarantees both endpoints, so the gradient
+     resolves on-brand per family with no per-family list to maintain. */
+  --cell-color: color-mix(in oklab, var(--rust) var(--mix, 50%), var(--accent));
+  /* The colour is painted once and the ripple animates `opacity`, never
+     `background-color`. A colour animation repaints every cell on the main
+     thread each frame, and the volume fit that this panel's skeleton stands in
+     for holds that thread for a block at a time — so the wave froze and jumped
+     precisely while the work it was reporting was happening. Opacity is
+     composited off the main thread, so the wave keeps its own time no matter how
+     busy the fit is. Over the viewer's black, a colour at 52% opacity and that
+     colour mixed 52% with transparent are the same pixel. */
+  background-color: var(--cell-color); opacity: 0; border-radius: 2px;
+  /* `--cycle` is set per panel by `fillSkeleton`, because the plateau below has
+     to outlast the wave's traverse and the traverse depends on the panel's size.
+     The fallback covers a cell somehow rendered outside that path. */
+  animation: var(--cycle, 2.2s) ripple linear infinite;
+}
+/* The grid fills from the top left, holds whole, then clears from the top left.
+   The plateau between the two edges is what keeps the first cell lit until the
+   last one has arrived, so the grid is never simultaneously filling in one
+   corner and emptying in another; `cycleMs` in skeleton.js sizes the cycle
+   against this share, and the two must be changed together.
+
+   The lit level is the ramp colour held well short of full strength: at full
+   strength the ramp's saturated ends read as a glare over the viewer's black
+   rather than as tissue-sized blocks filling in, and a placeholder should not
+   out-shout the image it stands in for. */
+@keyframes ripple {
+  0%   { opacity: 0; }
+  8%   { opacity: 0.52; }
+  53%  { opacity: 0.52; }
+  61%  { opacity: 0; }
+  100% { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .viewer-skel::before { animation: none; opacity: 0.5; }
+  .cell {
+    animation: none;
+    opacity: 0.25;
+  }
 }
 
 
@@ -1062,6 +1231,18 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 #status.ok { color: var(--good); font-weight: 700; }
 #status.busy { color: var(--rust); font-weight: 700; }
 #status.error { color: var(--bad); font-weight: 700; }
+/* A lit dot ahead of the status text, coloured from the element's own `color`
+   rather than a per-kind rule: `currentColor` tracks whichever of the states
+   above is active (and the plain `info` state) with one declaration, so a
+   future status kind inherits the dot for free. Decorative, so it lives on
+   `::before` rather than as a markup element, keeping it out of the
+   accessibility tree. */
+#status::before {
+  content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px;
+  border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 5px currentColor, 0 0 2px currentColor;
+  vertical-align: middle; transform: translateY(-1px);
+}
 
 .ghost-btn {
   background: none; border: 1px solid var(--line); color: var(--ink-2);
@@ -1083,14 +1264,18 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .notice-card button { min-width: 84px; }
 
 /* Single-file viewer, so inspecting a path costs neither a tab round-trip
-   nor the tree's scroll position. */
+   nor the tree's scroll position. Dimmed rather than blacked out: a blur
+   over near-black backdrop reads as flat grey, not glass, so the dim has to
+   be light enough that the page still reads through it as shape and colour
+   while the card in front still clearly outranks it. */
 .modal {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+  position: fixed; inset: 0; background: rgba(0,0,0,0.35);
   display: flex; align-items: center; justify-content: center; z-index: 50;
 }
 .modal[hidden] { display: none; }
+/* Glass recipe: see the shared rule below. */
 .modal-card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  border-radius: 10px;
   width: min(92vw, 940px); height: min(86vh, 720px);
   display: flex; flex-direction: column; padding: 10px; gap: 8px;
 }
@@ -1106,6 +1291,25 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 }
 .modal-card.compact .modal-body { flex: 0 1 auto; }
 .modal-card.notice-card { max-width: 46ch; }
+/* Every floating surface (this dialog card, the ROI toolbox, the
+   segmentation menu) wears the tooltip's glass: the panel surface under
+   half opacity over a heavy blur, an accent-tinted edge, and a shadow that
+   combines outer depth, an accent halo and an inset top highlight — see
+   `.tip` for why a tinted fill cannot do this instead. A dialog carries far
+   more body text than a tooltip, so the fill runs richer than `.tip`'s 62%;
+   72% is still comfortably inside the contrast `--ink` keeps over
+   `--panel-2` at any usable alpha, and is what keeps a paragraph legible
+   over a moving backdrop where 62% was only ever measured for a few words. */
+.modal-card, .draw-palette, .menu {
+  background: color-mix(in srgb, var(--panel-2) 72%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  backdrop-filter: blur(16px) saturate(1.8);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, .28),
+    0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 14%, transparent);
+}
 
 .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .modal-head .files-name {

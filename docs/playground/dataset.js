@@ -3,7 +3,7 @@
 // comes from the dataset's own JSON sidecars, so the recipe for this path
 // carries options only — see `meta.config_bids`.
 import { unzipSync } from "./vendor/fflate.js";
-import { $, fmt, status } from "./dom.js";
+import { $, setBusy, status } from "./dom.js";
 import { app } from "./state.js";
 import { fetchOrThrow } from "./bundles.js";
 
@@ -12,10 +12,11 @@ const datasetCache = {};
 // data/sources.json, fetched once.
 let sourcesCache = null;
 
-// The download ring, on the fitted-map skeleton — the one panel with nothing
-// else to say while bytes arrive. `fraction` is null when the server sent no
-// `Content-Length`, in which case the ring stays hidden rather than animating a
-// number it cannot know.
+// The download ring lives in the navbar (`#navbar-dl`, holding the `.dl-ring`
+// SVG and `#dl-pct`), not on either viewer: the bytes arriving are a page-wide
+// fact, not something either panel alone is waiting on. `fraction` is null
+// when the server sent no `Content-Length`, in which case the ring stays
+// hidden rather than animating a number it cannot know.
 const RING_CIRCUMFERENCE = 2 * Math.PI * 36; // r=36, matching the SVG
 
 // Three states, because a download has three phases a reader can distinguish:
@@ -25,10 +26,10 @@ function showDownloadPending() {
   const box = $("navbar-dl");
   box.hidden = false;
   box.classList.add("pending");
-  // The indeterminate half of the pair: the ring reports a percentage when there
-  // is one to report, while the navbar's sweep says "still working" through the
-  // phases that have no measurable total — extracting an archive, resolving it.
-  $("navbar").classList.add("loading");
+  // The ring reports a percentage once there is one to report; the sweep says
+  // "still working" for the whole download, including the phases that have no
+  // measurable total at all — extracting an archive, resolving it.
+  setBusy(true);
   $("dl-pct").hidden = true;
   $("dl-arc").style.strokeDashoffset = "";
 }
@@ -38,7 +39,7 @@ function setDownloadProgress(fraction) {
   if (fraction === null) {
     box.hidden = true;
     box.classList.remove("pending");
-    $("navbar").classList.remove("loading");
+    setBusy(false);
     return;
   }
   box.hidden = false;
@@ -166,16 +167,6 @@ export function unzipDataset(buf) {
     files.set(cut === -1 ? path : path.slice(cut + 1), bytes);
   }
   return files;
-}
-
-// A volume's label, from whatever identity it resolved to — a role name for a
-// named measurement, its parameter values for a series one. Never keyed on a
-// model or parameter name.
-export function identityLabel(id) {
-  if (!id) return "volume";
-  if (id.role) return id.role;
-  const parts = Object.entries(id.params ?? {}).map(([k, v]) => `${k}=${fmt(v)}`);
-  return parts.length ? parts.join(", ") : "volume";
 }
 
 export async function fetchDataset(name, meta) {

@@ -631,6 +631,13 @@ impl Measurement {
 }
 
 /// Identity of one volume along the acquisition axis, supplied by the shell.
+///
+/// Serializes untagged: a role name as a plain string, a parameter row as a
+/// JSON object. This is the one encoding for a volume's identity; every reader
+/// (the wasm boundary's `volume_ids_json`, the sim reports) emits and expects
+/// exactly this shape.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(untagged)]
 pub enum VolumeId {
     Role(&'static str),
     Params(BTreeMap<String, f64>),

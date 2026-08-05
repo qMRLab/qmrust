@@ -20,7 +20,17 @@ export const status = (m, kind = "info") => {
 
 // Compact number for a label: drops trailing zeros so 0.35 reads as 0.35 and
 // 90.0 as 90.
-export const fmt = (v) => (typeof v === "number" ? String(Number(v.toPrecision(6))) : String(v));
+const fmt = (v) => (typeof v === "number" ? String(Number(v.toPrecision(6))) : String(v));
+
+// A volume's label, from whatever identity it resolved to — a role name for a
+// named measurement, its parameter values for a series one. Never keyed on a
+// model or parameter name.
+export function identityLabel(id) {
+  if (!id) return "volume";
+  if (id.role) return id.role;
+  const parts = Object.entries(id.params ?? {}).map(([k, v]) => `${k}=${fmt(v)}`);
+  return parts.length ? parts.join(", ") : "volume";
+}
 
 // Rounds a colour-scale bound to ~3 significant figures for display in the
 // min/max inputs — full float precision is not a meaningful "default", and
@@ -52,8 +62,23 @@ export function cssColorToRgba(token, alpha = 1) {
 // track at idle, not an element that appears and reflows the page); only its fill
 // width and the "active" stripe animation change. Anything that takes long enough
 // to need a bar drives this one — there is only ever one long computation running.
+/**
+ * The navbar's indeterminate sweep: "the page is working", raised by every long
+ * stage there is.
+ *
+ * The determinate readouts each live in one place — the striped bar under the
+ * recipe, the ring beside the status — and a reader watching a different panel
+ * has nothing else telling them the page is busy at all. The sweep is the one
+ * signal visible wherever they are looking, so it is not reserved for stages
+ * that lack a percentage; it runs alongside the measured ones.
+ */
+export function setBusy(on) {
+  $("navbar").classList.toggle("loading", on);
+}
+
 export function showProgress() {
   $("progress-bar").classList.add("active");
+  setBusy(true);
   setProgress(0);
 }
 
@@ -63,6 +88,7 @@ export function setProgress(pct) {
 
 export function hideProgress() {
   $("progress-bar").classList.remove("active");
+  setBusy(false);
   setProgress(0);
 }
 

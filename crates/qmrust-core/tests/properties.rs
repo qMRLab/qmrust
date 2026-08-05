@@ -151,6 +151,30 @@ fn every_series_model() -> Vec<(&'static str, Box<dyn Model>)> {
         .collect()
 }
 
+/// Every parameter a model fits is documented with a meaning and a unit.
+///
+/// `symbols` is the only place a parameter's unit is stated, and the playground
+/// reads it to label a simulated ground-truth value. A parameter missing from it
+/// is a form row with no unit and a docs page that does not mention a quantity
+/// the model fits. Derived from each model's own `param_names`, so a model added
+/// later is covered without being listed here.
+#[test]
+fn every_fitted_parameter_declares_a_meaning_and_a_unit() {
+    for (name, model) in every_model() {
+        let entry = qmrust_core::registry::all()
+            .iter()
+            .find(|e| e.name == name)
+            .expect("a built model is a registered one");
+        for param in model.param_names() {
+            assert!(
+                entry.doc.symbols.iter().any(|(sym, _, _)| *sym == param),
+                "{name}: fits '{param}' but declares no symbol entry for it, \
+                 so it has no unit to show"
+            );
+        }
+    }
+}
+
 /// Every name a model exports as a BIDS map must be one it actually produces.
 ///
 /// The writer looks each up in the fit result by name; one that is not there is
@@ -412,5 +436,115 @@ proptest! {
             "nonlinear {} worse than linear {} for T1 {t1}",
             nonlinear[0], linear[0]
         );
+    }
+}
+
+/// Every model ships a sim recipe, and all four sim modes run off it.
+///
+/// `Recipes.sim` is not optional, so a model registered later is covered here
+/// the moment it is registered, with no per-model line. Each mode's contract is
+/// asserted against what the model itself declares rather than against a
+/// remembered number.
+#[test]
+fn every_model_simulates_from_its_declared_sim_recipe() {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    for entry in qmrust_core::registry::all() {
+        let name = entry.name;
+        let path = format!("{root}/{}", entry.doc.recipes.sim);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{name}: cannot read {path}: {e}"));
+        let raw: serde_yaml::Value = serde_yaml::from_str(&text)
+            .unwrap_or_else(|e| panic!("{name}: {path} is not YAML: {e}"));
+        let cfg: qmrust_core::config::Config = serde_yaml::from_str(&text)
+            .unwrap_or_else(|e| panic!("{name}: {path} is not a config: {e}"));
+        assert_eq!(cfg.model, name, "{name}: {path} names another model");
+
+        let sim = cfg
+            .sim
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name}: {path} has no sim block"));
+
+        let model = (entry.build)(&raw, &Protocol::default())
+            .unwrap_or_else(|e| panic!("{name}: {path} does not build: {e:#}"));
+
+        // signal: one value per volume the model consumes.
+        let signal = qmrust_core::sim::run_signal(&cfg, &raw)
+            .unwrap_or_else(|e| panic!("{name} signal: {e:#}"));
+        assert_eq!(
+            signal.signal.len(),
+            model.n_volumes(),
+            "{name}: signal length must equal the volume count",
+        );
+        assert!(
+            signal.signal.iter().all(|v| v.is_finite()),
+            "{name}: a noise-free forward signal must be finite",
+        );
+
+        // Every stats-reporting mode reports one row per parameter the fitter
+        // estimates, which is the intersection of param_names and output_names.
+        let estimated = model
+            .param_names()
+            .iter()
+            .filter(|p| model.output_names().iter().any(|o| o == *p))
+            .count();
+        assert!(
+            estimated > 0,
+            "{name}: no parameter is both declared and reported, so sim reports nothing",
+        );
+
+        let sv = qmrust_core::sim::run_single_voxel(&cfg, &raw)
+            .unwrap_or_else(|e| panic!("{name} single-voxel: {e:#}"));
+        assert_eq!(
+            sv.stats.len(),
+            estimated,
+            "{name}: single-voxel stats count"
+        );
+        assert_eq!(sv.per_trial.len(), sim.trials, "{name}: one fit per trial");
+        assert_eq!(
+            sv.noisy_signal.len(),
+            model.n_volumes(),
+            "{name}: the noisy signal covers every volume",
+        );
+
+        let sens = qmrust_core::sim::run_sensitivity(&cfg, &raw)
+            .unwrap_or_else(|e| panic!("{name} sensitivity: {e:#}"));
+        let sweep = sim
+            .sweep
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name}: {path} has no sweep block"));
+        assert_eq!(sens.points.len(), sweep.steps, "{name}: one point per step");
+        assert_eq!(sens.swept_param, sweep.param, "{name}: swept parameter");
+        for p in &sens.points {
+            assert_eq!(p.stats.len(), estimated, "{name}: sweep point stats count");
+        }
+
+        let mc = qmrust_core::sim::run_montecarlo(&cfg, &raw)
+            .unwrap_or_else(|e| panic!("{name} montecarlo: {e:#}"));
+        assert_eq!(mc.trials, sim.trials, "{name}: montecarlo trial count");
+        assert_eq!(mc.stats.len(), estimated, "{name}: montecarlo stats count");
+        assert_eq!(
+            mc.per_trial_input.len(),
+            sim.trials,
+            "{name}: one input row per montecarlo trial",
+        );
+        assert_eq!(
+            mc.per_trial_fitted.len(),
+            sim.trials,
+            "{name}: one fitted row per montecarlo trial",
+        );
+        for row in &mc.per_trial_input {
+            assert_eq!(
+                row.len(),
+                mc.stats.len(),
+                "{name}: an input row must cover every reported parameter",
+            );
+        }
+        for row in &mc.per_trial_fitted {
+            assert_eq!(
+                row.len(),
+                mc.stats.len(),
+                "{name}: a fitted row must cover every reported parameter",
+            );
+        }
     }
 }

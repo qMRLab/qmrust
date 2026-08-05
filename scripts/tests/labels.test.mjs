@@ -93,6 +93,74 @@ test("options are explained and acquisition fields are not", () => {
   for (const path of [["t1_range", "start"], ["zoom", "points"], ["mask", "desc"]]) {
     assert.ok(fieldHelp(path), `${path.join(".")}: option has no hover`);
   }
+  // A simulation setting is a choice about how to simulate, so it carries a
+  // hover. A simulated ground-truth value is the quantity itself, so it does
+  // not; that is the same asymmetry as the protocol rows above.
+  for (const path of [["sim", "noise", "type"], ["sim", "noise", "snr"],
+                      ["sim", "seed"], ["sim", "trials"],
+                      ["sim", "sweep", "param"], ["sim", "sweep", "start"],
+                      ["sim", "sweep", "stop"], ["sim", "sweep", "steps"],
+                      ["sim", "distributions", "T1", "mean"],
+                      ["sim", "distributions", "T1", "std"]]) {
+    assert.ok(fieldHelp(path), `${path.join(".")}: simulation setting has no hover`);
+  }
+  for (const path of [["sim", "params", "T1"], ["sim", "params", "M0"]]) {
+    assert.equal(fieldHelp(path), null, `${path.join(".")}: ground truth has a hover`);
+  }
+});
+
+test("SNR prints as an acronym, not title-cased", () => {
+  // `Snr` is the fallback's output for any unlisted key, and reads as a word.
+  assert.equal(fieldLabel(["sim", "noise", "snr"]), "SNR");
+});
+
+test("a model parameter keeps its own casing and takes the model's unit", () => {
+  // The two halves of the same rule. `inversion_recovery`'s `a` and `mt_sat`'s
+  // `A` are different quantities that title case renders identically, and the
+  // unit is the model's to declare: nothing in the label tables knows which
+  // model is loaded, so a parameter's unit can only come from the model.
+  const irt1 = new Map([["T1", "s"], ["a", ""], ["b", ""]]);
+  assert.equal(fieldLabel(["sim", "params", "a"], irt1), "a");
+  assert.equal(fieldLabel(["sim", "params", "T1"], irt1), "T1");
+  assert.equal(fieldUnit(["sim", "params", "T1"], irt1), "seconds (s)");
+  // An amplitude in receiver-gain units has no physical unit, and saying so is
+  // not the same as saying nothing.
+  assert.equal(fieldUnit(["sim", "params", "a"], irt1), "arbitrary units (a.u.)");
+
+  const mtSat = new Map([["MTSAT", "%"], ["A", null]]);
+  assert.equal(fieldLabel(["sim", "params", "A"], mtSat), "A");
+  assert.equal(fieldUnit(["sim", "params", "MTSAT"], mtSat), "percent (%)");
+  // Declared with no symbol entry at all: no unit is stated rather than one
+  // being guessed.
+  assert.equal(fieldUnit(["sim", "params", "A"], mtSat), null);
+
+  // A unit nobody has written a phrase for still reaches the reader.
+  assert.equal(fieldUnit(["sim", "params", "X"], new Map([["X", "kg"]])), "(kg)");
+});
+
+test("a distribution's statistics carry their own parameter's unit", () => {
+  // `Mean` and `Standard Deviation` are not quantities of their own: they
+  // describe the parameter their group names, in that parameter's unit.
+  const irt1 = new Map([["T1", "s"], ["a", ""]]);
+  const mean = ["sim", "distributions", "T1", "mean"];
+  const std = ["sim", "distributions", "T1", "std"];
+  assert.equal(fieldLabel(mean, irt1), "Mean");
+  assert.equal(fieldUnit(mean, irt1), "seconds (s)");
+  assert.equal(fieldUnit(std, irt1), "seconds (s)");
+  assert.equal(fieldUnit(["sim", "distributions", "a", "std"], irt1), "arbitrary units (a.u.)");
+  // A `mean` that is not a distribution's keeps having no unit of its own.
+  assert.equal(fieldUnit(["somewhere", "mean"], irt1), null);
+});
+
+test("a group named after a model parameter keeps the model's casing", () => {
+  // Each `sim.distributions` entry is named for a parameter, so the heading is
+  // subject to the same `a` versus `A` collision as a field label.
+  const irt1 = new Map([["T1", "s"], ["a", ""], ["b", ""]]);
+  assert.equal(groupLabel("a", irt1), "a");
+  assert.equal(groupLabel("T1", irt1), "T1");
+  // An ordinary group is unaffected.
+  assert.equal(groupLabel("params", irt1), "Ground Truth");
+  assert.equal(groupLabel("mtw", irt1), "MTw");
 });
 
 test("an option's hover is one plain sentence, not a paragraph", () => {

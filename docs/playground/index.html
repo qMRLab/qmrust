@@ -10,6 +10,16 @@
 <link rel="icon" type="image/x-icon" href="./favicon.ico">
 <link rel="stylesheet" href="./app.css">
 <div class="navbar" id="navbar">
+  <!-- A checkbox wearing two labels: unchecked reads Data, checked reads
+       Simulate, and clicking either label (native <label> behaviour) or the
+       lit half both flip it. Leads the navbar because it changes what the
+       whole page shows, not a per-panel control. -->
+  <label class="mode-switch" id="mode-switch">
+    <input type="checkbox" id="page-mode" aria-label="Simulate mode">
+    <span id="page-data"><span data-icon="hard-drive-download" data-icon-size="14"></span>Data</span>
+    <span id="page-sim"><span data-icon="square-activity" data-icon-size="14"></span>Simulate</span>
+  </label>
+  <span class="navbar-rule" aria-hidden="true"></span>
   <span class="navbar-dl" id="navbar-dl" hidden>
     <svg class="dl-ring" viewBox="0 0 84 84" aria-hidden="true">
       <circle class="dl-track" cx="42" cy="42" r="36"></circle>
@@ -116,7 +126,9 @@
     </div>
     <div class="viewer" id="viewer-in">
       <canvas id="gl-in"></canvas>
-      <div class="viewer-skel" id="skel-in" hidden></div>
+      <div class="viewer-skel" id="skel-in" hidden>
+        <div class="loader"></div>
+      </div>
     </div>
     <div class="files-panel" id="files-view" hidden>
       <div class="files-summary" id="files-summary"></div>
@@ -143,7 +155,9 @@
     <div class="viewer-row">
       <div class="viewer" id="viewer-out">
         <canvas id="gl-out"></canvas>
-        <div class="viewer-skel" id="skel-out" hidden></div>
+        <div class="viewer-skel" id="skel-out" hidden>
+          <div class="loader"></div>
+        </div>
       </div>
       <div class="level" id="mlevel">
         <canvas class="level-hist" id="mlevel-hist" width="46" height="300"></canvas>
@@ -171,7 +185,7 @@
     </div>
   </div>
 
-  <div class="curve-wrap card">
+  <div class="curve-wrap card" id="curve-wrap">
     <div class="viewer-head">
       <h2 class="section-h" id="voxel-title" style="margin:0">Voxel &amp; regions<button class="info" type="button" aria-label="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume." data-tip="Click a voxel in either viewer to see its measured signal against the model's own forward curve at the fitted parameters. A gap means the fit excluded that volume."><span data-icon="info" data-icon-size="14"></span></button></h2>
       <div class="seg" role="tablist" aria-label="Voxel fit or region measurements">
@@ -193,6 +207,16 @@
       </div>
       <div id="measure-table" class="measure-table"></div>
     </div>
+  </div>
+
+  <div class="sim-wrap card" id="sim-wrap" hidden>
+    <div class="viewer-head">
+      <h2 class="section-h" style="margin:0">Simulation<button class="info" type="button" aria-label="Generate data from ground-truth parameters and fit it back, with no image data involved. Signal shows what the model predicts; Voxel fits one voxel repeatedly under noise; Sensitivity varies one parameter to find where it stops being identifiable; Multi-Voxel draws a population from the distributions and plots fitted against input per voxel, with the error distribution beneath." data-tip="Generate data from ground-truth parameters and fit it back, with no image data involved. Signal shows what the model predicts; Voxel fits one voxel repeatedly under noise; Sensitivity varies one parameter to find where it stops being identifiable; Multi-Voxel draws a population from the distributions and plots fitted against input per voxel, with the error distribution beneath."><span data-icon="info" data-icon-size="14"></span></button></h2>
+      <div class="seg" id="sim-modes" role="tablist" aria-label="Simulation mode"></div>
+    </div>
+    <div id="sim-chart" class="sim-chart"></div>
+    <div id="sim-note" class="sim-note"></div>
+    <div id="sim-table" class="sim-table"></div>
   </div>
 
 </div>

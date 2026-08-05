@@ -3,11 +3,12 @@
 // holding the volume, mask and auxiliary inputs a fit needs — so everything
 // downstream is blind to where the data came from.
 import { NVImage } from "./vendor/niivue.js";
-import { $, status } from "./dom.js";
+import { $, identityLabel, status } from "./dom.js";
 import { app, editor, nvIn, nvOut } from "./state.js";
 import { loadBundle } from "./bundles.js";
-import { fetchDataset, identityLabel, stage } from "./dataset.js";
+import { fetchDataset, stage } from "./dataset.js";
 import { setEditorText } from "./recipe.js";
+import { isSimMode, seedSimRecipe } from "./sim.js";
 import {
   buildSeriesNifti,
   readMask,
@@ -64,7 +65,13 @@ async function loadModelFromBids(name, meta) {
   app.protocolResolved = Boolean(resolved.protocol_json);
   // The recipe for BIDS input carries options only; the acquisition comes from
   // the sidecars, via `resolved.protocol_json`.
-  setEditorText(meta.config_bids);
+  app.dataEditorText = meta.config_bids;
+  // Only the data recipe is installed here, and only now, because its protocol
+  // comes from the sidecars resolved just above. Simulate mode was seeded before
+  // the fetch began, and `app.simEditorText` does not track typing — it is
+  // written at seed and at a mode switch — so re-setting the editor here would
+  // discard whatever the reader edited while the dataset was loading.
+  if (!isSimMode()) setEditorText(meta.config_bids);
 
   stage(`Loading ${resolved.data_files.length} volumes…`);
   const parts = resolved.data_files.map((path) => {
@@ -222,6 +229,16 @@ export async function loadModel(name) {
   $("curve-note").textContent = "";
   clearCurve();
   app.enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
+  // The model's own parameters against the unit it declares for each. The
+  // payload lists parameters by name and states each one's unit in `symbols`, so
+  // the two are joined here once rather than at every label. A payload built
+  // before `symbols` was carried maps every parameter to `null`, which shows no
+  // unit while still printing the model's own casing.
+  const declaredUnits = new Map((meta.symbols ?? []).map((s) => [s.name, s.unit]));
+  app.modelParams = new Map(
+    (meta.params ?? []).map((param) => [param, declaredUnits.get(param) ?? null]),
+  );
+  seedSimRecipe(meta);
   app.wheelAccum = 0;
   app.dataset = null;
   app.protocolResolved = false;
@@ -261,7 +278,10 @@ export async function loadModel(name) {
     }
   }
 
-  setEditorText(meta.config);
+  app.dataEditorText = meta.config;
+  // As above: the sim recipe is already in the editor, and only the data recipe
+  // is this path's to install.
+  if (!isSimMode()) setEditorText(meta.config);
   const [nx, ny, nz, nt] = meta.dims;
   let volume, maskVolume;
   try {
