@@ -75,6 +75,38 @@
   "T2f",
   "T2r"
  ],
+ "symbols": [
+  {
+   "name": "F",
+   "meaning": "Bound-pool fraction M0r/M0f",
+   "unit": ""
+  },
+  {
+   "name": "kr",
+   "meaning": "Exchange rate, restricted to free pool",
+   "unit": "1/s"
+  },
+  {
+   "name": "R1f",
+   "meaning": "Free-pool longitudinal relaxation rate",
+   "unit": "1/s"
+  },
+  {
+   "name": "R1r",
+   "meaning": "Restricted-pool longitudinal relaxation rate",
+   "unit": "1/s"
+  },
+  {
+   "name": "T2f",
+   "meaning": "Free-pool transverse relaxation time",
+   "unit": "s"
+  },
+  {
+   "name": "T2r",
+   "meaning": "Restricted-pool transverse relaxation time",
+   "unit": "s"
+  }
+ ],
  "outputs": [
   {
    "name": "F",

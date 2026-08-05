@@ -224,12 +224,14 @@ export async function loadModel(name) {
   $("curve-note").textContent = "";
   clearCurve();
   app.enumFields = new Map((meta.enums ?? []).map((e) => [e.key, e.values]));
-  // The model's own parameters against the unit it declares for each. `params`
-  // says which parameters exist; `symbols` says what they mean and in what
-  // unit, so the two are joined here once rather than at every label.
+  // The model's own parameters against the unit it declares for each. The
+  // payload lists parameters by name and states each one's unit in `symbols`, so
+  // the two are joined here once rather than at every label. A payload built
+  // before `symbols` was carried maps every parameter to `null`, which shows no
+  // unit while still printing the model's own casing.
   const declaredUnits = new Map((meta.symbols ?? []).map((s) => [s.name, s.unit]));
   app.modelParams = new Map(
-    (meta.params ?? []).map((p) => [p.name, declaredUnits.get(p.name) ?? null]),
+    (meta.params ?? []).map((param) => [param, declaredUnits.get(param) ?? null]),
   );
   seedSimRecipe(meta);
   app.wheelAccum = 0;

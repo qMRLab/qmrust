@@ -30,7 +30,7 @@ qmrust example dataset.
 
 Switch the navbar toggle from **Data** to **Simulate** and the recipe card
 holds the model's own sim recipe instead of a dataset's config. Simulation
-reads no image data, so it works whether or not a dataset loaded. Pick one of
+reads no image data, so it works whether or not a dataset is loaded. Pick one of
 the four modes (Signal, Voxel, Sensitivity, Multi-Voxel), press **Simulate**,
 and read the chart and stats table that mode produces; see
 [Simulation](guide/simulation.md) for what each mode answers. A sweep runs in

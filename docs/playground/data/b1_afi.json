@@ -29,6 +29,18 @@
   "B1",
   "T1"
  ],
+ "symbols": [
+  {
+   "name": "B1",
+   "meaning": "Relative transmit field",
+   "unit": ""
+  },
+  {
+   "name": "T1",
+   "meaning": "Longitudinal relaxation time",
+   "unit": "s"
+  }
+ ],
  "outputs": [
   {
    "name": "B1",

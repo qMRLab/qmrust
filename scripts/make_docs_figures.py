@@ -473,6 +473,11 @@ def bundle_slice(coll, model, out_dir, max_bytes, repo_root, qmrust):
         "volume_ids": volume_ids,
         "labels": labels,
         "params": [p["name"] for p in model["params"]],
+        # What each parameter means and in what unit. The form labels a simulated
+        # ground-truth value with the unit the model itself declares, and the
+        # registry's `symbols` is the only place that unit is stated, so it has to
+        # reach the browser rather than being restated there.
+        "symbols": model["symbols"],
         "outputs": outputs,
         "enums": enums,
         # Two recipes, because a recipe is protocol + options and where the

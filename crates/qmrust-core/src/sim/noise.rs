@@ -143,8 +143,8 @@ mod tests {
 
     #[test]
     fn config_validation_accepts_exactly_the_declared_kinds() {
-        // The config's accepted set is NoiseKind's, not a second list beside it:
-        // a kind added to the enum is accepted by config without another edit.
+        // The config's accepted set is NoiseKind::ALL, not a second list beside
+        // it: a kind added to ALL is accepted by config without another edit.
         //
         // Built from YAML rather than a struct literal because SimConfig has no
         // Default, and every field but `noise` here is serde-defaulted anyway.

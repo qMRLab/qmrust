@@ -32,6 +32,10 @@ def named_model(**over):
         "required_inputs": [],
         "outputs": [{"name": "MTR", "bids_suffix": "MTR", "unit": "%", "diagnostic": False}],
         "params": [{"name": "MTR", "lower": None, "upper": None, "fixed": False}],
+        # Every registered model declares one entry per parameter it fits, and the
+        # payload carries them so the form can label a ground-truth value with the
+        # model's own unit.
+        "symbols": [{"name": "MTR", "meaning": "Magnetization transfer ratio", "unit": "%"}],
         "recipes": {"bids": "recipe.yaml", "non_bids": "recipe.yaml", "sim": "recipe.yaml"},
     }
     m.update(over)

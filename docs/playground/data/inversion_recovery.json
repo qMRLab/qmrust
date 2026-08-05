@@ -58,6 +58,23 @@
   "a",
   "b"
  ],
+ "symbols": [
+  {
+   "name": "T1",
+   "meaning": "Longitudinal relaxation time",
+   "unit": "s"
+  },
+  {
+   "name": "a",
+   "meaning": "Recovery amplitude (absorbs inversion efficiency)",
+   "unit": ""
+  },
+  {
+   "name": "b",
+   "meaning": "Signal offset",
+   "unit": ""
+  }
+ ],
  "outputs": [
   {
    "name": "T1",

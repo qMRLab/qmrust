@@ -28,6 +28,23 @@
   "T1",
   "MTSAT"
  ],
+ "symbols": [
+  {
+   "name": "A",
+   "meaning": "Apparent signal amplitude",
+   "unit": ""
+  },
+  {
+   "name": "T1",
+   "meaning": "Longitudinal relaxation time",
+   "unit": "s"
+  },
+  {
+   "name": "MTSAT",
+   "meaning": "MT saturation",
+   "unit": "%"
+  }
+ ],
  "outputs": [
   {
    "name": "MTSAT",

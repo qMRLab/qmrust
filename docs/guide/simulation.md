@@ -98,7 +98,7 @@ The same four modes run in wasm through `sim(mode, cfg_yaml)`, with identical
 numbers, and the [playground](../playground.md) exposes them directly: switch
 the recipe card from Data to Simulate, and the model's own sim recipe becomes
 the editable recipe. Simulation reads no image data, so it works whether or not
-a dataset loaded.
+a dataset is loaded.
 
 Long runs execute in a worker rather than on the page's main thread, so a sweep
 of a few thousand fits leaves the page responsive and cancellable. It is the

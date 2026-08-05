@@ -141,6 +141,18 @@
   "T2",
   "M0"
  ],
+ "symbols": [
+  {
+   "name": "T2",
+   "meaning": "Transverse relaxation time",
+   "unit": "s"
+  },
+  {
+   "name": "M0",
+   "meaning": "Signal amplitude at TE = 0 (arbitrary units)",
+   "unit": ""
+  }
+ ],
  "outputs": [
   {
    "name": "T2",

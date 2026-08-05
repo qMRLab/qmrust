@@ -43,6 +43,11 @@ export function seedSimRecipe(meta) {
   // mode's park from writing the previous model's text over the seed below.
   if (!canSim && isSimMode()) setPageMode("data");
   app.simEditorText = meta.config_sim ?? "";
+  // Onto the editor now, not once the dataset finishes resolving. `selectModel`
+  // fetches an archive after this and only syncs the editor afterwards, and
+  // nothing disables Simulate meanwhile — so a run started during that fetch
+  // would simulate the previous model's recipe under the new model's name.
+  if (isSimMode()) setEditorText(app.simEditorText);
   renderSimReport(null);
   if (canSim) {
     app.enumFields.set("sim.sweep.param", meta.params);

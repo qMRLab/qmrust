@@ -29,6 +29,18 @@
   "T1",
   "M0"
  ],
+ "symbols": [
+  {
+   "name": "M0",
+   "meaning": "Equilibrium magnetization",
+   "unit": ""
+  },
+  {
+   "name": "T1",
+   "meaning": "Longitudinal relaxation time",
+   "unit": "s"
+  }
+ ],
  "outputs": [
   {
    "name": "T1",

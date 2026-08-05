@@ -24,6 +24,13 @@
  "params": [
   "MTR"
  ],
+ "symbols": [
+  {
+   "name": "MTR",
+   "meaning": "Magnetization transfer ratio",
+   "unit": "%"
+  }
+ ],
  "outputs": [
   {
    "name": "MTR",
