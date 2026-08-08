@@ -140,7 +140,7 @@ jobs:
           # (no `--` separator — a literal `--` is forwarded to cargo and breaks
           # the build). A floating "latest" is what broke this job before.
           version: v0.15.0
-      - uses: browser-actions/setup-chrome@v1
+      - uses: browser-actions/setup-chrome@v2
       # Performant, multithreaded build (the shipped browser artifact).
       - name: Build (threaded)
         run: >
