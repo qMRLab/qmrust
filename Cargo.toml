@@ -18,7 +18,7 @@ serde_yaml = "0.9"
 # and volume identities (`InversionTime`, `EchoTime`, …) are matched by exact
 # f64 equality against protocol values parsed by serde_yaml.
 serde_json = { version = "1", features = ["float_roundtrip"] }
-ndarray = "0.16"
+ndarray = "0.17"
 rayon = "1"
 anyhow = "1"
 levenberg-marquardt = "0.15"
